@@ -20,6 +20,7 @@ from typing import List, Optional
 from faster_whisper import WhisperModel
 
 from config import Config
+from models import Segment as GenericSegment, SubtitleCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,12 @@ class FasterWhisperASR:
             if not segments:
                 logger.warning("No speech detected in audio file")
             
+            # Build and store a generic SubtitleCandidate for new pipeline usage
+            self.last_candidate = self._build_candidate_from_segments(
+                segments,
+                language=language or "ja",
+                origin_stream="audio:0",
+            )
             return segments
             
         except Exception as e:
@@ -245,3 +252,86 @@ class BatchASR:
     def transcribe(self, audio_path: str) -> List[Segment]:
         """Transcribe an audio file."""
         return self.asr.transcribe_audio_to_segments(audio_path)
+
+    def candidate(self) -> Optional[SubtitleCandidate]:
+        """Return the last built SubtitleCandidate (if available)."""
+        return getattr(self.asr, "last_candidate", None)
+
+
+# ---------------------------------------------------------------------------
+# New generic candidate builder utilities
+# ---------------------------------------------------------------------------
+def build_candidate_from_segments(
+    segments: List[Segment],
+    config: Config,
+    candidate_id: str = "asr_ja",
+    language: str = "ja",
+    origin_stream: str = "audio:0",
+) -> SubtitleCandidate:
+    """Create a generic SubtitleCandidate from legacy ASR segments.
+
+    This preserves backwards compatibility while enabling downstream
+    multi-track logic to operate on a unified structure.
+    """
+    generic_segments = [
+        GenericSegment(s.start, s.end, s.text_ja) for s in segments
+    ]
+    meta = {
+        "asr_model": config.asr_model_name,
+        "compute_type": config.asr_compute_type,
+        "beam_size": config.asr_beam_size,
+        "vad_filter": config.asr_vad_filter,
+    }
+    return SubtitleCandidate(
+        id=candidate_id,
+        language=language,
+        source="asr",
+        origin_stream=origin_stream,
+        segments=generic_segments,
+        meta=meta,
+    )
+
+
+def transcribe_audio_to_candidate(
+    audio_path: str,
+    config: Config,
+    language: Optional[str] = None,
+    origin_stream: str = "audio:0",
+) -> SubtitleCandidate:
+    """One-shot convenience returning a SubtitleCandidate instead of segments."""
+    asr = FasterWhisperASR(config)
+    segments = asr.transcribe_audio_to_segments(audio_path, language=language)
+    # last_candidate already built inside transcribe; just ensure origin_stream override if provided
+    cand = getattr(asr, "last_candidate", None)
+    if cand and cand.origin_stream != origin_stream:
+        cand.origin_stream = origin_stream
+    asr.unload_model()
+    return cand if cand else build_candidate_from_segments(
+        segments,
+        config,
+        candidate_id="asr_ja",
+        language=language or "ja",
+        origin_stream=origin_stream,
+    )
+
+
+# Internal method added to class dynamically (kept outside to avoid clutter in main body)
+def _build_candidate_from_segments(self, segments: List[Segment], language: str, origin_stream: str) -> SubtitleCandidate:
+    return build_candidate_from_segments(
+        segments,
+        self.config,
+        candidate_id=f"asr_{language}",
+        language=language,
+        origin_stream=origin_stream,
+    )
+
+# Attach helper to class
+setattr(FasterWhisperASR, "_build_candidate_from_segments", _build_candidate_from_segments)
+
+__all__ = [
+    "Segment",
+    "FasterWhisperASR",
+    "BatchASR",
+    "build_candidate_from_segments",
+    "transcribe_audio_to_candidate",
+]

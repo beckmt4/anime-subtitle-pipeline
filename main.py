@@ -28,9 +28,10 @@ from config import Config, set_config
 from audio_utils import (
     check_ffmpeg_available,
     extract_audio_with_ffmpeg,
-    find_japanese_audio_track,
+    find_japanese_audio_track,  # retained for backward compatibility
     mux_subtitle_to_video
 )
+from media_inspect import inspect_media, choose_audio_track
 from asr import FasterWhisperASR, Segment
 from mt import MarianTranslator
 from llm_polish import polish_english_subtitles_with_llm, enforce_subtitle_constraints_on_segments
@@ -208,12 +209,16 @@ def process_video(
         logger.info("\n[1/6] Extracting audio track from video...")
         
         with start_span("extract_audio", video=str(video_path.name)):
-            # Auto-detect Japanese audio track if not specified
             if audio_track is None:
-                audio_track = find_japanese_audio_track(str(video_path))
-                if audio_track is None:
-                    audio_track = 0  # Default to first track
-        
+                # New path: use media inspection for dynamic selection
+                try:
+                    media = inspect_media(str(video_path))
+                    preferred = config.get("audio", "preferred_languages", default=["ja", "jpn", "ja-JP"])
+                    audio_track = choose_audio_track(media, preferred_languages=preferred)
+                except Exception as e:
+                    logger.warning(f"Media inspection failed ({e}); falling back to legacy detection")
+                    fallback = find_japanese_audio_track(str(video_path))
+                    audio_track = fallback if fallback is not None else 0
             audio_path = extract_audio_with_ffmpeg(
                 input_video_path=str(video_path),
                 output_audio_path=str(audio_path),
@@ -234,7 +239,7 @@ def process_video(
             logger.error("No speech segments detected in audio")
             return result
         
-        logger.info(f"Transcribed {len(segments)} Japanese segments")
+        logger.info(f"Transcribed {len(segments)} Japanese segments (audio track {audio_track})")
         result["segment_count"] = len(segments)
         
         # ===================================================================
