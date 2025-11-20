@@ -38,8 +38,9 @@ opentelemetry-exporter-otlp>=1.25.0
 opentelemetry-instrumentation-requests>=0.46b0
 opentelemetry-instrumentation-logging>=0.46b0
 
-# Evaluation metrics
+# Evaluation & Benchmarking metrics
 sacrebleu>=2.4.0
+jiwer>=3.0.0  # Word Error Rate for subtitle comparison
 
 # ============================================================================
 # GPU Support Notes:

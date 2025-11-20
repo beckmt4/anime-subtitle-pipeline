@@ -1,0 +1,87 @@
+{
+  "video": "example_video.mkv",
+  "reference": {
+    "id": "embedded_en_s2",
+    "source": "embedded",
+    "language": "en",
+    "segment_count": 45
+  },
+  "candidates": [
+    {
+      "id": "en_audio_asr",
+      "source": "asr",
+      "language": "en",
+      "segment_count": 43
+    },
+    {
+      "id": "ja_audio_asr_mt_llm",
+      "source": "asr_mt_llm",
+      "language": "en",
+      "segment_count": 48
+    }
+  ],
+  "comparisons": [
+    {
+      "ref_id": "embedded_en_s2",
+      "cand_id": "en_audio_asr",
+      "metrics": {
+        "wer": 0.1523,
+        "bleu": 68.4,
+        "chrf": 82.15
+      },
+      "num_segments": 43,
+      "num_diffs": 12,
+      "diffs": [
+        {
+          "start": 12.5,
+          "end": 15.2,
+          "ref": "I can't believe it",
+          "cand": "I cannot believe it"
+        },
+        {
+          "start": 23.1,
+          "end": 25.8,
+          "ref": "What are you doing?",
+          "cand": "What're you doing?"
+        },
+        {
+          "start": 45.3,
+          "end": 48.0,
+          "ref": "Let's go now",
+          "cand": "Let us go now"
+        }
+      ]
+    },
+    {
+      "ref_id": "embedded_en_s2",
+      "cand_id": "ja_audio_asr_mt_llm",
+      "metrics": {
+        "wer": 0.3241,
+        "bleu": 45.2,
+        "chrf": 65.8
+      },
+      "num_segments": 48,
+      "num_diffs": 28,
+      "diffs": [
+        {
+          "start": 8.2,
+          "end": 10.5,
+          "ref": "Good morning",
+          "cand": "Morning!"
+        },
+        {
+          "start": 12.5,
+          "end": 15.2,
+          "ref": "I can't believe it",
+          "cand": "I'm in disbelief"
+        },
+        {
+          "start": 23.1,
+          "end": 25.8,
+          "ref": "What are you doing?",
+          "cand": "What is it you're doing?"
+        }
+      ]
+    }
+  ]
+}

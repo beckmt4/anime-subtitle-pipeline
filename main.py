@@ -343,6 +343,16 @@ Examples:
   # Use custom config file
   python main.py video.mkv --config my_config.yaml
 
+  # List available audio & subtitle tracks without processing
+  python main.py video.mkv --list-tracks
+  
+  # Benchmark mode: compare EN subtitle generation methods
+  python main.py video.mkv --mode benchmark
+  python main.py video.mkv --audio-track 1
+  
+  # Use custom config file
+  python main.py video.mkv --config my_config.yaml
+
     # List available audio & subtitle tracks without processing
     python main.py video.mkv --list-tracks
         """
@@ -390,6 +400,14 @@ Examples:
         "--list-tracks",
         action="store_true",
         help="List audio/subtitle tracks and exit without processing"
+    )
+    
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["subtitle", "benchmark"],
+        default="subtitle",
+        help="Run mode: 'subtitle' (default) or 'benchmark' (compare methods)"
     )
     
     parser.add_argument(
@@ -470,21 +488,45 @@ Examples:
         logger.info("\nUse --audio-track <index> to select a specific audio track.")
         sys.exit(0)
 
-    # Process video
+    # Dispatch to appropriate mode
     try:
-        result = process_video(
-            video_path=args.video,
-            config=config,
-            no_llm=args.no_llm,
-            no_mux=args.no_mux,
-            audio_track=args.audio_track
-        )
-        
-        if result["success"]:
+        if args.mode == "benchmark":
+            # Benchmark mode: compare subtitle generation methods
+            from benchmark import run_benchmark
+            
+            logger.info("Running in BENCHMARK mode")
+            result = run_benchmark(
+                video_path=args.video,
+                config=config,
+                use_llm=(not args.no_llm),
+            )
+            
+            logger.info("\nBenchmark Summary:")
+            for comparison in result.get("comparisons", []):
+                metrics = comparison["metrics"]
+                logger.info(
+                    f"  {comparison['cand_id']} vs {comparison['ref_id']}: "
+                    f"WER={metrics['wer']:.2%}, BLEU={metrics['bleu']:.1f}, "
+                    f"chrF={metrics['chrf']:.1f}"
+                )
+            
             sys.exit(0)
+        
         else:
-            logger.error("Processing failed")
-            sys.exit(1)
+            # Default subtitle generation mode
+            result = process_video(
+                video_path=args.video,
+                config=config,
+                no_llm=args.no_llm,
+                no_mux=args.no_mux,
+                audio_track=args.audio_track
+            )
+            
+            if result["success"]:
+                sys.exit(0)
+            else:
+                logger.error("Processing failed")
+                sys.exit(1)
             
     except KeyboardInterrupt:
         logger.info("\nInterrupted by user")
