@@ -1,0 +1,67 @@
+# ============================================================================
+# Anime Subtitle Pipeline - Python Dependencies
+# ============================================================================
+# This file lists all Python packages required to run the subtitle pipeline.
+#
+# Installation:
+#   pip install -r requirements.txt
+#
+# For GPU support, ensure you have CUDA installed and compatible PyTorch.
+# ============================================================================
+
+# Core dependencies
+pyyaml>=6.0
+
+# ASR - Faster-Whisper with CTranslate2
+faster-whisper>=1.0.0
+# Note: faster-whisper will install ctranslate2 and other dependencies
+
+# Machine Translation - Hugging Face Transformers
+transformers>=4.35.0
+torch>=2.6.0  # Minimum 2.6 required for security fixes (CVE-2025-32434)
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+
+# HTTP client for LLM API
+requests>=2.31.0
+
+# Optional: Progress bars (recommended for better UX)
+tqdm>=4.65.0
+
+# Tracing / Observability (OpenTelemetry)
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-otlp>=1.25.0
+opentelemetry-instrumentation-requests>=0.46b0
+opentelemetry-instrumentation-logging>=0.46b0
+
+# Evaluation metrics
+sacrebleu>=2.4.0
+
+# ============================================================================
+# GPU Support Notes:
+# ============================================================================
+# For CUDA GPU support:
+#   1. Install NVIDIA CUDA Toolkit (11.8 or 12.1 recommended)
+#   2. Install PyTorch 2.6+ with CUDA support BEFORE running pip install -r requirements.txt:
+#      pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+#      (Replace cu118 with your CUDA version, e.g., cu121 for CUDA 12.1)
+#   3. Then install other requirements:
+#      pip install -r requirements.txt
+#
+# For CPU-only (no GPU):
+#   pip install torch>=2.6.0
+#   pip install -r requirements.txt
+#
+# ============================================================================
+# External Dependencies (not Python packages):
+# ============================================================================
+# - ffmpeg: Required for audio extraction and video muxing
+#   Windows: Download from https://ffmpeg.org/ and add to PATH
+#   Linux: sudo apt-get install ffmpeg
+#   macOS: brew install ffmpeg
+#
+# - Ollama (optional): For LLM polishing
+#   Download from https://ollama.ai/
+#   Run: ollama pull qwen2.5:7b
+#   Start: ollama serve

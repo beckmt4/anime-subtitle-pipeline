@@ -1,0 +1,126 @@
+# ============================================================================
+# Anime Subtitle Pipeline Configuration
+# ============================================================================
+# This configuration file controls all aspects of the subtitle generation
+# pipeline. Use different profiles for dev (6GB GPU) vs prod (24GB GPU).
+# ============================================================================
+
+# Runtime profile selection: "dev" or "prod"
+# - dev: Optimized for NVIDIA RTX A3000 6GB (quantized models, smaller batches)
+# - prod: Optimized for NVIDIA RTX 4090 24GB (FP16, larger batches)
+runtime:
+  profile: "dev"  # Change to "prod" for the 4090
+
+# Directory paths
+paths:
+  inbox: "./inbox"           # Input video files
+  outbox: "./outbox"         # Output SRT and muxed videos
+  logs: "./logs"             # JSON logs with segment data
+  temp: "./temp"             # Temporary audio files
+
+# ASR (Automatic Speech Recognition) - Faster-Whisper
+asr:
+  model_name: "large-v3-turbo"  # Whisper model variant
+  device: "auto"                 # auto | cuda | cpu
+  
+  # Dev profile settings (6GB GPU)
+  dev:
+    compute_type: "int8_float16"  # Quantized for memory efficiency
+    beam_size: 5
+    batch_size: 8
+    
+  # Prod profile settings (24GB GPU)
+  prod:
+    compute_type: "float16"       # Full precision FP16
+    beam_size: 5
+    batch_size: 16
+  
+  # Common settings
+  vad_filter: true                # Enable voice activity detection
+  vad_parameters:
+    threshold: 0.5
+    min_speech_duration_ms: 250
+    min_silence_duration_ms: 500
+  
+  language: "ja"                  # Japanese audio
+  task: "transcribe"              # transcribe (not translate)
+
+# Machine Translation - Helsinki-NLP MarianMT
+mt:
+  model_name: "Helsinki-NLP/opus-mt-ja-en"
+  device: "cpu"                   # MT runs on CPU to save VRAM
+  batch_size: 16                  # Process multiple segments at once
+  max_length: 512                 # Maximum token length per segment
+
+# LLM Polishing (Optional)
+llm:
+  enabled: true                   # Set to false to skip LLM polishing
+  base_url: "http://localhost:11434"  # Ollama-compatible API endpoint
+  
+  # Model selection by profile
+  dev:
+    model_name: "qwen2.5:7b"      # 7B model, 4-bit quantized
+  prod:
+    model_name: "qwen2.5:14b-instruct"  # 14B model for better quality
+  
+  style: "natural"                # "natural" | "literal"
+  
+  # Subtitle formatting constraints
+  max_lines: 2
+  max_chars_per_line: 42
+  
+  # Request parameters
+  timeout: 30                     # HTTP timeout in seconds
+  temperature: 0.3                # Lower = more deterministic
+  top_p: 0.9
+  
+  # System prompt templates by style
+  prompts:
+    natural: |
+      You are a professional anime subtitle editor. Your task is to improve machine-translated English subtitles to sound natural while preserving the original meaning.
+      
+      Rules:
+      1. DO NOT change the meaning or add content not in the original.
+      2. Keep it to {max_lines} lines maximum, ~{max_chars_per_line} characters per line.
+      3. Use natural, conversational English suitable for anime viewers.
+      4. Preserve character personality and tone.
+      5. Use contractions and informal language where appropriate.
+      6. ONLY return the improved English subtitle text, nothing else.
+      
+    literal: |
+      You are a professional subtitle editor. Your task is to clean up machine-translated English subtitles while staying as close to the Japanese phrasing as possible.
+      
+      Rules:
+      1. DO NOT change the meaning or add content not in the original.
+      2. Keep it to {max_lines} lines maximum, ~{max_chars_per_line} characters per line.
+      3. Fix only grammar and awkward phrasing, but preserve Japanese sentence structure.
+      4. Keep honorifics and cultural terms when important.
+      5. ONLY return the improved English subtitle text, nothing else.
+
+# Subtitle formatting
+subtitles:
+  format: "srt"                   # Output format (only SRT for now)
+  
+  # Timing constraints
+  min_duration_sec: 0.5           # Minimum subtitle duration
+  max_duration_sec: 7.0           # Maximum subtitle duration
+  
+  # Split long segments at these punctuation marks
+  split_on_punctuation: [".", "!", "?", ";"]
+  
+  # Target segment length for splitting (characters)
+  target_split_length: 80
+
+# Video muxing (optional)
+mux:
+  enabled: false                  # Set to true to mux SRT into video
+  output_suffix: "en"             # Output: video.en.mkv
+  subtitle_language: "eng"        # Metadata language code
+  subtitle_title: "English"       # Subtitle track title
+  copy_all_streams: true          # Copy all streams from original
+
+# Logging
+logging:
+  level: "INFO"                   # DEBUG | INFO | WARNING | ERROR
+  save_segment_json: true         # Save detailed JSON logs
+  console_progress: true          # Show progress bars

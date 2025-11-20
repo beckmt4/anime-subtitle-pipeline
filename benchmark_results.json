@@ -1,0 +1,14 @@
+[
+  {
+    "config": "no_llm",
+    "success": false,
+    "elapsed_time": 65.42919707298279,
+    "error": null
+  },
+  {
+    "config": "with_llm",
+    "success": false,
+    "elapsed_time": 61.56894636154175,
+    "error": null
+  }
+]
