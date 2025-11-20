@@ -32,7 +32,7 @@ from audio_utils import (
     mux_subtitle_to_video
 )
 from media_inspect import inspect_media, choose_audio_track
-from asr import FasterWhisperASR, Segment
+from asr import FasterWhisperASR, Segment, build_candidate_from_segments
 from mt import MarianTranslator
 from llm_polish import polish_english_subtitles_with_llm, enforce_subtitle_constraints_on_segments
 from srt_writer import write_srt_file
@@ -232,6 +232,25 @@ def process_video(
         with start_span("asr_transcription", model=config.asr_model_name, profile=config.profile):
             asr = FasterWhisperASR(config)
             segments = asr.transcribe_audio_to_segments(str(audio_path))
+            # Build generic candidate reflecting selected audio track & detected language
+            try:
+                media_for_lang = inspect_media(str(video_path))
+                audio_lang = None
+                if audio_track is not None and audio_track < len(media_for_lang.audio_streams):
+                    audio_lang = media_for_lang.audio_streams[audio_track].language or media_for_lang.audio_streams[audio_track].raw_language
+            except Exception:
+                audio_lang = None
+            candidate_lang = audio_lang or config.asr_language or "und"
+            asr_candidate = build_candidate_from_segments(
+                segments,
+                config,
+                candidate_id=f"asr_{candidate_lang}",
+                language=candidate_lang,
+                origin_stream=f"audio:{audio_track if audio_track is not None else 0}",
+            )
+            result["asr_candidate_language"] = asr_candidate.language
+            result["asr_candidate_origin_stream"] = asr_candidate.origin_stream
+            result["asr_candidate_segment_count"] = asr_candidate.segment_count
             # TEMP: skip unloading ASR model due to crash after destructor
             # asr.unload_model()
         
@@ -239,7 +258,7 @@ def process_video(
             logger.error("No speech segments detected in audio")
             return result
         
-        logger.info(f"Transcribed {len(segments)} Japanese segments (audio track {audio_track})")
+        logger.info(f"Transcribed {len(segments)} Japanese segments (audio track {audio_track}) candidate_origin={result.get('asr_candidate_origin_stream')}")
         result["segment_count"] = len(segments)
         
         # ===================================================================
@@ -346,6 +365,9 @@ Examples:
   
   # Use custom config file
   python main.py video.mkv --config my_config.yaml
+
+    # List available audio & subtitle tracks without processing
+    python main.py video.mkv --list-tracks
         """
     )
     
@@ -386,6 +408,12 @@ Examples:
         type=int,
         help="Specific audio track index to use (default: auto-detect Japanese)"
     )
+
+    parser.add_argument(
+        "--list-tracks",
+        action="store_true",
+        help="List audio/subtitle tracks and exit without processing"
+    )
     
     parser.add_argument(
         "--log-level",
@@ -425,6 +453,46 @@ Examples:
         logger.error("Please install ffmpeg and ensure it's accessible")
         sys.exit(1)
     
+    # Fast path: list tracks only
+    if args.list_tracks:
+        try:
+            media = inspect_media(args.video)
+        except Exception as e:
+            logger.error(f"Failed to inspect media: {e}")
+            sys.exit(1)
+
+        logger.info("\nAvailable Audio Tracks (ffmpeg audio-order index -> global index):")
+        if media.audio_streams:
+            for audio_order, stream in enumerate(media.audio_streams):
+                logger.info(
+                    "  %d (global %d): codec=%s channels=%d rate=%dHz lang=%s",
+                    audio_order,
+                    stream.index,
+                    stream.codec,
+                    getattr(stream, "channels", 2),
+                    getattr(stream, "sample_rate", 0),
+                    stream.language or stream.raw_language or "-",
+                )
+        else:
+            logger.info("  <none>")
+
+        logger.info("\nAvailable Subtitle Tracks (global index):")
+        if media.subtitle_streams:
+            for sub_order, stream in enumerate(media.subtitle_streams):
+                logger.info(
+                    "  %d (global %d): codec=%s lang=%s bitmap=%s",
+                    sub_order,
+                    stream.index,
+                    stream.codec,
+                    stream.language or stream.raw_language or "-",
+                    "yes" if stream.is_bitmap else "no",
+                )
+        else:
+            logger.info("  <none>")
+
+        logger.info("\nUse --audio-track <index> to select a specific audio track.")
+        sys.exit(0)
+
     # Process video
     try:
         result = process_video(

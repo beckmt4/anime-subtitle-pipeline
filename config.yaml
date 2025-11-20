@@ -45,6 +45,10 @@ asr:
   language: "ja"                  # Japanese audio
   task: "transcribe"              # transcribe (not translate)
 
+# Audio selection preferences (for multi-track files)
+audio:
+  preferred_languages: ["ja", "jpn", "ja-JP", "en"]  # priority order for selection
+
 # Machine Translation - Helsinki-NLP MarianMT
 mt:
   model_name: "Helsinki-NLP/opus-mt-ja-en"
