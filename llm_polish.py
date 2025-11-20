@@ -19,7 +19,8 @@ from typing import List, Optional
 
 import requests
 
-from asr import Segment
+from asr import Segment  # legacy
+from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -273,6 +274,55 @@ Improve the English subtitle:"""
         
         return segments
 
+    # ---------------------------------------------------------------
+    # New unified candidate API
+    # ---------------------------------------------------------------
+    def polish_candidate(
+        self,
+        candidate: SubtitleCandidate,
+        style: Optional[str] = None
+    ) -> SubtitleCandidate:
+        """Return a new polished SubtitleCandidate.
+
+        Input candidate expected to contain machine-translated English text
+        in its segments. Output candidate has same timing with polished text.
+        """
+        if not candidate.segments:
+            return SubtitleCandidate(
+                id=f"{candidate.id}_llm",
+                language=candidate.language,
+                source="mt_llm",
+                origin_stream=candidate.origin_stream,
+                segments=[],
+                meta={"polisher_model": self.model_name},
+            )
+        # If LLM disabled or unreachable, return pass-through candidate
+        if not self.config.llm_enabled or not self.check_connection():
+            logger.info("LLM disabled/unreachable; returning pass-through polished candidate")
+            passthrough_segments = [
+                GenericSegment(s.start, s.end, s.text) for s in candidate.segments
+            ]
+            return SubtitleCandidate(
+                id=f"{candidate.id}_llm",
+                language=candidate.language,
+                source="mt_llm",
+                origin_stream=candidate.origin_stream,
+                segments=passthrough_segments,
+                meta={"polisher_model": self.model_name, "fallback": True},
+            )
+        polished_segments: List[GenericSegment] = []
+        for s in candidate.segments:
+            polished = self.polish_text(text_ja="", text_en_raw=s.text, style=style)  # original JA not available here
+            polished_segments.append(GenericSegment(s.start, s.end, polished))
+        return SubtitleCandidate(
+            id=f"{candidate.id}_llm",
+            language=candidate.language,
+            source="mt_llm",
+            origin_stream=candidate.origin_stream,
+            segments=polished_segments,
+            meta={"polisher_model": self.model_name},
+        )
+
 
 def polish_english_subtitles_with_llm(
     segments: List[Segment],
@@ -302,6 +352,11 @@ def polish_english_subtitles_with_llm(
     return polisher.polish_segments(segments, style=style)
 
 
+def polish_candidate_with_llm(candidate: SubtitleCandidate, config: Config, style: Optional[str] = None) -> SubtitleCandidate:
+    polisher = LLMPolisher(config)
+    return polisher.polish_candidate(candidate, style=style)
+
+
 def enforce_subtitle_constraints_on_segments(segments: List[Segment], config: Config) -> int:
     """Re-apply line/char constraints to Segment.text_en_final; returns number of adjustments."""
     polisher = LLMPolisher(config)
@@ -316,6 +371,27 @@ def enforce_subtitle_constraints_on_segments(segments: List[Segment], config: Co
     if adjustments:
         logger.info(f"Constraint re-validation adjusted {adjustments} segment(s)")
     return adjustments
+
+
+def enforce_constraints_on_candidate(candidate: SubtitleCandidate, config: Config) -> SubtitleCandidate:
+    polisher = LLMPolisher(config)
+    new_segments: List[GenericSegment] = []
+    changed = 0
+    for s in candidate.segments:
+        adjusted = polisher._enforce_constraints(s.text)
+        if adjusted != s.text:
+            changed += 1
+        new_segments.append(GenericSegment(s.start, s.end, adjusted))
+    if changed:
+        logger.info(f"Constraint enforcement adjusted {changed} segment(s) in candidate {candidate.id}")
+    return SubtitleCandidate(
+        id=candidate.id,
+        language=candidate.language,
+        source=candidate.source,
+        origin_stream=candidate.origin_stream,
+        segments=new_segments,
+        meta={**candidate.meta, "constraints_enforced": True},
+    )
 
 
 class BatchPolisher:
@@ -351,6 +427,27 @@ class BatchPolisher:
             return segments
         
         return self.polisher.polish_segments(segments, style=style)
+
+    def polish_candidate(self, candidate: SubtitleCandidate, style: Optional[str] = None) -> SubtitleCandidate:
+        if not self.enabled:
+            return SubtitleCandidate(
+                id=f"{candidate.id}_llm",
+                language=candidate.language,
+                source="mt_llm",
+                origin_stream=candidate.origin_stream,
+                segments=[GenericSegment(s.start, s.end, s.text) for s in candidate.segments],
+                meta={"fallback": True},
+            )
+        return self.polisher.polish_candidate(candidate, style=style)
+
+__all__ = [
+    "LLMPolisher",
+    "polish_english_subtitles_with_llm",
+    "polish_candidate_with_llm",
+    "enforce_subtitle_constraints_on_segments",
+    "enforce_constraints_on_candidate",
+    "BatchPolisher",
+]
 
 
 # Advanced: Batch processing with concurrent requests (optional enhancement)

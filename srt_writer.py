@@ -16,7 +16,8 @@ import re
 from pathlib import Path
 from typing import List, Optional
 
-from asr import Segment
+from asr import Segment  # legacy
+from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -325,6 +326,31 @@ def write_srt_file(segments: List[Segment], output_path: str, config: Config) ->
             logger.warning(f"  ... and {len(warnings) - 5} more")
     
     return writer.write_srt(segments, output_path)
+
+
+# ---------------------------------------------------------------------------
+# New unified candidate SRT helpers
+# ---------------------------------------------------------------------------
+def write_candidate_srt(candidate: SubtitleCandidate, output_path: str, config: Config) -> Path:
+    """Write a SubtitleCandidate to SRT using its segment texts."""
+    writer = SRTWriter(config)
+    # Convert candidate segments to legacy style temporary objects for existing pipeline logic
+    temp_segments: List[Segment] = []
+    for s in candidate.segments:
+        temp_segments.append(
+            Segment(start=s.start, end=s.end, text_ja="", text_en_raw=s.text, text_en_final=s.text)
+        )
+    warnings = writer.validate_segments(temp_segments)
+    if warnings:
+        logger.warning(f"Found {len(warnings)} validation warnings for candidate {candidate.id}")
+    return writer.write_srt(temp_segments, output_path)
+
+__all__ = [
+    "format_timestamp_srt",
+    "write_srt_file",
+    "write_candidate_srt",
+    "read_srt_file",
+]
 
 
 # Utility: Read SRT file back into segments (for testing/validation)

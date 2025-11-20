@@ -32,10 +32,16 @@ from audio_utils import (
     mux_subtitle_to_video
 )
 from media_inspect import inspect_media, choose_audio_track
+from models import SubtitleCandidate
 from asr import FasterWhisperASR, Segment, build_candidate_from_segments
-from mt import MarianTranslator
-from llm_polish import polish_english_subtitles_with_llm, enforce_subtitle_constraints_on_segments
-from srt_writer import write_srt_file
+from mt import MarianTranslator, translate_candidate_jp_to_en
+from llm_polish import (
+    polish_english_subtitles_with_llm,  # legacy
+    enforce_subtitle_constraints_on_segments,  # legacy
+    polish_candidate_with_llm,
+    enforce_constraints_on_candidate,
+)
+from srt_writer import write_srt_file, write_candidate_srt
 from tracing import setup_tracing, start_span
 
 
@@ -58,16 +64,9 @@ logger = logging.getLogger(__name__)
 
 
 def save_segment_log(segments: List[Segment], output_path: str):
-    """
-    Save detailed segment data to JSON file.
-    
-    Args:
-        segments: List of segments to save
-        output_path: Path for JSON output file
-    """
+    """Legacy segment JSON writer (retained for backward compatibility)."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
     data = []
     for seg in segments:
         data.append({
@@ -76,86 +75,59 @@ def save_segment_log(segments: List[Segment], output_path: str):
             "duration": seg.duration,
             "text_ja": seg.text_ja,
             "text_en_raw": seg.text_en_raw,
-            "text_en_final": seg.text_en_final
+            "text_en_final": seg.text_en_final,
         })
-    
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    
-    logger.info(f"Saved segment log to {output_path.name}")
+    logger.info(f"Saved legacy segment log to {output_path.name}")
 
 
-def _extract_audio_step(video_path: Path, audio_path: Path, audio_track: Optional[int]) -> Path:
-    """Extract audio from video."""
-    logger.info("\n[1/6] Extracting audio track from video...")
-    with start_span("extract_audio", video=str(video_path.name)):
-        if audio_track is None:
-            audio_track = find_japanese_audio_track(str(video_path)) or 0
-        return extract_audio_with_ffmpeg(str(video_path), str(audio_path), audio_track)
+def save_candidate_chain_log(asr_candidate: SubtitleCandidate, mt_candidate: SubtitleCandidate, final_candidate: SubtitleCandidate, output_path: str):
+    """Save unified candidate processing chain to JSON.
 
+    Structure:
+    {
+      "candidates": [
+         { id, language, source, origin_stream, segment_count, meta, segments: [ {start,end,duration,text} ] },
+         ...
+      ],
+      "final_candidate_id": "..."
+    }
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-def _transcribe_audio_step(audio_path: Path, config: Config) -> List[Segment]:
-    """Transcribe audio to Japanese text."""
-    logger.info("\n[2/6] Running Japanese ASR (Faster-Whisper)...")
-    with start_span("asr_transcription", model=config.asr_model_name, profile=config.profile):
-        asr = FasterWhisperASR(config)
-        return asr.transcribe_audio_to_segments(str(audio_path))
+    def serialize_candidate(c: SubtitleCandidate) -> dict:
+        return {
+            "id": c.id,
+            "language": c.language,
+            "source": c.source,
+            "origin_stream": c.origin_stream,
+            "segment_count": len(c.segments),
+            "meta": c.meta,
+            "segments": [
+                {
+                    "start": s.start,
+                    "end": s.end,
+                    "duration": round(s.end - s.start, 3),
+                    "text": s.text,
+                }
+                for s in c.segments
+            ],
+        }
 
+    data = {
+        "candidates": [
+            serialize_candidate(asr_candidate),
+            serialize_candidate(mt_candidate),
+            serialize_candidate(final_candidate),
+        ],
+        "final_candidate_id": final_candidate.id,
+    }
 
-def _translate_segments_step(segments: List[Segment], config: Config) -> List[Segment]:
-    """Translate Japanese segments to English."""
-    logger.info("\n[3/6] Translating Japanese to English (MarianMT)...")
-    with start_span("machine_translation", model=config.mt_model_name, device=config.mt_device):
-        translator = MarianTranslator(config)
-        segments = translator.translate_segments_ja_to_en(segments)
-        translator.unload_model()
-        return segments
-
-
-def _polish_segments_step(segments: List[Segment], config: Config, no_llm: bool) -> List[Segment]:
-    """Polish English translations with LLM."""
-    if no_llm or not config.llm_enabled:
-        logger.info("\n[4/6] Skipping LLM polishing (disabled)")
-        with start_span("llm_polish", enabled=False):
-            for seg in segments:
-                seg.text_en_final = seg.text_en_raw
-    else:
-        logger.info("\n[4/6] Polishing subtitles with LLM...")
-        with start_span("llm_polish", model=config.llm_model_name, base_url=config.llm_base_url):
-            segments = polish_english_subtitles_with_llm(segments, config)
-    return segments
-
-
-def _write_srt_step(segments: List[Segment], srt_path: Path, config: Config) -> Path:
-    """Write segments to SRT file."""
-    logger.info("\n[5/6] Writing SRT subtitle file...")
-    with start_span("write_srt", output=str(srt_path)):
-        # Re-validate constraints before writing
-        adjustments = enforce_subtitle_constraints_on_segments(segments, config)
-        if adjustments:
-            logger.info(f"Applied constraint adjustments to {adjustments} segment(s) before SRT generation")
-        srt_path = write_srt_file(segments, str(srt_path), config)
-        logger.info(f"✓ SRT file created: {srt_path}")
-        return Path(srt_path)
-
-
-def _mux_subtitles_step(video_path: Path, srt_path: Path, outbox_dir: Path, config: Config, no_mux: bool) -> Optional[Path]:
-    """Mux subtitles into video."""
-    if no_mux or not config.mux_enabled:
-        logger.info("\n[6/6] Skipping video muxing (disabled)")
-        return None
-    
-    logger.info("\n[6/6] Muxing subtitles into video...")
-    with start_span("mux_subtitles"):
-        suffix = config.mux_output_suffix
-        muxed_path = outbox_dir / f"{video_path.stem}.{suffix}{video_path.suffix}"
-        muxed_path = mux_subtitle_to_video(
-            str(video_path), str(srt_path), str(muxed_path),
-            config.get("mux", "subtitle_language", default="eng"),
-            config.get("mux", "subtitle_title", default="English")
-        )
-        logger.info(f"✓ Muxed video created: {muxed_path}")
-        return Path(muxed_path)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    logger.info(f"Saved candidate chain log to {output_path.name}")
 
 
 def process_video(
@@ -188,8 +160,9 @@ def process_video(
     
     # Prepare paths
     video_stem = video_path.stem
+    outbox_dir = Path(config.get_path("outbox"))
     audio_path = Path(config.get_path("temp")) / f"{video_stem}.wav"
-    srt_path = Path(config.get_path("outbox")) / f"{video_stem}.en.srt"
+    srt_path = outbox_dir / f"{video_stem}.en.srt"
     log_path = Path(config.get_path("logs")) / f"{video_stem}.json"
     
     result = {
@@ -226,7 +199,7 @@ def process_video(
             )
         
         # ===================================================================
-        # Step 2: Japanese ASR (Speech to Text)
+        # Step 2: Japanese ASR (Speech to Text, candidate-based)
         # ===================================================================
         logger.info("\n[2/6] Running Japanese ASR (Faster-Whisper)...")
         with start_span("asr_transcription", model=config.asr_model_name, profile=config.profile):
@@ -254,41 +227,41 @@ def process_video(
             # TEMP: skip unloading ASR model due to crash after destructor
             # asr.unload_model()
         
-        if not segments:
+        if not asr_candidate.segments:
             logger.error("No speech segments detected in audio")
             return result
         
-        logger.info(f"Transcribed {len(segments)} Japanese segments (audio track {audio_track}) candidate_origin={result.get('asr_candidate_origin_stream')}")
-        result["segment_count"] = len(segments)
+        logger.info(
+            f"Transcribed {asr_candidate.segment_count} segments (audio track {audio_track}) "
+            f"candidate_id={asr_candidate.id} origin={asr_candidate.origin_stream}"
+        )
         
         # ===================================================================
-        # Step 3: Japanese to English translation
+        # Step 3: Japanese to English translation (candidate-based)
         # ===================================================================
-        logger.info("\n[3/6] Translating Japanese to English (MarianMT)...")
+        logger.info("\n[3/6] Translating Japanese to English (MarianMT, candidate model)...")
         with start_span("machine_translation", model=config.mt_model_name, device=config.mt_device):
-            translator = MarianTranslator(config)
-            segments = translator.translate_segments_ja_to_en(segments)
-            translator.unload_model()
+            mt_candidate = translate_candidate_jp_to_en(asr_candidate, config)
         
         # ===================================================================
-        # Step 4: Optional LLM polishing
+        # Step 4: Optional LLM polishing (candidate-based)
         # ===================================================================
         if no_llm or not config.llm_enabled:
             logger.info("\n[4/6] Skipping LLM polishing (disabled)")
             with start_span("llm_polish", enabled=False):
-                for seg in segments:
-                    seg.text_en_final = seg.text_en_raw
+                final_candidate = mt_candidate  # pass-through
         else:
-            logger.info("\n[4/6] Polishing subtitles with LLM...")
+            logger.info("\n[4/6] Polishing subtitles with LLM (candidate model)...")
             with start_span("llm_polish", model=config.llm_model_name, base_url=config.llm_base_url):
-                segments = polish_english_subtitles_with_llm(segments, config)
+                polished_candidate = polish_candidate_with_llm(mt_candidate, config)
+                final_candidate = enforce_constraints_on_candidate(polished_candidate, config)
         
         # ===================================================================
-        # Step 5: Write SRT file
+        # Step 5: Write SRT file (candidate-based)
         # ===================================================================
-        logger.info("\n[5/6] Writing SRT subtitle file...")
+        logger.info("\n[5/6] Writing SRT subtitle file (from final candidate)...")
         with start_span("write_srt", output=str(srt_path)):
-            srt_path = write_srt_file(segments, str(srt_path), config)
+            srt_path = write_candidate_srt(final_candidate, str(srt_path), config)
             logger.info(f"✓ SRT file created: {srt_path}")
         
         # ===================================================================
@@ -314,11 +287,15 @@ def process_video(
                 logger.info(f"✓ Muxed video created: {muxed_path}")
         
         # ===================================================================
-        # Save segment log
+        # Save candidate chain log
         # ===================================================================
         if config.get("logging", "save_segment_json", default=True):
             with start_span("save_segment_log", output=str(log_path)):
-                save_segment_log(segments, str(log_path))
+                save_candidate_chain_log(asr_candidate, mt_candidate, final_candidate, str(log_path))
+        
+        # Update result metadata
+        result["segment_count"] = final_candidate.segment_count
+        result["final_candidate_id"] = final_candidate.id
         
         # ===================================================================
         # Cleanup temp files

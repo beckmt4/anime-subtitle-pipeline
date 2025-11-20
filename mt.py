@@ -17,7 +17,8 @@ from typing import List
 import torch
 from transformers import MarianMTModel, MarianTokenizer
 
-from asr import Segment
+from asr import Segment  # legacy Segment (for backward compatibility wrappers)
+from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -244,6 +245,39 @@ class MarianTranslator:
         logger.info("Translation complete")
         
         return segments
+
+    # ------------------------------------------------------------------
+    # New unified data-model API
+    # ------------------------------------------------------------------
+    def translate_candidate(self, candidate: SubtitleCandidate, target_language: str = "en") -> SubtitleCandidate:
+        """Translate a Japanese SubtitleCandidate to target language (default English).
+
+        Preserves timing; returns a NEW candidate whose segments contain the
+        translated text as `text`.
+        """
+        if not candidate.segments:
+            return SubtitleCandidate(
+                id=f"{candidate.id}_mt",
+                language=target_language,
+                source="mt",
+                origin_stream=candidate.origin_stream,
+                segments=[],
+                meta={"model": self.config.mt_model_name},
+            )
+        texts_ja = [s.text for s in candidate.segments]
+        translations = self.translate_batch(texts_ja)
+        new_segments = [
+            GenericSegment(start=s.start, end=s.end, text=t if t else "")
+            for s, t in zip(candidate.segments, translations)
+        ]
+        return SubtitleCandidate(
+            id=f"{candidate.id}_mt",
+            language=target_language,
+            source="mt",
+            origin_stream=candidate.origin_stream,
+            segments=new_segments,
+            meta={"model": self.config.mt_model_name},
+        )
     
     def unload_model(self) -> None:
         """
@@ -278,6 +312,14 @@ def translate_segments_ja_to_en(segments: List[Segment], config: Config) -> List
     return segments
 
 
+def translate_candidate_jp_to_en(candidate: SubtitleCandidate, config: Config) -> SubtitleCandidate:
+    """Convenience function translating a Japanese candidate to English."""
+    translator = MarianTranslator(config)
+    result = translator.translate_candidate(candidate, target_language="en")
+    translator.unload_model()
+    return result
+
+
 # Alternative: Keep model loaded for batch processing
 class BatchTranslator:
     """
@@ -303,3 +345,13 @@ class BatchTranslator:
     def translate(self, segments: List[Segment]) -> List[Segment]:
         """Translate segments."""
         return self.translator.translate_segments_ja_to_en(segments)
+
+    def translate_candidate(self, candidate: SubtitleCandidate) -> SubtitleCandidate:
+        return self.translator.translate_candidate(candidate, target_language="en")
+
+__all__ = [
+    "MarianTranslator",
+    "translate_segments_ja_to_en",
+    "translate_candidate_jp_to_en",
+    "BatchTranslator",
+]
