@@ -1,35 +1,49 @@
-# Benchmark Mode Quick Reference
+# Benchmark Mode Quick Reference (Generalized)
 
 ## What It Does
-Compares different English subtitle generation methods against an embedded reference subtitle track.
+Generates and compares ALL available English subtitle candidates derived from:
 
-## Prerequisites
-- Video with embedded EN subtitle (reference)
-- At least one audio track (EN or JP)
+- Embedded EN subtitle streams
+- Embedded JP subtitle streams → Machine Translation (→ optional LLM polish)
+- EN audio tracks → ASR
+- JP audio tracks → ASR → MT (→ optional LLM polish)
+
+Supports multi-track inputs, smart reference selection via priority list, and optional full pairwise comparison matrix.
+
+## Minimum Requirements
+
+At least one of the following present in the media:
+
+- EN subtitle track (text-based)
+- JP subtitle track (text-based)
+- EN audio track
+- JP audio track
+
+Recommended for richest comparison: Both EN & JP audio plus both subtitle languages.
 
 ## CLI Usage
 
 ```bash
-# Run benchmark on a video
-python main.py video.mkv --mode benchmark
-
-# Benchmark without LLM polishing
-python main.py video.mkv --mode benchmark --no-llm
-
-# Check what tracks are available first
-python main.py video.mkv --list-tracks
+python main.py video.mkv --mode benchmark              # Standard run
+python main.py video.mkv --mode benchmark --no-llm     # Skip LLM polish
+python main.py video.mkv --list-tracks                 # Inspect streams first
 ```
 
 ## Output
-Creates `outbox/benchmark_results.json` with:
-- Reference subtitle metadata
-- Generated candidate metadata
-- Comparison metrics (WER, BLEU, chrF)
-- Text differences between candidates
 
-## Comparison Candidates
-1. **EN Audio ASR**: Direct English speech recognition (if EN audio exists)
-2. **JP Audio ASR→MT→LLM**: Japanese audio → ASR → Translation → Polish (if JP audio exists)
+Creates `outbox/benchmark_results.json` containing:
+
+- `reference_id`: Chosen reference candidate (priority-based)
+- `candidates`: All generated EN candidates with metadata
+- `comparisons`: Reference comparisons plus optional pairwise matrix
+- Metrics per comparison (WER, BLEU, chrF) + truncated diffs list
+
+## Candidate Types (IDs contain source cues)
+
+- `embedded_en_sX` – Direct embedded English subtitle track
+- `embedded_jp_mt[_llm]_sY` – JP subtitle → MT (→ optional LLM)
+- `en_audio_asr_aN` – EN audio track → ASR
+- `ja_audio_asr_mt[_llm]_aM` – JP audio → ASR → MT (→ optional LLM)
 
 ## Metrics Explained
 
@@ -39,33 +53,66 @@ Creates `outbox/benchmark_results.json` with:
 | **BLEU** | 0 - 100 | Higher | Translation quality (100 = perfect) |
 | **chrF** | 0 - 100 | Higher | Character-level similarity (100 = perfect) |
 
-## Example Output Summary
+## Example Comparison Summary (abbreviated)
+
+```text
+Benchmark Summary (reference = embedded_en_s10):
+  en_audio_asr_a0 vs embedded_en_s10: WER=14.2%, BLEU=72.3, chrF=84.1
+  en_audio_asr_a1 vs embedded_en_s10: WER=15.9%, BLEU=70.8, chrF=83.5
+  ja_audio_asr_mt_llm_a2 vs embedded_en_s10: WER=31.7%, BLEU=46.2, chrF=66.4
+  embedded_jp_mt_llm_s11 vs embedded_en_s10: WER=28.5%, BLEU=50.1, chrF=69.2
 ```
-Benchmark Summary:
-  en_audio_asr vs embedded_en_s2: WER=15.23%, BLEU=68.4, chrF=82.2
-  ja_audio_asr_mt_llm vs embedded_en_s2: WER=32.41%, BLEU=45.2, chrF=65.8
+
+Enable pairwise matrix (`compare_all_pairs: true`) to see all remaining cross-source comparisons.
+
+## Configuration Snippet (`config.yaml`)
+
+```yaml
+benchmark:
+  sources:
+    use_embedded_en: true
+    use_embedded_jp: true
+    use_en_audio: true
+    use_ja_audio: true
+  reference_priority:
+    - embedded_en
+    - en_audio_asr
+    - ja_audio_asr_mt
+    - embedded_jp_mt
+  compare_all_pairs: false          # set true for full matrix
+  max_diffs_per_comparison: 20      # truncate diff list
+  metrics:                          # (currently always computed)
+    compute_wer: true
+    compute_bleu: true
+    compute_chrf: true
 ```
 
-## Common Issues
+## Common Issues & Tips
 
-**"Benchmark requires embedded EN subtitle track"**
-- Solution: Ensure video has text-based EN subtitle stream (check with `--list-tracks`)
+**Missing candidates** – Check `--list-tracks` output; ensure text-based (non-bitmap) subtitles.
 
-**"No audio track found"**
-- Solution: Video needs at least one audio track (EN or JP)
+**BLEU = 0** – Normal for very short / dissimilar segments; rely more on WER + chrF.
 
-**Metrics show 0 or unexpected values**
-- Short subtitle segments may produce zero BLEU scores (expected)
-- WER and chrF are more reliable for short texts
+**Large WER** – May indicate segmentation drift (ASR chunking vs subtitle timing); inspect diff samples.
+
+**Performance slow** – Disable LLM polish or pairwise matrix; reduce active sources.
+
+**Reference unexpected** – Adjust `reference_priority` ordering.
 
 ## Testing
-Run comprehensive tests:
+
+Run comparison logic tests:
+
 ```bash
 python test_benchmark.py
 ```
 
+Run generalized orchestration tests:
+
+```bash
+python test_benchmark_generalized.py
+```
+
 ## Next Steps
-See `BENCHMARK_IMPLEMENTATION.md` for:
-- Detailed architecture
-- Future enhancement plans
-- Technical implementation details
+
+See `BENCHMARK_IMPLEMENTATION.md` for full architecture, evolution notes, and enhancement roadmap.

@@ -1,232 +1,182 @@
-# Benchmark Mode Implementation Summary
+# Benchmark Mode Implementation Summary (Generalized)
 
-## Overview
+## Evolution
 
-Added minimal benchmarking capability to compare different English subtitle generation methods against an embedded reference subtitle track.
+The benchmark mode has been generalized from an initial minimal design (single embedded EN reference + two candidates) to a multi-track, multi-source system capable of evaluating every available English subtitle candidate derived from:
 
-## New Files Created
+- Embedded EN subtitle streams
+- Embedded JP subtitle streams → MT (→ optional LLM polish)
+- EN audio tracks → ASR
+- JP audio tracks → ASR → MT (→ optional LLM polish)
 
-### 1. `compare_core.py`
-Core comparison module providing:
+It supports multiple tracks per type, smart reference selection via configurable priority, and optional full pairwise comparison matrices.
 
-- **`align_segments(ref, cand)`**: Temporal alignment of subtitle segments based on maximum time overlap
-  - Returns list of `(ref_segment, cand_segment)` pairs
-  - Handles many-to-one mappings (multiple ref segments → same candidate)
-  
-- **`compute_metrics(ref_texts, cand_texts)`**: Text quality metrics using standard libraries
-  - **WER** (Word Error Rate) via `jiwer` - lower is better, 0.0 = perfect
-  - **BLEU** score via `sacrebleu` - higher is better, 100.0 = perfect  
-  - **chrF** (character F-score) via `sacrebleu` - higher is better, 100.0 = perfect
-  
-- **`compare_candidates(ref, cand)`**: Complete comparison workflow
-  - Aligns segments temporally
-  - Computes all metrics
-  - Identifies differing text segments
-  - Returns structured comparison dict
+## Core Modules
 
-### 2. `benchmark.py`
-Orchestration module for running benchmarks:
+### `compare_core.py`
 
-- **`run_benchmark(video_path, config, use_llm, output_dir)`**:
-  1. Extracts embedded EN subtitle track → reference `SubtitleCandidate`
-  2. Generates EN candidate from EN audio ASR (if EN audio exists)
-  3. Generates EN candidate from JP audio ASR → MT → LLM (if JP audio exists)
-  4. Compares both candidates against reference
-  5. Saves results to `benchmark_results.json`
+Unchanged from the minimal phase – provides alignment and metric computation:
 
-**Helper functions**:
-- `find_embedded_en_subtitle(media)`: Locates first English text subtitle stream
-- `find_audio_track_by_language(media, lang_codes)`: Finds audio track by language
+- `align_segments(ref, cand)` – temporal alignment (max overlap strategy, many-to-one tolerant)
+- `compute_metrics(ref_texts, cand_texts)` – WER (jiwer), BLEU & chrF (sacrebleu)
+- `compare_candidates(ref, cand, diff_threshold)` – orchestrates alignment + metrics + diff extraction
 
-### 3. `test_benchmark.py`
-Comprehensive test suite for comparison functionality:
+### `benchmark.py` (Generalized)
 
-- `test_compute_overlap()`: Validates time overlap calculations
-- `test_align_segments_perfect()`: Perfect timing correspondence
-- `test_align_segments_many_to_one()`: Multiple ref segments → one candidate
-- `test_compute_metrics_perfect()`: Identical text metrics
-- `test_compute_metrics_different()`: Different text metrics
-- `test_compare_candidates_basic()`: End-to-end comparison workflow
+New capabilities:
 
-### 4. `benchmark_results_example.json`
-Example output structure showing:
-- Video filename
-- Reference candidate metadata (embedded subtitle)
-- Generated candidates metadata (EN ASR, JP ASR→MT→LLM)
-- Comparison results with metrics and text diffs
+1. Multi-track discovery (`find_all_tracks_by_language`) for audio & subtitles (EN + JP)
+2. Comprehensive candidate generation loops for each enabled source category
+3. Reference selection (`select_reference_candidate`) using ordered priority list in config
+4. Comparison phase:
 
-## Modified Files
+- Always: all non-reference candidates vs reference
+- Optional: full pairwise comparisons across all candidates (`compare_all_pairs: true`)
 
-### `requirements.txt`
-Added dependencies:
-```
-jiwer>=3.0.0  # Word Error Rate
-sacrebleu>=2.4.0  # BLEU, chrF scores
-```
+- Output structure updated: `reference_id`, full candidate metadata list, aggregated comparisons array (may include duplicates when pairwise enabled)
 
-### `main.py`
-Extended CLI with benchmark mode:
+### New Test File `test_benchmark_generalized.py`
 
-**New argument**:
-```python
---mode {subtitle,benchmark}
+Adds deterministic tests for generalized logic using monkeypatch stubs (no ffmpeg / ASR / MT calls):
+
+- Generation & reference selection across multiple tracks
+- Fallback reference logic when primary source absent
+- Pairwise matrix size validation
+
+## Configuration (`config.yaml` benchmark section)
+
+```yaml
+benchmark:
+  sources:
+    use_embedded_en: true
+    use_embedded_jp: true
+    use_en_audio: true
+    use_ja_audio: true
+  reference_priority:
+    - embedded_en
+    - en_audio_asr
+    - ja_audio_asr_mt
+    - embedded_jp_mt
+  compare_all_pairs: false
+  max_diffs_per_comparison: 20
+  metrics:               # (present; current code always computes all)
+    compute_wer: true
+    compute_bleu: true
+    compute_chrf: true
 ```
 
-**New dispatch logic**:
-- `--mode benchmark`: Calls `run_benchmark()`, displays summary metrics
-- `--mode subtitle` (default): Existing subtitle generation pipeline
+### Reference Priority Semantics
 
-**Example usage**:
-```bash
-python main.py video.mkv --mode benchmark
-python main.py video.mkv --mode benchmark --no-llm
-```
+The first candidate whose `id` contains one of the ordered tokens becomes the reference. This enables flexible experimentation (e.g., promote ASR output to reference by moving `en_audio_asr` earlier).
 
-## Benchmark Output Structure
+## Output Structure (Generalized Example)
 
 ```json
 {
-  "video": "example_video.mkv",
-  "reference": {
-    "id": "embedded_en_s2",
-    "source": "embedded",
-    "language": "en",
-    "segment_count": 45
-  },
+  "video": "sample.mkv",
+  "reference_id": "embedded_en_s10",
   "candidates": [
-    {
-      "id": "en_audio_asr",
-      "source": "asr",
-      "language": "en",
-      "segment_count": 43
-    },
-    {
-      "id": "ja_audio_asr_mt_llm",
-      "source": "asr_mt_llm",
-      "language": "en",
-      "segment_count": 48
-    }
+    {"id": "embedded_en_s10", "source": "embedded", "language": "en", "segment_count": 120, "origin_stream": "sub:10"},
+    {"id": "embedded_jp_mt_llm_s11", "source": "embedded_mt_llm", "language": "en", "segment_count": 118},
+    {"id": "en_audio_asr_a0", "source": "asr", "language": "en", "segment_count": 125, "origin_stream": "audio:0"},
+    {"id": "en_audio_asr_a1", "source": "asr", "language": "en", "segment_count": 124, "origin_stream": "audio:1"},
+    {"id": "ja_audio_asr_mt_llm_a2", "source": "asr_mt_llm", "language": "en", "segment_count": 130, "origin_stream": "audio:2"}
   ],
   "comparisons": [
-    {
-      "ref_id": "embedded_en_s2",
-      "cand_id": "en_audio_asr",
-      "metrics": {
-        "wer": 0.1523,    // 15.23% word error rate
-        "bleu": 68.4,     // BLEU score out of 100
-        "chrf": 82.15     // Character F-score out of 100
-      },
-      "num_segments": 43,
-      "num_diffs": 12,
-      "diffs": [
-        {
-          "start": 12.5,
-          "end": 15.2,
-          "ref": "I can't believe it",
-          "cand": "I cannot believe it"
-        }
-        // ... up to 20 diffs shown
-      ]
-    }
-    // ... second comparison (JP→EN vs reference)
+    {"ref_id": "embedded_en_s10", "cand_id": "en_audio_asr_a0", "metrics": {"wer": 0.14, "bleu": 72.3, "chrf": 84.1}, "num_diffs": 34, "diffs": [...]},
+    {"ref_id": "embedded_en_s10", "cand_id": "en_audio_asr_a1", ...},
+    {"ref_id": "embedded_en_s10", "cand_id": "ja_audio_asr_mt_llm_a2", ...},
+    {"ref_id": "embedded_en_s10", "cand_id": "embedded_jp_mt_llm_s11", ...},
+    {"ref_id": "en_audio_asr_a0", "cand_id": "en_audio_asr_a1", ...},
+    {"ref_id": "en_audio_asr_a0", "cand_id": "ja_audio_asr_mt_llm_a2", ...},
+    ... (pairwise matrix continues)
   ]
 }
 ```
 
-## Key Design Decisions
+Note: When `compare_all_pairs` is `true`, comparisons against the reference are duplicated in pairwise listings (design acceptable for exploratory analysis; downstream tooling can deduplicate if desired).
 
-### 1. Minimal Scope
-- **One reference**: Embedded EN subtitle only
-- **Two candidates**: EN audio ASR, JP audio ASR→MT→LLM
-- Skips benchmark if embedded EN subtitle not found
-- Future: Support multiple references, embedded JP subtitles, etc.
+## Alignment Strategy Recap
 
-### 2. Temporal Alignment
-- Uses **maximum time overlap** strategy
-- Handles mismatched segment counts (many-to-one mapping)
-- Fallback to nearest segment by midpoint if no overlap
+- Primary: Maximum temporal overlap per reference segment
+- Tie-breaking: Nearest midpoint when no overlap candidates
+- Many-to-one: Permitted; metrics treat candidate segment text once per aligned pair
 
-### 3. Metric Selection
-- **WER**: Standard ASR quality metric
-- **BLEU**: Machine translation quality (corpus-level)
-- **chrF**: Character-level similarity (more robust for short texts)
+## Metric Interpretation
 
-### 4. Integration
-- Reuses existing `SubtitleCandidate` model
-- Leverages `media_inspect` for track discovery
-- Uses existing ASR/MT/LLM pipeline
-- Preserves candidate chain metadata
+- WER: Sensitive to tokenization and punctuation normalization (jiwer default chain)
+- BLEU: Can be 0 on short or highly dissimilar segments (expected behavior)
+- chrF: More stable for short subtitles; complements BLEU
 
-## Testing
+## Performance Considerations
 
-All tests passing:
-```
-✅ Overlap computation tests passed
-✅ Perfect alignment test passed  
-✅ Many-to-one alignment test passed
-✅ Perfect match metrics test passed
-✅ Different text metrics test passed
-✅ Basic comparison test passed
-```
+- Multi-track extraction increases I/O (each audio track demux + ASR pass)
+- Optional LLM polishing doubles processing for MT-derived candidates; disable via `--no-llm` for faster baseline runs
+- Pairwise matrix scales O(N²); use only when necessary for cross-candidate comparative research
 
-**Example metrics from test**:
-- Comparing "Hello there" vs "Hey there":
-  - WER: 60.00% (one word different)
-  - BLEU: 0.0 (short text, no 4-gram matches)
-  - chrF: 27.2 (moderate character overlap)
+## Testing Overview
+
+Minimal comparison logic tests remain (`test_benchmark.py`). Generalized orchestration covered by `test_benchmark_generalized.py` with monkeypatched environment (no external tooling).
+
+## Future Enhancements (Next Iteration Targets)
+
+1. Honor metric toggles in config (compute_wer/compute_bleu/compute_chrf).
+2. Add aggregate summary table (per-source averages, variance metrics).
+3. Provide HTML/Markdown report renderer with color-coded diff highlights.
+4. Introduce normalization pipeline (case folding, punctuation control) selectable via config.
+5. Caching for ASR/MT intermediate artifacts keyed by audio/sub stream hash.
+6. Add source confidence metadata (e.g., ASR average probability) to candidates.
+7. Optional pruning of near-duplicate segments before metric computation.
+
+## File Changes Summary (Generalized Phase)
+
+- `benchmark.py` rewritten for multi-track candidate generation and pairwise comparison capability.
+- `test_benchmark_generalized.py` added for orchestration tests.
+- Documentation (this file + quickstart) updated to reflect new functionality.
+
+## Backwards Compatibility
+
+- CLI invocation unchanged (`--mode benchmark`).
+- Existing environments without JP tracks still produce meaningful results (EN-only path).
+- Output JSON extended, not breaking previous keys (`video`, `candidates`, `comparisons`).
 
 ## Usage Examples
 
-### Basic Benchmark
+Basic run:
+
 ```bash
 python main.py video.mkv --mode benchmark
 ```
 
-### Benchmark Without LLM Polishing
+Disable LLM polish:
+
 ```bash
 python main.py video.mkv --mode benchmark --no-llm
 ```
 
-### Check Available Tracks First
-```bash
-python main.py video.mkv --list-tracks
-python main.py video.mkv --mode benchmark
+Enable pairwise comparisons (edit config or inline patch):
+
+```yaml
+benchmark:
+  compare_all_pairs: true
 ```
 
-## Requirements
+## Validation Checklist
 
-Video must have:
-- ✅ At least one embedded English subtitle track (text-based, not bitmap)
-- ✅ At least one audio track (EN or JP)
+✅ Multi-source discovery
+✅ Candidate generation (EN + JP derived)
+✅ Reference priority selection
+✅ Reference comparisons
+✅ Optional pairwise matrix
+✅ Diff truncation (`max_diffs_per_comparison`)
+✅ Documentation updated
 
-Recommended:
-- Both EN and JP audio tracks for comprehensive comparison
-- Text-based subtitles (not image-based PGS/VobSub)
+## Known Limitations
 
-## Future Enhancements
+- Metric toggles currently not enforced (all metrics always computed).
+- Pairwise comparisons duplicate reference pair entries.
+- Bitmap subtitle OCR not implemented.
+- No persistence/caching of ASR/MT intermediate artifacts.
 
-This minimal implementation sets the foundation for:
-1. Multiple reference tracks (embedded JP, multiple EN variants)
-2. Grid comparison (all candidates vs all references)
-3. Custom metric selection
-4. HTML/markdown report generation
-5. Batch benchmarking across multiple videos
-6. Statistical aggregation and visualization
-7. OCR support for bitmap subtitles
-
-## Files Affected Summary
-
-**New files** (5):
-- `compare_core.py` - Core comparison logic
-- `benchmark.py` - Orchestration
-- `test_benchmark.py` - Tests
-- `benchmark_results_example.json` - Example output
-- This summary document
-
-**Modified files** (2):
-- `requirements.txt` - Added jiwer, sacrebleu
-- `main.py` - Added --mode benchmark CLI argument
-
-**All tests passing** ✅
-**CLI integration working** ✅
-**No breaking changes to existing pipeline** ✅
+---
+This document supersedes the earlier minimal benchmark summary; historical context retained here as part of evolution notes.
