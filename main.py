@@ -405,9 +405,9 @@ Examples:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["subtitle", "benchmark"],
-        default="subtitle",
-        help="Run mode: 'subtitle' (default) or 'benchmark' (compare methods)"
+        choices=["subtitle", "generate", "benchmark"],
+        default="generate",
+        help="Run mode: 'generate' (production EN subs), 'benchmark' (compare methods), 'subtitle' (legacy JP→EN pipeline)"
     )
     
     parser.add_argument(
@@ -491,37 +491,38 @@ Examples:
     # Dispatch to appropriate mode
     try:
         if args.mode == "benchmark":
-            # Benchmark mode: compare subtitle generation methods
-            from benchmark import run_benchmark
-            
+            from orchestrator import run_benchmark as orch_benchmark
             logger.info("Running in BENCHMARK mode")
-            result = run_benchmark(
-                video_path=args.video,
-                config=config,
-                use_llm=(not args.no_llm),
-            )
-            
+            media = inspect_media(args.video)
+            result = orch_benchmark(media, config)
             logger.info("\nBenchmark Summary:")
             for comparison in result.get("comparisons", []):
                 metrics = comparison["metrics"]
                 logger.info(
                     f"  {comparison['cand_id']} vs {comparison['ref_id']}: "
-                    f"WER={metrics['wer']:.2%}, BLEU={metrics['bleu']:.1f}, "
-                    f"chrF={metrics['chrf']:.1f}"
+                    f"WER={metrics['wer']:.2%}, BLEU={metrics['bleu']:.1f}, chrF={metrics['chrf']:.1f}"
                 )
-            
             sys.exit(0)
-        
-        else:
-            # Default subtitle generation mode
+        elif args.mode == "generate":
+            from orchestrator import run_generate
+            logger.info("Running in GENERATE mode (strategy selection)")
+            media = inspect_media(args.video)
+            meta = run_generate(media, config)
+            logger.info("\nGeneration Result:")
+            logger.info(f"  Strategy: {meta['strategy']}")
+            logger.info(f"  Candidate: {meta['candidate_id']}")
+            logger.info(f"  Segments: {meta['segment_count']}")
+            logger.info(f"  Output SRT: {meta['output_srt']}")
+            sys.exit(0)
+        else:  # legacy subtitle mode
+            logger.info("Running in legacy SUBTITLE mode (JP audio → ASR → MT → LLM)")
             result = process_video(
                 video_path=args.video,
                 config=config,
                 no_llm=args.no_llm,
                 no_mux=args.no_mux,
-                audio_track=args.audio_track
+                audio_track=args.audio_track,
             )
-            
             if result["success"]:
                 sys.exit(0)
             else:

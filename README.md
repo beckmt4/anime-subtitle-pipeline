@@ -4,8 +4,9 @@ A **production-quality**, **local-only** pipeline for generating English subtitl
 
 ## Features
 
+- 🎬 **Generation & Evaluation**: Production generate mode (best EN subtitles) + benchmark mode (compare all candidate sources)
 - 🎬 **Complete Pipeline**: Video → Audio → Japanese ASR → English Translation → LLM Polishing → SRT Subtitles
-- 🚀 **State-of-the-Art Models**: 
+- 🚀 **State-of-the-Art Models**:
   - Whisper Large V3 Turbo for Japanese ASR
   - Helsinki-NLP MarianMT for translation
   - Qwen2.5 LLM for natural subtitle polishing
@@ -17,11 +18,13 @@ A **production-quality**, **local-only** pipeline for generating English subtitl
 ## Hardware Requirements
 
 ### Development Box (Minimum)
+
 - GPU: NVIDIA RTX A3000 6 GB (or equivalent)
 - RAM: 16 GB
 - Storage: 20 GB free (for models)
 
 ### Production Box (Recommended)
+
 - GPU: NVIDIA RTX 4090 24 GB (or equivalent)
 - RAM: 32 GB
 - Storage: 30 GB free
@@ -33,6 +36,7 @@ A **production-quality**, **local-only** pipeline for generating English subtitl
 ### 1. Prerequisites
 
 #### ffmpeg (Required)
+
 ```powershell
 # Windows: Download from https://ffmpeg.org/ and add to PATH
 # Or use Chocolatey:
@@ -46,14 +50,17 @@ brew install ffmpeg
 ```
 
 Verify installation:
+
 ```powershell
 ffmpeg -version
 ```
 
 #### CUDA (For GPU Support)
+
 Download and install NVIDIA CUDA Toolkit:
-- CUDA 11.8: https://developer.nvidia.com/cuda-11-8-0-download-archive
-- CUDA 12.1: https://developer.nvidia.com/cuda-12-1-0-download-archive
+
+- CUDA 11.8: <https://developer.nvidia.com/cuda-11-8-0-download-archive>
+- CUDA 12.1: <https://developer.nvidia.com/cuda-12-1-0-download-archive>
 
 ### 2. Python Environment
 
@@ -72,7 +79,8 @@ source venv/bin/activate
 
 ### 3. Install Dependencies
 
-#### For GPU (CUDA 11.8):
+#### For GPU (CUDA 11.8)
+
 ```powershell
 # Install PyTorch 2.6+ with CUDA support (required for security fixes)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -81,14 +89,16 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install -r requirements.txt
 ```
 
-#### For GPU (CUDA 12.1):
+#### For GPU (CUDA 12.1)
+
 ```powershell
 # Install PyTorch 2.6+ with CUDA support
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
-#### For CPU-only:
+#### For CPU-only
+
 ```powershell
 pip install -r requirements.txt
 ```
@@ -136,19 +146,40 @@ The server runs on `http://localhost:11434` by default.
 
 ## Quick Start
 
-### Basic Usage
+### Basic Usage (Generate Mode)
 
 ```powershell
 # Process a video with default settings
 python main.py video.mkv
 ```
 
-This will:
-1. Extract Japanese audio
-2. Transcribe to Japanese text (Whisper)
-3. Translate to English (MarianMT)
-4. Polish with LLM (if enabled)
-5. Generate `video.en.srt` in `outbox/`
+This will auto-select the best available path to high-quality English subtitles using the orchestrator logic:
+
+Decision order (default):
+1. Embedded English subtitles (demux)
+2. English audio → ASR
+3. Japanese subtitles → MT (→ LLM)
+4. Japanese audio → ASR → MT (→ LLM)
+
+Output: `outbox/video.en.srt`
+
+Override selection via `generate` section in `config.yaml`.
+
+### Benchmark Mode
+
+Generate all possible English subtitle candidates and compare with WER, BLEU, chrF:
+
+```powershell
+python main.py video.mkv --mode benchmark
+```
+
+Benchmark output: `outbox/benchmark_results.json` containing reference candidate, all other candidates, comparisons (metrics + diffs).
+
+Enable pairwise matrix in `config.yaml`:
+```yaml
+benchmark:
+  compare_all_pairs: true
+```
 
 ### Configuration
 
@@ -170,6 +201,15 @@ runtime:
 ```
 
 ### CLI Options
+# Generate (strategy selection)
+python main.py video.mkv --mode generate
+
+# Legacy subtitle pipeline (JP audio → ASR → MT → LLM)
+python main.py video.mkv --mode subtitle
+
+# Benchmark all sources
+python main.py video.mkv --mode benchmark
+
 
 ```powershell
 # Use prod profile (for 4090 GPU)
@@ -190,7 +230,7 @@ python main.py video.mkv --log-level DEBUG
 
 ## Configuration Guide
 
-### config.yaml Structure
+### config.yaml Structure (Key Sections)
 
 ```yaml
 runtime:
@@ -218,6 +258,90 @@ mt:
   model_name: "Helsinki-NLP/opus-mt-ja-en"
   device: "cpu"
   batch_size: 16
+ 
+generate:
+  prefer_subtitles: true          # Prefer existing EN subs
+  prefer_audio_language: "auto"   # "en" | "ja" | "auto"
+  use_llm_polish: true            # Polish MT outputs
+
+benchmark:
+  sources:
+    use_embedded_en: true
+    use_embedded_jp: true
+    use_en_audio: true
+    use_ja_audio: true
+  reference_priority:
+    - embedded_en
+    - en_audio_asr
+    - ja_audio_asr_mt
+    - embedded_jp_mt
+  compare_all_pairs: false
+  max_diffs_per_comparison: 20
+## Orchestrator Architecture
+
+`orchestrator.py` provides high-level flows:
+
+- `run_generate(media, cfg)` – Chooses best source path for production subtitles, returns metadata + writes final `.en.srt`.
+- `run_benchmark(media, cfg)` – Delegates to generalized benchmark engine, producing comparison JSON.
+
+Source candidate types:
+- `embedded_en_sX` – Direct English subtitle track
+- `en_audio_asr_aN` – English audio ASR
+- `embedded_jp_mt[_llm]_sY` – Japanese subtitle translated (optional LLM)
+- `ja_audio_asr_mt[_llm]_aM` – Japanese audio → ASR → MT (optional LLM)
+
+Benchmark metrics:
+- **WER** – Word Error Rate (lower better)
+- **BLEU** – Translation quality (higher better)
+- **chrF** – Character F-score (higher better)
+
+Decision logic (simplified):
+```
+if prefer_subtitles and EN subtitles exist:
+  use embedded EN
+elif prefer_audio_language == 'en' and EN audio exists:
+  use EN audio ASR
+elif JP subtitles exist:
+  JP subs → MT (→ LLM)
+elif (prefer_audio_language in ['ja','auto']) and JP audio exists:
+  JP audio → ASR → MT (→ LLM)
+elif EN audio exists:
+  EN audio ASR
+else:
+  error (no usable source)
+```
+
+## Example Commands
+
+```powershell
+# Production (auto strategy)
+python main.py movie.mkv --mode generate
+
+# Force audio-first by disabling subtitle preference
+python main.py movie.mkv --mode generate --config custom.yaml  # custom.yaml sets prefer_subtitles: false
+
+# Benchmark comparisons (reference auto-selected)
+python main.py movie.mkv --mode benchmark
+
+# Full pairwise benchmark
+python main.py movie.mkv --mode benchmark --config pairwise.yaml  # pairwise.yaml sets compare_all_pairs: true
+
+# Legacy JP→EN pipeline for reproducibility
+python main.py movie.mkv --mode subtitle --no-llm
+```
+
+## Evaluation Outputs
+
+- `outbox/<video>.en.srt` – Final production subtitles.
+- `outbox/benchmark_results.json` – Comparison metrics & diffs.
+- `logs/<video>.json` – Candidate chain (legacy pipeline) when enabled.
+
+## Next Steps & Extensibility
+
+- Add HTML report renderer for benchmark results.
+- Implement metric toggle enforcement (currently always computed).
+- Caching intermediate ASR/MT outputs for faster repeated benchmarking.
+
 
 llm:
   enabled: true

@@ -153,3 +153,9 @@ benchmark:
   
   compare_all_pairs: false        # If true, compare all candidates pairwise (not just vs reference)
   max_diffs_per_comparison: 20    # Max number of text diffs to include in output
+  
+  # Generation mode strategy configuration
+  generate:
+    prefer_subtitles: true          # If true, prefer existing English subtitles over audio
+    prefer_audio_language: "auto"   # "en" | "ja" | "auto" (auto chooses EN if available else JA)
+    use_llm_polish: true            # Apply LLM polishing when path involves MT
