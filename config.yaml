@@ -21,7 +21,7 @@ paths:
 # ASR (Automatic Speech Recognition) - Faster-Whisper
 asr:
   model_name: "large-v3-turbo"  # Whisper model variant
-  device: "auto"                 # auto | cuda | cpu
+  device: "cuda"                 # auto | cuda | cpu
   
   # Dev profile settings (6GB GPU)
   dev:
@@ -129,33 +129,12 @@ logging:
   save_segment_json: true         # Save detailed JSON logs
   console_progress: true          # Show progress bars
 
-# Benchmark mode configuration
-benchmark:
-  # Which sources to include in benchmark
-  sources:
-    use_embedded_en: true         # Extract embedded EN subtitles
-    use_embedded_jp: true         # Extract embedded JP subtitles → MT
-    use_en_audio: true            # EN audio → ASR
-    use_ja_audio: true            # JP audio → ASR → MT
-  
-  # Which metrics to compute
-  metrics:
-    compute_wer: true             # Word Error Rate
-    compute_bleu: true            # BLEU score
-    compute_chrf: true            # Character F-score
-  
-  # Comparison options
-  reference_priority:             # Order of preference for reference candidate
-    - "embedded_en"               # 1st choice: embedded EN subtitle
-    - "en_audio_asr"              # 2nd choice: EN audio ASR
-    - "ja_audio_asr_mt"           # 3rd choice: JP audio → MT
-    - "embedded_jp_mt"            # 4th choice: embedded JP → MT
-  
-  compare_all_pairs: false        # If true, compare all candidates pairwise (not just vs reference)
-  max_diffs_per_comparison: 20    # Max number of text diffs to include in output
-  
-  # Generation mode strategy configuration
-  generate:
-    prefer_subtitles: true          # If true, prefer existing English subtitles over audio
-    prefer_audio_language: "auto"   # "en" | "ja" | "auto" (auto chooses EN if available else JA)
-    use_llm_polish: true            # Apply LLM polishing when path involves MT
+# Generation mode strategy configuration
+# Read by orchestrator.run_generate via cfg.get("generate", ...).
+# This is a TOP-LEVEL key; previously it was nested under benchmark:
+# which caused the orchestrator to silently fall back to defaults.
+generate:
+  prefer_subtitles: true          # If true, prefer existing English subtitles over audio
+  prefer_audio_language: "auto"   # "en" | "ja" | "auto" (auto chooses EN if available else JA)
+  use_llm_polish: true            # Apply LLM polishing when path involves MT
+

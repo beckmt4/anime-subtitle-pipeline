@@ -264,8 +264,24 @@ class MarianTranslator:
                 segments=[],
                 meta={"model": self.config.mt_model_name},
             )
-        texts_ja = [s.text for s in candidate.segments]
-        translations = self.translate_batch(texts_ja)
+        # Iterate in mt_batch_size chunks. Previously this passed the entire
+        # segment list to translate_batch() as a single call, which caused
+        # tokenizer padding to the longest sequence across ALL segments and a
+        # single model.generate(num_beams=4) over the full padded tensor. On
+        # CPU with ~900 segments this ballooned RAM to ~48 GB and ran for
+        # hours. Matches the batching pattern in translate_segments_ja_to_en.
+        batch_size = self.config.mt_batch_size
+        total = len(candidate.segments)
+        num_batches = (total - 1) // batch_size + 1
+        logger.info(
+            f"Translating {total} segments (JA → EN) in {num_batches} batches of {batch_size}"
+        )
+        translations: List[str] = []
+        for i in range(0, total, batch_size):
+            batch = candidate.segments[i:i + batch_size]
+            batch_texts = [s.text for s in batch]
+            logger.debug(f"Translating batch {i // batch_size + 1}/{num_batches}")
+            translations.extend(self.translate_batch(batch_texts))
         new_segments = [
             GenericSegment(start=s.start, end=s.end, text=t if t else "")
             for s, t in zip(candidate.segments, translations)

@@ -21,6 +21,7 @@ transformers>=4.35.0
 torch>=2.6.0  # Minimum 2.6 required for security fixes (CVE-2025-32434)
 sentencepiece>=0.1.99
 protobuf>=3.20.0
+sacremoses>=0.0.53  # MarianMT tokenizer dependency; transformers warns without it
 
 # Subtitle parsing (embedded SRT/ASS demux parsing)
 pysubs2>=1.6.0

@@ -345,16 +345,6 @@ Examples:
 
   # List available audio & subtitle tracks without processing
   python main.py video.mkv --list-tracks
-  
-  # Benchmark mode: compare EN subtitle generation methods
-  python main.py video.mkv --mode benchmark
-  python main.py video.mkv --audio-track 1
-  
-  # Use custom config file
-  python main.py video.mkv --config my_config.yaml
-
-    # List available audio & subtitle tracks without processing
-    python main.py video.mkv --list-tracks
         """
     )
     
@@ -405,9 +395,9 @@ Examples:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["subtitle", "generate", "benchmark"],
+        choices=["subtitle", "generate"],
         default="generate",
-        help="Run mode: 'generate' (production EN subs), 'benchmark' (compare methods), 'subtitle' (legacy JP→EN pipeline)"
+        help="Run mode: 'generate' (production EN subs, default), 'subtitle' (legacy JP→EN pipeline)"
     )
     
     parser.add_argument(
@@ -490,24 +480,16 @@ Examples:
 
     # Dispatch to appropriate mode
     try:
-        if args.mode == "benchmark":
-            from orchestrator import run_benchmark as orch_benchmark
-            logger.info("Running in BENCHMARK mode")
-            media = inspect_media(args.video)
-            result = orch_benchmark(media, config)
-            logger.info("\nBenchmark Summary:")
-            for comparison in result.get("comparisons", []):
-                metrics = comparison["metrics"]
-                logger.info(
-                    f"  {comparison['cand_id']} vs {comparison['ref_id']}: "
-                    f"WER={metrics['wer']:.2%}, BLEU={metrics['bleu']:.1f}, chrF={metrics['chrf']:.1f}"
-                )
-            sys.exit(0)
-        elif args.mode == "generate":
+        if args.mode == "generate":
             from orchestrator import run_generate
             logger.info("Running in GENERATE mode (strategy selection)")
             media = inspect_media(args.video)
-            meta = run_generate(media, config)
+            meta = run_generate(
+                media,
+                config,
+                no_llm=args.no_llm,
+                audio_track_override=args.audio_track,
+            )
             logger.info("\nGeneration Result:")
             logger.info(f"  Strategy: {meta['strategy']}")
             logger.info(f"  Candidate: {meta['candidate_id']}")

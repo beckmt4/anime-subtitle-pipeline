@@ -195,23 +195,52 @@ class SRTWriter:
                 if len(text_chunks) > 1:
                     # Split the timing proportionally
                     duration_per_chunk = seg.duration / len(text_chunks)
-                    
+                    # If the proportional slice still exceeds max_duration, cap each
+                    # chunk at max_duration. This introduces small gaps between
+                    # chunks (the subtitle blanks out before the next chunk starts)
+                    # which is standard subtitling practice — better than showing
+                    # the same line for longer than max_duration.
+                    chunk_duration = min(duration_per_chunk, self.max_duration)
+                    capped = duration_per_chunk > self.max_duration
+
                     for i, chunk in enumerate(text_chunks):
+                        chunk_start = seg.start + i * duration_per_chunk
                         new_seg = Segment(
-                            start=seg.start + i * duration_per_chunk,
-                            end=seg.start + (i + 1) * duration_per_chunk,
+                            start=chunk_start,
+                            end=chunk_start + chunk_duration,
                             text_ja=seg.text_ja,  # Keep original for reference
                             text_en_raw=seg.text_en_raw,
                             text_en_final=chunk.strip()
                         )
                         prepared.append(new_seg)
-                    
-                    logger.debug(f"Split long segment ({seg.duration:.1f}s) into {len(text_chunks)} parts")
+
+                    if capped:
+                        logger.debug(
+                            f"Split long segment ({seg.duration:.1f}s) into {len(text_chunks)} parts; "
+                            f"each capped at {self.max_duration}s (proportional slice was "
+                            f"{duration_per_chunk:.1f}s)"
+                        )
+                    else:
+                        logger.debug(
+                            f"Split long segment ({seg.duration:.1f}s) into {len(text_chunks)} parts"
+                        )
                     continue
             
-            # No splitting needed
+            # No splitting needed (or split_text_by_punctuation returned a single
+            # chunk because the text was shorter than target_split_length, or
+            # contained no splittable punctuation). If the duration still
+            # exceeds max_duration, cap the end time rather than display the
+            # same subtitle for too long. Standard subtitling practice.
+            if seg.duration > self.max_duration:
+                old_duration = seg.duration
+                seg.end = seg.start + self.max_duration
+                logger.debug(
+                    f"Capped segment duration from {old_duration:.1f}s to "
+                    f"{self.max_duration}s (text not splittable at punctuation)"
+                )
+
             prepared.append(seg)
-        
+
         return prepared
     
     def write_srt(self, segments: List[Segment], output_path: str) -> Path:
