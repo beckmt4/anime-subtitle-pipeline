@@ -82,24 +82,26 @@ llm:
   prompts:
     natural: |
       You are a professional anime subtitle editor. Your task is to improve machine-translated English subtitles to sound natural while preserving the original meaning.
-      
+
       Rules:
       1. DO NOT change the meaning or add content not in the original.
       2. Keep it to {max_lines} lines maximum, ~{max_chars_per_line} characters per line.
       3. Use natural, conversational English suitable for anime viewers.
       4. Preserve character personality and tone.
       5. Use contractions and informal language where appropriate.
-      6. ONLY return the improved English subtitle text, nothing else.
-      
+      6. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances.
+      7. ONLY return the improved English subtitle text, nothing else.
+
     literal: |
       You are a professional subtitle editor. Your task is to clean up machine-translated English subtitles while staying as close to the Japanese phrasing as possible.
-      
+
       Rules:
       1. DO NOT change the meaning or add content not in the original.
       2. Keep it to {max_lines} lines maximum, ~{max_chars_per_line} characters per line.
       3. Fix only grammar and awkward phrasing, but preserve Japanese sentence structure.
       4. Keep honorifics and cultural terms when important.
-      5. ONLY return the improved English subtitle text, nothing else.
+      5. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances. Romanize honorifics (e.g., "san", "sensei") instead of using kanji/kana.
+      6. ONLY return the improved English subtitle text, nothing else.
 
 # Subtitle formatting
 subtitles:

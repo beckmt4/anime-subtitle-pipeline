@@ -14,6 +14,7 @@ Key features:
 """
 
 import logging
+import re
 import time
 from typing import List, Optional
 
@@ -24,6 +25,13 @@ from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+# qwen2.5:7b occasionally swaps English words/suffixes for their Chinese
+# equivalents (~0.5% of segments on VHD Bloodlust 2026-04-20: e.g.
+# "Don't push me." → "Don't逼我！（Don't push me.)"). When this happens,
+# reject the polished output and fall back to the raw MT for that segment.
+# Range covers CJK Unified Ideographs, Hangul, Hiragana, and Katakana.
+_CJK_RE = re.compile(r'[\u3000-\u9fff\uac00-\ud7af\u3040-\u309f\u30a0-\u30ff]')
 
 
 class LLMPolisher:
@@ -74,79 +82,23 @@ class LLMPolisher:
             return False
 
     def _enforce_constraints(self, text: str) -> str:
-        """Enforce max lines and per-line character limits with punctuation-aware wrapping."""
-        max_lines = self.config.llm_max_lines
-        max_chars = self.config.llm_max_chars_per_line
+        """Normalize whitespace only; line/char wrapping is delegated to srt_writer.
+
+        Historical note (2026-04-20): this method previously performed aggressive
+        punctuation-aware wrapping with a hard character-based truncation path
+        (see lines 107-118 of the prior version) that silently dropped overflow
+        past (max_lines * max_chars), producing outputs like "full moo" from
+        "full moon." The wrapping was also redundant with
+        srt_writer.split_into_lines, which already word-wraps cleanly at
+        max_chars_per_line boundaries. The original implementation is preserved
+        in git history; revert via `git log -p llm_polish.py` if needed.
+        """
         if not text:
             return text
-        cleaned = ' '.join(text.replace('\r', '').split())  # collapse whitespace
-        # Early return if short
-        if len(cleaned) <= max_chars and '\n' not in cleaned:
-            return cleaned
-        import re
-        # Split into sentence-like chunks first (.,!,?)
-        sentence_chunks = re.split(r'(?<=[.!?])\s+', cleaned)
-        refined = []
-        for chunk in sentence_chunks:
-            if len(chunk) <= max_chars:
-                refined.append(chunk)
-            else:
-                # Further split by comma boundaries while preserving commas
-                parts = re.split(r'(,\s*)', chunk)
-                assemble = ''
-                for part in parts:
-                    if not part:
-                        continue
-                    candidate = (assemble + part).strip()
-                    if len(candidate) <= max_chars:
-                        assemble = candidate
-                    else:
-                        if assemble:
-                            refined.append(assemble)
-                        # If part itself too long, hard-wrap it
-                        if len(part) > max_chars:
-                            hard = part
-                            while len(hard) > max_chars and len(refined) < max_lines:
-                                refined.append(hard[:max_chars])
-                                hard = hard[max_chars:]
-                            if hard and len(refined) < max_lines:
-                                assemble = hard.strip()
-                            else:
-                                assemble = ''
-                        else:
-                            assemble = part.strip()
-                        if len(refined) >= max_lines:
-                            break
-                if assemble and len(refined) < max_lines:
-                    refined.append(assemble)
-        # Greedy merge small fragments to use lines efficiently
-        lines = []
-        current = ''
-        for frag in refined:
-            if not frag:
-                continue
-            candidate = (current + ' ' + frag).strip() if current else frag
-            if len(candidate) <= max_chars:
-                current = candidate
-            else:
-                if current:
-                    lines.append(current)
-                current = frag
-            if len(lines) == max_lines:
-                break
-        if len(lines) < max_lines and current:
-            lines.append(current)
-        # Truncation indication
-        if len(lines) > max_lines:
-            lines = lines[:max_lines]
-        remaining_text_len = sum(len(c) for c in sentence_chunks)
-        produced_len = sum(len(c) for c in lines)
-        if produced_len < remaining_text_len and lines:
-            last = lines[-1]
-            if len(last) + 1 <= max_chars:
-                lines[-1] = last[:max_chars-1] + '…' if len(last) < max_chars else last
-        return '\n'.join(lines)
-    
+        # Collapse whitespace (including stray newlines from MT output) into
+        # single spaces. srt_writer will handle line splitting downstream.
+        return ' '.join(text.replace('\r', '').split())
+
     def polish_text(
         self,
         text_ja: str,
@@ -203,10 +155,19 @@ Improve the English subtitle:"""
                 if response.status_code == 200:
                     result = response.json()
                     polished = result.get("response", "").strip()
-                    
+
                     # Basic validation
                     if polished:
                         polished = self._enforce_constraints(polished)
+                        # Reject CJK leaks — qwen2.5:7b sometimes emits Chinese
+                        # (or rarely Japanese/Korean) tokens in place of English
+                        # words. Fall back to raw MT for that segment.
+                        if _CJK_RE.search(polished):
+                            logger.warning(
+                                f"LLM polish emitted non-Latin characters; "
+                                f"rejecting and using raw MT. Output was: {polished[:100]!r}"
+                            )
+                            return text_en_raw
                         return polished
                     logger.warning("LLM returned empty response")
                     return text_en_raw
