@@ -123,7 +123,6 @@ mux:
   output_suffix: "en"             # Output: video.en.mkv
   subtitle_language: "eng"        # Metadata language code
   subtitle_title: "English"       # Subtitle track title
-  copy_all_streams: true          # Copy all streams from original
 
 # Logging
 logging:

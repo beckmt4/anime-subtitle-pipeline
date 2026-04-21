@@ -418,9 +418,13 @@ Examples:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["subtitle", "generate"],
+        choices=["subtitle", "generate", "benchmark"],
         default="generate",
-        help="Run mode: 'generate' (production EN subs, default), 'subtitle' (legacy JP→EN pipeline)"
+        help=(
+            "Run mode: 'generate' (production EN subs, default), "
+            "'benchmark' (compare all candidate sources, writes benchmark_results.json), "
+            "'subtitle' (legacy JP→EN pipeline)"
+        )
     )
     
     parser.add_argument(
@@ -530,9 +534,13 @@ Examples:
                 out_name = f"{_video_path.stem}.en.s{stream.index}.srt"
                 out_path = _outbox_dir / out_name
                 logger.info(f"  Extracting stream {stream.index} (codec={stream.codec}) → {out_name}")
+                _temp_dir = Path(config.get_path("temp"))
                 try:
-                    _cand = _extract_sub(_video_path, stream.index, language="en")
+                    _cand = _extract_sub(_video_path, stream.index, language="en",
+                                         output_dir=_temp_dir)
                     write_candidate_srt(_cand, str(out_path), config)
+                    # Remove intermediate demux SRT; outbox copy is the deliverable.
+                    (_temp_dir / f"{_video_path.stem}.track{stream.index}.en.srt").unlink(missing_ok=True)
                     logger.info(f"  ✓ Written: {out_name}")
                 except Exception as e:
                     logger.error(f"  ✗ Failed to extract stream {stream.index}: {e}")
@@ -541,7 +549,20 @@ Examples:
 
     # Dispatch to appropriate mode
     try:
-        if args.mode == "generate":
+        if args.mode == "benchmark":
+            from benchmark import run_benchmark
+            logger.info("Running in BENCHMARK mode (compare all candidate sources)")
+            results = run_benchmark(
+                video_path=args.video,
+                config=config,
+                use_llm=not args.no_llm,
+            )
+            logger.info("\nBenchmark Result:")
+            logger.info(f"  Reference: {results['reference_id']}")
+            logger.info(f"  Candidates: {len(results['candidates'])}")
+            logger.info(f"  Comparisons: {len(results['comparisons'])}")
+            sys.exit(0)
+        elif args.mode == "generate":
             from orchestrator import run_generate
             logger.info("Running in GENERATE mode (strategy selection)")
             media = inspect_media(args.video)

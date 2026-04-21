@@ -127,9 +127,9 @@ def test_strategy_embedded_en():
 
 def test_strategy_en_audio_when_no_en_sub_and_en_audio_preferred():
     cfg = Config()
-    cfg._data.setdefault("generate", {})
-    cfg._data["generate"]["prefer_subtitles"] = False
-    cfg._data["generate"]["prefer_audio_language"] = "en"
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_subtitles"] = False
+    cfg._config["generate"]["prefer_audio_language"] = "en"
     media = _media(en_sub=False, en_audio=True, jp_sub=True, jp_audio=True)
     meta = orch.run_generate(media, cfg)
     assert meta["strategy"] == "en_audio_asr", meta
@@ -154,9 +154,9 @@ def test_strategy_ja_audio_asr_mt():
 
 def test_strategy_en_audio_fallback():
     cfg = Config()
-    cfg._data.setdefault("generate", {})
-    cfg._data["generate"]["prefer_subtitles"] = False
-    cfg._data["generate"]["prefer_audio_language"] = "auto"
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_subtitles"] = False
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
     media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
     meta = orch.run_generate(media, cfg)
     assert meta["strategy"] == "en_audio_asr", meta

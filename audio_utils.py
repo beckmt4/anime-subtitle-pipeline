@@ -295,10 +295,12 @@ def mux_subtitle_to_video(
         "ffmpeg",
         "-i", str(input_video),
         "-i", str(subtitle),
-        "-c", "copy",                                    # Copy all streams
+        "-map", "0",                                     # All streams from video
+        "-map", "1",                                     # Subtitle from srt input
+        "-c", "copy",                                    # Copy all streams without re-encoding
         "-c:s", "srt",                                   # Subtitle codec
-        "-metadata:s:s:0", f"language={subtitle_language}",  # Language metadata
-        "-metadata:s:s:0", f"title={subtitle_title}",    # Title metadata
+        "-metadata:s:s:0", f"language={subtitle_language}",
+        "-metadata:s:s:0", f"title={subtitle_title}",
         "-y",                                            # Overwrite
         str(output_video)
     ]

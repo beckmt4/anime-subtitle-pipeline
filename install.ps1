@@ -46,20 +46,32 @@ if (Test-Path "venv") {
 
 # Activate virtual environment
 Write-Host "`nActivating virtual environment..."
-& .\venv\Scripts\Activate.ps1
+$activateScript = ".\venv\Scripts\Activate.ps1"
+try {
+    & powershell -ExecutionPolicy Bypass -NonInteractive -File $activateScript
+    if ($LASTEXITCODE -ne 0) { throw "non-zero exit" }
+    Write-Host "✓ Virtual environment activated" -ForegroundColor Green
+} catch {
+    Write-Host "⚠ Could not activate via Activate.ps1 (execution policy?)" -ForegroundColor Yellow
+    Write-Host "  Falling back to cmd-based activation for this session..." -ForegroundColor Yellow
+    # Update PATH so pip/python resolve to the venv for the rest of this script.
+    $env:PATH = "$(Resolve-Path .\venv\Scripts);$env:PATH"
+    Write-Host "✓ venv\Scripts added to PATH for this session" -ForegroundColor Green
+}
 
-# Check for CUDA
+# Check for CUDA using nvidia-smi (available before torch is installed)
 Write-Host "`nChecking for CUDA support..."
-$cudaCheck = python -c "import torch; print(torch.cuda.is_available())" 2>&1
-if ($cudaCheck -eq "True") {
-    Write-Host "✓ CUDA available" -ForegroundColor Green
+$nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+if ($nvidiaSmi) {
+    $driverLine = nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>&1 | Select-Object -First 1
+    Write-Host "✓ NVIDIA GPU detected (driver $driverLine)" -ForegroundColor Green
     $useCUDA = Read-Host "`nInstall PyTorch with CUDA support? (y/n)"
     if ($useCUDA -eq "y") {
         Write-Host "`nSelect CUDA version:"
         Write-Host "  1. CUDA 11.8 (recommended for most systems)"
         Write-Host "  2. CUDA 12.1 (for newer GPUs)"
         $cudaVersion = Read-Host "Enter choice (1 or 2)"
-        
+
         if ($cudaVersion -eq "1") {
             Write-Host "`nInstalling PyTorch with CUDA 11.8..."
             pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -75,7 +87,7 @@ if ($cudaCheck -eq "True") {
         pip install torch torchvision torchaudio
     }
 } else {
-    Write-Host "⊘ CUDA not available, installing CPU version" -ForegroundColor Yellow
+    Write-Host "⊘ nvidia-smi not found, installing CPU version of PyTorch" -ForegroundColor Yellow
     pip install torch torchvision torchaudio
 }
 

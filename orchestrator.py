@@ -158,7 +158,8 @@ def run_generate(
         strategy = "embedded_en"
         logger.info("Strategy: Use embedded English subtitles")
         with start_span("extract_embedded_en"):
-            candidate = extract_subtitle_track(video_path, en_sub_idx, language="en")
+            candidate = extract_subtitle_track(video_path, en_sub_idx, language="en",
+                                               output_dir=Path(cfg.get_path("temp")))
     elif prefer_audio_language == "en" and en_audio_order is not None:
         strategy = "en_audio_asr"
         logger.info("Strategy: English audio ASR")
@@ -175,11 +176,13 @@ def run_generate(
                 language="en",
                 origin_stream=f"audio:{en_audio_order}",
             )
+        audio_path.unlink(missing_ok=True)
     elif ja_sub_idx is not None:
         strategy = "embedded_jp_mt"
         logger.info("Strategy: Japanese subtitles → MT → EN")
         with start_span("extract_embedded_jp"):
-            ja_candidate = extract_subtitle_track(video_path, ja_sub_idx, language="ja")
+            ja_candidate = extract_subtitle_track(video_path, ja_sub_idx, language="ja",
+                                                  output_dir=Path(cfg.get_path("temp")))
         with start_span("mt_embedded_jp"):
             mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
         # Always write raw MT output regardless of whether LLM polish runs.
@@ -209,6 +212,7 @@ def run_generate(
                 language="ja",
                 origin_stream=f"audio:{ja_audio_order}",
             )
+        audio_path.unlink(missing_ok=True)
         with start_span("mt_ja_audio"):
             mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
         # Always write raw MT output regardless of whether LLM polish runs.
@@ -238,6 +242,7 @@ def run_generate(
                 language="en",
                 origin_stream=f"audio:{en_audio_order}",
             )
+        audio_path.unlink(missing_ok=True)
     elif media.audio_streams:
         # Untagged audio fallback. Many WEB-DL / MP4 containers have no
         # ISO-639 language tag on the audio stream, so none of the above
@@ -263,6 +268,7 @@ def run_generate(
                 language="ja",
                 origin_stream=f"audio:{fallback_order}",
             )
+        audio_path.unlink(missing_ok=True)
         with start_span("mt_untagged_audio"):
             mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
         # Always write raw MT output regardless of whether LLM polish runs.
