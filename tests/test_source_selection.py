@@ -1,0 +1,165 @@
+"""Unit tests for orchestrator source-selection helpers.
+
+Tests _lang_matches, _first_text_sub, and _first_audio_order — the pure
+decision logic that drives run_generate — without calling any live services.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from orchestrator import _lang_matches, _first_text_sub, _first_audio_order
+from media_inspect import MediaInfo, AudioStream, SubtitleStream
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def make_media(
+    audio_langs: list = None,
+    sub_specs: list = None,
+) -> MediaInfo:
+    """Build a MediaInfo with audio and subtitle streams from simple specs.
+
+    audio_langs: list of raw language tag strings, e.g. ["jpn", "eng"]
+    sub_specs: list of (lang, codec) tuples, e.g. [("eng", "subrip")]
+    """
+    audio_streams = []
+    for i, lang in enumerate(audio_langs or []):
+        audio_streams.append(
+            AudioStream(index=i, codec="aac", language=lang, raw_language=lang)
+        )
+
+    subtitle_streams = []
+    offset = len(audio_streams)
+    for i, (lang, codec) in enumerate(sub_specs or []):
+        is_bitmap = codec in {"dvd_subtitle", "pgssub", "xsub"}
+        subtitle_streams.append(
+            SubtitleStream(
+                index=i + offset,
+                codec=codec,
+                language=lang,
+                raw_language=lang,
+                is_bitmap=is_bitmap,
+            )
+        )
+
+    return MediaInfo(
+        path=Path("test.mkv"),
+        format_name="matroska",
+        duration=1440.0,
+        audio_streams=audio_streams,
+        subtitle_streams=subtitle_streams,
+    )
+
+
+# ---------------------------------------------------------------------------
+# _lang_matches
+# ---------------------------------------------------------------------------
+
+class TestLangMatches:
+    @pytest.mark.parametrize("code", ["ja", "jpn", "jp", "ja-jp"])
+    def test_ja_variants_match_ja(self, code):
+        assert _lang_matches(code, "ja") is True
+
+    @pytest.mark.parametrize("code", ["en", "eng", "en-us", "en-gb"])
+    def test_en_variants_match_en(self, code):
+        assert _lang_matches(code, "en") is True
+
+    def test_none_does_not_match(self):
+        assert _lang_matches(None, "ja") is False
+
+    def test_empty_string_does_not_match(self):
+        assert _lang_matches("", "ja") is False
+
+    @pytest.mark.parametrize("code", ["JPN", "Jpn", "JA-JP"])
+    def test_matching_is_case_insensitive(self, code):
+        assert _lang_matches(code, "ja") is True
+
+    def test_unrelated_lang_does_not_match_ja(self):
+        assert _lang_matches("fra", "ja") is False
+
+    def test_unrelated_lang_does_not_match_en(self):
+        assert _lang_matches("zho", "en") is False
+
+    def test_unknown_target_uses_exact_match_fallback(self):
+        # For a target not in _LANG_ALIASES, the set {target} is used
+        assert _lang_matches("zz", "zz") is True
+        assert _lang_matches("ja", "zz") is False
+
+
+# ---------------------------------------------------------------------------
+# _first_text_sub
+# ---------------------------------------------------------------------------
+
+class TestFirstTextSub:
+    def test_finds_en_text_subtitle(self):
+        media = make_media(sub_specs=[("en", "subrip")])
+        idx = _first_text_sub(media, "en")
+        assert idx == 0  # stream index assigned by make_media
+
+    def test_finds_ja_text_subtitle_by_jpn_tag(self):
+        media = make_media(sub_specs=[("jpn", "ass")])
+        idx = _first_text_sub(media, "ja")
+        assert idx == 0
+
+    def test_skips_bitmap_subtitles(self):
+        # bitmap sub comes first, text sub second; should return text sub's index
+        media = make_media(sub_specs=[("en", "dvd_subtitle"), ("en", "subrip")])
+        idx = _first_text_sub(media, "en")
+        assert idx == 1
+
+    def test_bitmap_only_returns_none(self):
+        media = make_media(sub_specs=[("en", "pgssub")])
+        assert _first_text_sub(media, "en") is None
+
+    def test_returns_none_when_no_matching_language(self):
+        media = make_media(sub_specs=[("ja", "subrip")])
+        assert _first_text_sub(media, "en") is None
+
+    def test_returns_none_with_no_subtitle_streams(self):
+        media = make_media(audio_langs=["ja"])
+        assert _first_text_sub(media, "en") is None
+
+    def test_returns_first_match_when_multiple(self):
+        media = make_media(sub_specs=[("en", "subrip"), ("en", "ass")])
+        idx = _first_text_sub(media, "en")
+        assert idx == 0  # first matching stream
+
+
+# ---------------------------------------------------------------------------
+# _first_audio_order
+# ---------------------------------------------------------------------------
+
+class TestFirstAudioOrder:
+    def test_finds_ja_audio_at_correct_order(self):
+        media = make_media(audio_langs=["en", "ja"])
+        # audio order 0 = en, order 1 = ja
+        assert _first_audio_order(media, "ja") == 1
+
+    def test_finds_en_audio_at_correct_order(self):
+        media = make_media(audio_langs=["ja", "en"])
+        assert _first_audio_order(media, "en") == 1
+
+    def test_finds_first_stream_when_first_matches(self):
+        media = make_media(audio_langs=["ja", "en"])
+        assert _first_audio_order(media, "ja") == 0
+
+    def test_returns_none_when_no_match(self):
+        media = make_media(audio_langs=["en", "fr"])
+        assert _first_audio_order(media, "ja") is None
+
+    def test_returns_none_with_no_audio_streams(self):
+        media = make_media()
+        assert _first_audio_order(media, "ja") is None
+
+    def test_jpn_tag_matches_ja_target(self):
+        media = make_media(audio_langs=["jpn"])
+        assert _first_audio_order(media, "ja") == 0
+
+    def test_eng_tag_matches_en_target(self):
+        media = make_media(audio_langs=["eng"])
+        assert _first_audio_order(media, "en") == 0

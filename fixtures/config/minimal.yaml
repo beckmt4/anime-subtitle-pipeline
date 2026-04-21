@@ -1,0 +1,55 @@
+# Minimal config fixture for unit tests.
+# Paths point to "." so _ensure_directories() creates no unexpected dirs.
+# Tests that need real temp dirs should build config via conftest write_config().
+runtime:
+  profile: dev
+paths:
+  inbox: "."
+  outbox: "."
+  logs: "."
+  temp: "."
+asr:
+  model_name: test-model
+  device: cpu
+  dev:
+    compute_type: int8
+    beam_size: 3
+    batch_size: 4
+  prod:
+    compute_type: float16
+    beam_size: 5
+    batch_size: 16
+  vad_filter: true
+  language: ja
+mt:
+  model_name: test-mt
+  device: cpu
+  batch_size: 8
+  max_length: 256
+llm:
+  enabled: false
+  base_url: "http://localhost:11434"
+  dev:
+    model_name: test-llm
+  prod:
+    model_name: test-llm
+  style: natural
+  max_lines: 2
+  max_chars_per_line: 42
+  timeout: 30
+  temperature: 0.3
+  prompts:
+    natural: "You are a test polisher."
+    literal: "You are a literal test polisher."
+subtitles:
+  min_duration_sec: 0.5
+  max_duration_sec: 7.0
+mux:
+  enabled: false
+  output_suffix: en
+logging:
+  level: INFO
+generate:
+  prefer_subtitles: true
+  prefer_audio_language: auto
+  use_llm_polish: false

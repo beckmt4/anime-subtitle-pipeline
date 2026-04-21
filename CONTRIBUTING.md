@@ -95,6 +95,45 @@ When a PR touches behavior in a module, check whether any of the above folders n
 
 ---
 
+## Validation — automated vs manual
+
+### Automated (CI-gated, required for merge)
+
+CI runs on every push and PR via `.github/workflows/ci.yml`. It requires only
+Python, `pyyaml`, `requests`, `pytest`, and `flake8` — no GPU, no ffmpeg, no
+Ollama.
+
+Run locally (same commands as CI):
+
+```bash
+# Install CI deps
+pip install -r requirements-ci.txt
+
+# Lint
+flake8 media_inspect.py compare_core.py config.py models.py orchestrator.py \
+  llm_polish.py srt_writer.py audio_utils.py subtitle_utils.py asr.py mt.py \
+  tracing.py batch_process.py benchmark.py \
+  --select=E9,F --extend-ignore=F401,F841 --exclude venv
+
+# Unit tests (no live services required)
+pytest tests/ -v -m "not integration"
+```
+
+All new tests go under `tests/`. Fixtures go in `fixtures/`.
+
+### Manual system validation (not CI-gated)
+
+The root-level test scripts (`test_pipeline.py`, `test_orchestrator.py`, etc.)
+require live local services (ffmpeg, Faster-Whisper, GPU, Ollama) and are run
+manually by the developer. They are not part of the automated CI gate.
+
+```bash
+# Full end-to-end validation (requires ffmpeg + GPU + Ollama)
+python test_pipeline.py path/to/test.mkv
+```
+
+These scripts should remain working but are not the merge gate.
+
 ## Testing requirements
 
 - New modules must ship with tests.

@@ -1,0 +1,20 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_type": "audio",
+      "codec_name": "aac",
+      "channels": 2,
+      "sample_rate": "48000",
+      "tags": {
+        "language": "jpn",
+        "title": "Japanese"
+      }
+    }
+  ],
+  "format": {
+    "format_name": "matroska,webm",
+    "duration": "1440.12",
+    "size": "1234567890"
+  }
+}
