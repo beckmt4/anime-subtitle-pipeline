@@ -25,10 +25,9 @@ temp/
 *.wav
 *.tmp
 
-# Output files (optional - remove these lines if you want to track outputs)
-outbox/*.srt
-outbox/*.mkv
-outbox/*.mp4
+# Working file directories — never commit
+inbox/
+outbox/
 
 # Model caches (these are large and auto-downloaded)
 models/
