@@ -26,12 +26,69 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-# qwen2.5:7b occasionally swaps English words/suffixes for their Chinese
-# equivalents (~0.5% of segments on VHD Bloodlust 2026-04-20: e.g.
-# "Don't push me." → "Don't逼我！（Don't push me.)"). When this happens,
-# reject the polished output and fall back to the raw MT for that segment.
-# Range covers CJK Unified Ideographs, Hangul, Hiragana, and Katakana.
-_CJK_RE = re.compile(r'[\u3000-\u9fff\uac00-\ud7af\u3040-\u309f\u30a0-\u30ff]')
+# qwen2.5:7b occasionally emits Chinese (rarely Korean/Japanese) characters
+# mixed into English output (~0.5% of segments on VHD Bloodlust 2026-04-20,
+# e.g. "Don't push me." → "Don't逼我！（Don't push me.)").
+#
+# Detection regex: covers all CJK blocks we care about, including full-width
+# punctuation (U+FF00-U+FFEF) which the old regex missed (e.g. ，？！（）).
+#
+# Remediation strategy (strip-before-reject):
+#   1. Detect any CJK character in the polished text.
+#   2. Strip all CJK characters and collapse whitespace.
+#   3. If the stripped result retains at least 1/3 of the raw-MT length and
+#      at least 4 chars, use the stripped text (preserves polish improvements
+#      for the Latin portion).
+#   4. Otherwise fall back to raw MT entirely.
+#
+# This handles the common pattern where the model appends a Chinese
+# parenthetical or explanation after an otherwise good English translation.
+_CJK_RE = re.compile(
+    r'['
+    r'\u2e80-\u2eff'   # CJK Radicals Supplement
+    r'\u3000-\u9fff'   # CJK Symbols & Punctuation, Hiragana, Katakana,
+                       # CJK Unified Ideographs (4E00-9FFF), and surrounding blocks
+    r'\uac00-\ud7af'   # Hangul Syllables
+    r'\uf900-\ufaff'   # CJK Compatibility Ideographs
+    r'\ufe30-\ufe4f'   # CJK Compatibility Forms
+    r'\uff00-\uffef'   # Halfwidth and Fullwidth Forms (catches ，？！（）etc.)
+    r']'
+)
+
+_SENTENCE_END_RE = re.compile(r'[.!?…]$')
+
+
+def _recover_leading_english(polished: str) -> Optional[str]:
+    """Attempt to salvage the clean English prefix before the first CJK run.
+
+    Returns the prefix if it looks like complete, usable output; else None.
+
+    Strategy: the model often produces good English then appends a Chinese
+    parenthetical or explanation (e.g. "You've got to be kidding me.三次元…").
+    We can recover the English portion cleanly.  If CJK appears too early in
+    the string (interspersed rather than appended) the prefix will be too short
+    or look like a fragment, and we fall back to raw MT instead.
+
+    Acceptance criteria (all must pass):
+      - CJK starts after ≥ 40% of the string length (suffix, not interspersed).
+      - Leading portion has ≥ 2 words.
+      - Leading portion ends with sentence-final punctuation (.!?…) OR has ≥ 4
+        words (handles cases without explicit terminal punctuation).
+    """
+    match = _CJK_RE.search(polished)
+    if not match:
+        return None
+    leading = polished[:match.start()].strip()
+    if not leading:
+        return None
+    if match.start() < len(polished) * 0.4:
+        return None  # CJK too early — interspersed, not an appendage
+    words = leading.split()
+    if len(words) < 2:
+        return None
+    if not (_SENTENCE_END_RE.search(leading) or len(words) >= 4):
+        return None  # fragment (e.g. "Why are you")
+    return leading
 
 
 class LLMPolisher:
@@ -159,13 +216,22 @@ Improve the English subtitle:"""
                     # Basic validation
                     if polished:
                         polished = self._enforce_constraints(polished)
-                        # Reject CJK leaks — qwen2.5:7b sometimes emits Chinese
-                        # (or rarely Japanese/Korean) tokens in place of English
-                        # words. Fall back to raw MT for that segment.
+                        # CJK leak guard — qwen2.5:7b sometimes emits Chinese
+                        # (or rarely Korean/Japanese) characters mixed into an
+                        # otherwise good English translation.
                         if _CJK_RE.search(polished):
+                            recovered = _recover_leading_english(polished)
+                            if recovered:
+                                logger.warning(
+                                    f"LLM polish emitted CJK suffix; recovered "
+                                    f"English prefix. Before: {polished[:80]!r} "
+                                    f"→ After: {recovered[:80]!r}"
+                                )
+                                return recovered
                             logger.warning(
-                                f"LLM polish emitted non-Latin characters; "
-                                f"rejecting and using raw MT. Output was: {polished[:100]!r}"
+                                f"LLM polish emitted CJK (could not recover "
+                                f"English prefix); falling back to raw MT. "
+                                f"Output was: {polished[:100]!r}"
                             )
                             return text_en_raw
                         return polished

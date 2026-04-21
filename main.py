@@ -163,12 +163,14 @@ def process_video(
     outbox_dir = Path(config.get_path("outbox"))
     audio_path = Path(config.get_path("temp")) / f"{video_stem}.wav"
     srt_path = outbox_dir / f"{video_stem}.en.srt"
+    raw_srt_path = outbox_dir / f"{video_stem}.raw.en.srt"
     log_path = Path(config.get_path("logs")) / f"{video_stem}.json"
-    
+
     result = {
         "input_video": str(video_path),
         "audio_file": str(audio_path),
         "srt_file": str(srt_path),
+        "raw_srt_file": str(raw_srt_path),
         "log_file": str(log_path),
         "muxed_video": None,
         "segment_count": 0,
@@ -243,6 +245,14 @@ def process_video(
         with start_span("machine_translation", model=config.mt_model_name, device=config.mt_device):
             mt_candidate = translate_candidate_jp_to_en(asr_candidate, config)
         
+        # ===================================================================
+        # Step 3.5: Write raw MT SRT (always, before optional LLM polish)
+        # ===================================================================
+        logger.info("\n[3.5/6] Writing raw MT SRT (pre-polish)...")
+        with start_span("write_raw_srt", output=str(raw_srt_path)):
+            write_candidate_srt(mt_candidate, str(raw_srt_path), config)
+            logger.info(f"✓ Raw MT SRT written: {raw_srt_path.name}")
+
         # ===================================================================
         # Step 4: Optional LLM polishing (candidate-based)
         # ===================================================================
@@ -345,6 +355,9 @@ Examples:
 
   # List available audio & subtitle tracks without processing
   python main.py video.mkv --list-tracks
+
+  # Extract all embedded English subtitle tracks for reference / training data
+  python main.py video.mkv --extract-en-subs
         """
     )
     
@@ -390,6 +403,16 @@ Examples:
         "--list-tracks",
         action="store_true",
         help="List audio/subtitle tracks and exit without processing"
+    )
+
+    parser.add_argument(
+        "--extract-en-subs",
+        action="store_true",
+        help=(
+            "Extract all embedded English text subtitle tracks to the outbox "
+            "as <stem>.en.s<N>.srt files, then exit. Useful for collecting "
+            "reference/training data from files that already have good EN subs."
+        )
     )
     
     parser.add_argument(
@@ -478,6 +501,44 @@ Examples:
         logger.info("\nUse --audio-track <index> to select a specific audio track.")
         sys.exit(0)
 
+    # --extract-en-subs: pull all embedded English text subtitle tracks to outbox,
+    # then continue into the normal generation pipeline so you get both the
+    # reference/embedded subs and the freshly-generated output for comparison.
+    if args.extract_en_subs:
+        try:
+            from subtitle_utils import extract_subtitle_track as _extract_sub
+            _media_for_extract = inspect_media(args.video)
+        except Exception as e:
+            logger.error(f"Failed to inspect media for EN sub extraction: {e}")
+            sys.exit(1)
+
+        _video_path = Path(args.video)
+        _outbox_dir = Path(config.get_path("outbox"))
+        _outbox_dir.mkdir(parents=True, exist_ok=True)
+
+        _en_text_streams = [
+            s for s in _media_for_extract.subtitle_streams
+            if not s.is_bitmap
+            and (s.language or s.raw_language or "").strip().lower() in {"en", "eng", "en-us", "en-gb"}
+        ]
+
+        if not _en_text_streams:
+            logger.info("No embedded English text subtitle tracks found; proceeding to generation.")
+        else:
+            logger.info(f"Found {len(_en_text_streams)} English text subtitle stream(s) — extracting before generation.")
+            for stream in _en_text_streams:
+                out_name = f"{_video_path.stem}.en.s{stream.index}.srt"
+                out_path = _outbox_dir / out_name
+                logger.info(f"  Extracting stream {stream.index} (codec={stream.codec}) → {out_name}")
+                try:
+                    _cand = _extract_sub(_video_path, stream.index, language="en")
+                    write_candidate_srt(_cand, str(out_path), config)
+                    logger.info(f"  ✓ Written: {out_name}")
+                except Exception as e:
+                    logger.error(f"  ✗ Failed to extract stream {stream.index}: {e}")
+
+        # Fall through — generation runs below regardless.
+
     # Dispatch to appropriate mode
     try:
         if args.mode == "generate":
@@ -489,6 +550,7 @@ Examples:
                 config,
                 no_llm=args.no_llm,
                 audio_track_override=args.audio_track,
+                skip_embedded_en=args.extract_en_subs,
             )
             logger.info("\nGeneration Result:")
             logger.info(f"  Strategy: {meta['strategy']}")

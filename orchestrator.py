@@ -75,6 +75,7 @@ def run_generate(
     cfg: Config,
     no_llm: bool = False,
     audio_track_override: int | None = None,
+    skip_embedded_en: bool = False,
 ) -> Dict[str, Any]:
     """Production generation flow selecting best available source for EN subtitles.
 
@@ -88,6 +89,10 @@ def run_generate(
             entirely and treat the specified audio track index as Japanese audio
             (ja_audio_asr_mt path). Mirrors the CLI --audio-track flag, which was
             previously only honored by the legacy subtitle mode.
+        skip_embedded_en: When True, ignore any embedded English subtitle tracks and
+            force the pipeline through ASR → MT (→ LLM). Used with --extract-en-subs
+            so the extracted embedded subs and the freshly generated subs can be
+            compared or used for training.
 
     Returns a metadata dict containing strategy, candidate info, and output paths.
     """
@@ -115,6 +120,16 @@ def run_generate(
     logger.info(
         f"Sources detected: en_sub={en_sub_idx} ja_sub={ja_sub_idx} en_audio={en_audio_order} ja_audio={ja_audio_order}"
     )
+
+    # --extract-en-subs: embedded EN subs were already written to outbox by the
+    # caller; skip them here so the pipeline runs ASR → MT (→ LLM) and produces
+    # an independently generated SRT for comparison / training use.
+    if skip_embedded_en and en_sub_idx is not None:
+        logger.info(
+            "skip_embedded_en=True: bypassing embedded EN subtitles, "
+            "forcing generation pipeline for comparison output."
+        )
+        en_sub_idx = None
 
     # CLI --audio-track override: if set, short-circuit the decision tree and
     # force the chosen track through the ja_audio_asr → MT (→ LLM) path. This
@@ -167,11 +182,11 @@ def run_generate(
             ja_candidate = extract_subtitle_track(video_path, ja_sub_idx, language="ja")
         with start_span("mt_embedded_jp"):
             mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
+        # Always write raw MT output regardless of whether LLM polish runs.
+        raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+        write_candidate_srt(mt_candidate, str(raw_srt), cfg)
+        logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
         if use_llm_polish:
-            # Save pre-polish MT output for comparison against the final polished SRT.
-            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
-            write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
             with start_span("llm_polish_embedded_jp"):
                 polished = polish_candidate_with_llm(mt_candidate, cfg)
                 # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
@@ -196,11 +211,11 @@ def run_generate(
             )
         with start_span("mt_ja_audio"):
             mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
+        # Always write raw MT output regardless of whether LLM polish runs.
+        raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+        write_candidate_srt(mt_candidate, str(raw_srt), cfg)
+        logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
         if use_llm_polish:
-            # Save pre-polish MT output for comparison against the final polished SRT.
-            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
-            write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
             with start_span("llm_polish_ja_audio"):
                 polished = polish_candidate_with_llm(mt_candidate, cfg)
                 # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
@@ -250,11 +265,11 @@ def run_generate(
             )
         with start_span("mt_untagged_audio"):
             mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
+        # Always write raw MT output regardless of whether LLM polish runs.
+        raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+        write_candidate_srt(mt_candidate, str(raw_srt), cfg)
+        logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
         if use_llm_polish:
-            # Save pre-polish MT output for comparison against the final polished SRT.
-            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
-            write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
             with start_span("llm_polish_untagged_audio"):
                 polished = polish_candidate_with_llm(mt_candidate, cfg)
                 # polish_candidate_with_llm already appends "_llm".
