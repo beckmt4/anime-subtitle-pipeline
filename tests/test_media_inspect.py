@@ -41,12 +41,16 @@ class TestNormLang:
     @pytest.mark.parametrize("code,expected", [
         ("jpn", "ja"),
         ("ja", "ja"),
+        ("japanese", "ja"),
         ("eng", "en"),
         ("en", "en"),
+        ("english", "en"),
         ("fre", "fr"),
         ("fra", "fr"),
+        ("french", "fr"),
         ("chi", "zh"),
         ("zho", "zh"),
+        ("chinese", "zh"),
         ("und", "und"),
     ])
     def test_known_codes_map_correctly(self, code, expected):
@@ -64,6 +68,12 @@ class TestNormLang:
     @pytest.mark.parametrize("code", ["JPN", "Jpn", "JPN"])
     def test_case_insensitive(self, code):
         assert _norm_lang(code) == "ja"
+
+    def test_full_name_english_normalizes_to_en(self):
+        assert _norm_lang("English") == "en"
+
+    def test_full_name_japanese_normalizes_to_ja(self):
+        assert _norm_lang("Japanese") == "ja"
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +130,46 @@ class TestInspectMediaParsing:
         cmd = mock_run.call_args[0][0]
         assert isinstance(cmd, list)
         assert cmd[0] == "ffprobe"
+
+    @patch("media_inspect.subprocess.run")
+    def test_couple_of_cuckoos_fixture_en_sub_detected(self, mock_run, tmp_path):
+        """Regression: file with JA audio, bitmap JA sub, and text EN sub (eng tag)."""
+        video = tmp_path / "cuckoos.mkv"
+        video.write_bytes(b"")
+        mock_run.return_value = _mock_run(
+            (FFPROBE_FIXTURES / "couple_of_cuckoos_s01e01.json").read_text(encoding="utf-8")
+        )
+        info = inspect_media(str(video))
+
+        assert len(info.audio_streams) == 1
+        assert info.audio_streams[0].language == "ja"
+
+        assert len(info.subtitle_streams) == 2
+        # stream index 1: bitmap JA (pgssub)
+        assert info.subtitle_streams[0].is_bitmap is True
+        assert info.subtitle_streams[0].language == "ja"
+        # stream index 2: text EN (subrip, tagged "eng")
+        assert info.subtitle_streams[1].is_bitmap is False
+        assert info.subtitle_streams[1].language == "en"
+
+    @patch("media_inspect.subprocess.run")
+    def test_once_upon_a_crime_fixture_en_sub_detected(self, mock_run, tmp_path):
+        """Regression: file with JA audio, JA subs, and a BCP-47 'en-US' text sub."""
+        video = tmp_path / "crime.mkv"
+        video.write_bytes(b"")
+        mock_run.return_value = _mock_run(
+            (FFPROBE_FIXTURES / "once_upon_a_crime.json").read_text(encoding="utf-8")
+        )
+        info = inspect_media(str(video))
+
+        assert len(info.audio_streams) == 1
+        assert info.audio_streams[0].language == "ja"
+
+        assert len(info.subtitle_streams) == 3
+        # The last subtitle stream is tagged "en-US" — raw_language preserved
+        en_sub = info.subtitle_streams[2]
+        assert en_sub.is_bitmap is False
+        assert en_sub.raw_language == "en-US"
 
 
 # ---------------------------------------------------------------------------

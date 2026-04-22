@@ -1,0 +1,38 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_type": "audio",
+      "codec_name": "aac",
+      "channels": 2,
+      "sample_rate": "48000",
+      "tags": {
+        "language": "jpn",
+        "title": "Japanese"
+      }
+    },
+    {
+      "index": 1,
+      "codec_type": "subtitle",
+      "codec_name": "pgssub",
+      "tags": {
+        "language": "jpn",
+        "title": "Japanese (Signs)"
+      }
+    },
+    {
+      "index": 2,
+      "codec_type": "subtitle",
+      "codec_name": "subrip",
+      "tags": {
+        "language": "eng",
+        "title": "English"
+      }
+    }
+  ],
+  "format": {
+    "format_name": "matroska,webm",
+    "duration": "1380.0",
+    "size": "4815162342"
+  }
+}
