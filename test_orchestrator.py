@@ -76,6 +76,30 @@ def stub_polish_candidate_with_llm(cand: SubtitleCandidate, cfg: Config):
     )
 
 
+def stub_polish_candidate_no_change(cand: SubtitleCandidate, cfg: Config):
+    """Polish stub that returns identical text — simulates a no-op LLM."""
+    return SubtitleCandidate(
+        id=cand.id + "_llm",
+        language="en",
+        source=cand.source + "_llm",
+        origin_stream=cand.origin_stream,
+        segments=[Segment(start=s.start, end=s.end, text=s.text) for s in cand.segments],
+        meta=cand.meta,
+    )
+
+
+def stub_polish_candidate_fallback(cand: SubtitleCandidate, cfg: Config):
+    """Polish stub that simulates LLM unreachable (fallback pass-through)."""
+    return SubtitleCandidate(
+        id=cand.id + "_llm",
+        language="en",
+        source=cand.source + "_llm",
+        origin_stream=cand.origin_stream,
+        segments=[Segment(start=s.start, end=s.end, text=s.text) for s in cand.segments],
+        meta={"fallback": True},
+    )
+
+
 def stub_enforce_constraints_on_candidate(cand: SubtitleCandidate, cfg: Config):
     return cand
 
@@ -221,7 +245,132 @@ def run_all_tests():
     test_embedded_en_selected_with_eng_tag()
     test_embedded_en_selected_with_bcp47_en_us_tag()
     test_skip_embedded_en_forces_generation()
+    test_compare_candidates_changed()
+    test_compare_candidates_no_change()
+    test_compare_candidates_fallback()
+    test_polish_status_changed_in_metadata()
+    test_polish_status_no_change_in_metadata()
+    test_polish_status_fallback_in_metadata()
+    test_no_polish_status_for_non_mt_strategies()
     print("\n✅ All orchestrator strategy tests PASSED")
+
+
+# ---------------------------------------------------------------------------
+# _compare_candidates unit tests
+# ---------------------------------------------------------------------------
+
+def test_compare_candidates_changed():
+    raw = SubtitleCandidate(
+        id="raw", language="en", source="mt", origin_stream="sub:0",
+        segments=[Segment(0.0, 1.0, "Hello world"), Segment(1.0, 2.0, "Goodbye")],
+        meta={},
+    )
+    polished = SubtitleCandidate(
+        id="raw_llm", language="en", source="mt_llm", origin_stream="sub:0",
+        segments=[Segment(0.0, 1.0, "Hello, world!"), Segment(1.0, 2.0, "Goodbye")],
+        meta={},
+    )
+    result = orch._compare_candidates(raw, polished)
+    assert result["polish_status"] == "changed", result
+    assert result["segments_changed"] == 1
+    assert result["segments_unchanged"] == 1
+    print("✓ _compare_candidates: changed status correct")
+
+
+def test_compare_candidates_no_change():
+    raw = SubtitleCandidate(
+        id="raw", language="en", source="mt", origin_stream="sub:0",
+        segments=[Segment(0.0, 1.0, "Hello world"), Segment(1.0, 2.0, "Goodbye")],
+        meta={},
+    )
+    polished = SubtitleCandidate(
+        id="raw_llm", language="en", source="mt_llm", origin_stream="sub:0",
+        segments=[Segment(0.0, 1.0, "Hello world"), Segment(1.0, 2.0, "Goodbye")],
+        meta={},
+    )
+    result = orch._compare_candidates(raw, polished)
+    assert result["polish_status"] == "no_change", result
+    assert result["segments_changed"] == 0
+    assert result["segments_unchanged"] == 2
+    print("✓ _compare_candidates: no_change status correct")
+
+
+def test_compare_candidates_fallback():
+    raw = SubtitleCandidate(
+        id="raw", language="en", source="mt", origin_stream="sub:0",
+        segments=[Segment(0.0, 1.0, "Hello world"), Segment(1.0, 2.0, "Goodbye")],
+        meta={},
+    )
+    polished = SubtitleCandidate(
+        id="raw_llm", language="en", source="mt_llm", origin_stream="sub:0",
+        segments=[Segment(0.0, 1.0, "Hello world"), Segment(1.0, 2.0, "Goodbye")],
+        meta={"fallback": True},
+    )
+    result = orch._compare_candidates(raw, polished)
+    assert result["polish_status"] == "fallback", result
+    assert result["segments_changed"] == 0
+    assert result["segments_unchanged"] == 2
+    print("✓ _compare_candidates: fallback status correct")
+
+
+# ---------------------------------------------------------------------------
+# run_generate polish_status metadata tests
+# ---------------------------------------------------------------------------
+
+def test_polish_status_changed_in_metadata():
+    """When LLM polish changes segments, metadata should report polish_status=changed."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=False)
+    # Default stub (stub_polish_candidate_with_llm) changes text containing "one"
+    meta = orch.run_generate(media, cfg)
+    assert meta["strategy"] == "embedded_jp_mt"
+    assert "polish_status" in meta, meta
+    assert meta["polish_status"] == "changed", meta
+    assert "segments_changed" in meta
+    assert "segments_unchanged" in meta
+    print("✓ polish_status=changed present in metadata for changed polish")
+
+
+def test_polish_status_no_change_in_metadata():
+    """When LLM polish leaves all segments identical, metadata reports no_change."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=False)
+    original_stub = orch.polish_candidate_with_llm
+    orch.polish_candidate_with_llm = stub_polish_candidate_no_change
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        orch.polish_candidate_with_llm = original_stub
+    assert meta["strategy"] == "embedded_jp_mt"
+    assert meta["polish_status"] == "no_change", meta
+    assert meta["segments_changed"] == 0
+    assert meta["segments_unchanged"] > 0
+    print("✓ polish_status=no_change present in metadata for identical polish")
+
+
+def test_polish_status_fallback_in_metadata():
+    """When LLM is unreachable (fallback), metadata reports polish_status=fallback."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=False, jp_audio=True)
+    original_stub = orch.polish_candidate_with_llm
+    orch.polish_candidate_with_llm = stub_polish_candidate_fallback
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        orch.polish_candidate_with_llm = original_stub
+    assert meta["strategy"] == "ja_audio_asr_mt"
+    assert meta["polish_status"] == "fallback", meta
+    print("✓ polish_status=fallback present in metadata for LLM fallback")
+
+
+def test_no_polish_status_for_non_mt_strategies():
+    """Strategies that don't run LLM polish should omit polish_status from metadata."""
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=False, jp_sub=False, jp_audio=False)
+    meta = orch.run_generate(media, cfg)
+    assert meta["strategy"] == "embedded_en"
+    assert "polish_status" not in meta, meta
+    print("✓ polish_status absent for strategies that skip LLM polish")
 
 
 if __name__ == "__main__":
