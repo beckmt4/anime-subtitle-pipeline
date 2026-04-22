@@ -20,6 +20,7 @@ Returned metadata includes chosen strategy and output SRT path.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 from pathlib import Path
 from typing import Dict, Any
@@ -68,6 +69,67 @@ def _first_audio_order(media: MediaInfo, lang: str) -> int | None:
         if _lang_matches(stream.language or stream.raw_language, lang):
             return order
     return None
+
+
+def _log_polish_stats(stats: Dict[str, Any]) -> None:
+    """Emit log messages summarising the outcome of a single LLM polish run."""
+    status = stats["polish_status"]
+    changed = stats["segments_changed"]
+    unchanged = stats["segments_unchanged"]
+    if status == "fallback":
+        logger.info(
+            "LLM polish: fallback (LLM unreachable/disabled) — "
+            f"{unchanged} segment(s) passed through unchanged"
+        )
+    elif status == "no_change":
+        logger.warning(
+            "LLM polish produced no change — all %d segment(s) identical to raw MT",
+            unchanged,
+        )
+    else:
+        logger.info(
+            "LLM polish: %d segment(s) changed, %d segment(s) unchanged",
+            changed,
+            unchanged,
+        )
+
+
+def _compare_candidates(raw: SubtitleCandidate, polished: SubtitleCandidate) -> Dict[str, Any]:
+    """Compare raw MT and polished candidates segment by segment.
+
+    Returns a dict with keys:
+      - polish_status: "changed" | "no_change" | "fallback"
+      - segments_changed: number of segments where polished text differs from raw
+      - segments_unchanged: number of segments where text is identical
+
+    A "fallback" status means the LLM was unreachable or disabled and the
+    polished candidate is a pass-through copy of the raw input.
+    """
+    if polished.meta.get("fallback"):
+        return {
+            "polish_status": "fallback",
+            "segments_changed": 0,
+            "segments_unchanged": len(raw.segments),
+        }
+
+    changed = 0
+    unchanged = 0
+    sentinel = object()
+    for raw_seg, pol_seg in itertools.zip_longest(raw.segments, polished.segments, fillvalue=sentinel):
+        if raw_seg is sentinel or pol_seg is sentinel:
+            # One side has extra segments — that is always a change.
+            changed += 1
+        elif raw_seg.text.strip() != pol_seg.text.strip():
+            changed += 1
+        else:
+            unchanged += 1
+
+    polish_status = "no_change" if changed == 0 else "changed"
+    return {
+        "polish_status": polish_status,
+        "segments_changed": changed,
+        "segments_unchanged": unchanged,
+    }
 
 
 def run_generate(
@@ -152,6 +214,7 @@ def run_generate(
 
     strategy = None
     candidate: SubtitleCandidate | None = None
+    polish_stats: Dict[str, Any] | None = None
 
     # Decision tree
     if prefer_subtitles and en_sub_idx is not None:
@@ -194,6 +257,8 @@ def run_generate(
                 polished = polish_candidate_with_llm(mt_candidate, cfg)
                 # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
                 candidate = enforce_constraints_on_candidate(polished, cfg)
+            polish_stats = _compare_candidates(mt_candidate, candidate)
+            _log_polish_stats(polish_stats)
         else:
             candidate = mt_candidate
     elif (prefer_audio_language in ["ja", "auto"] and ja_audio_order is not None):
@@ -224,6 +289,8 @@ def run_generate(
                 polished = polish_candidate_with_llm(mt_candidate, cfg)
                 # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
                 candidate = enforce_constraints_on_candidate(polished, cfg)
+            polish_stats = _compare_candidates(mt_candidate, candidate)
+            _log_polish_stats(polish_stats)
         else:
             candidate = mt_candidate
     elif en_audio_order is not None:  # fallback
@@ -280,6 +347,8 @@ def run_generate(
                 polished = polish_candidate_with_llm(mt_candidate, cfg)
                 # polish_candidate_with_llm already appends "_llm".
                 candidate = enforce_constraints_on_candidate(polished, cfg)
+            polish_stats = _compare_candidates(mt_candidate, candidate)
+            _log_polish_stats(polish_stats)
         else:
             candidate = mt_candidate
     else:
@@ -302,6 +371,8 @@ def run_generate(
         "segment_count": candidate.segment_count,
         "output_srt": str(out_srt),
     }
+    if polish_stats is not None:
+        metadata.update(polish_stats)
     logger.info(f"✓ Generation complete (strategy={strategy}, segments={candidate.segment_count})")
     return metadata
 
