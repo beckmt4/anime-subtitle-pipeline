@@ -473,12 +473,27 @@ Migration happens in phases. Each phase is a separate issue or set of issues. No
 - No files moved.
 - No interfaces changed.
 - Deliverable: `docs/architecture/module-boundaries.md`.
+- **Status: ✅ Complete**
 
 ### Phase 1 — Establish package skeleton and interfaces
 - Create `core/` and `packs/` directory trees with `__init__.py` files.
 - Define abstract base interfaces for ASR, MT, polish, extract, OCR backends.
 - Define the language pack interface (Issue #29) and domain pack interface (Issue #30).
+- Write ADR-001 (local-first platform) and ADR-002 (anime + JAV pack model).
 - No capability code moved yet; interfaces define the contracts.
+- **Status: ✅ Complete**
+
+Deliverables committed:
+- `core/` — 12-module skeleton with abstract base classes and root shims.
+- `packs/language/ja_en/` — reference language pack (`aliases`, `prompts`, `cjk_filter`).
+- `packs/domain/anime/` — anime style pack with `style.get_style_config()`.
+- `packs/domain/jav/` — JAV privacy pack with content gate and metadata redaction.
+- `docs/architecture/adr-001-local-first-platform.md`.
+- `docs/architecture/adr-002-pack-model.md`.
+- `specs/29-language-pack-interface.md` and `specs/30-domain-pack-interface.md`.
+- `acceptance/29-language-pack-interface.md`, `acceptance/30-domain-pack-interface.md`,
+  and `acceptance/15-platform-rearchitecture.md`.
+- `tests/test_packs_language_ja_en.py` (27 tests) and `tests/test_packs_domain.py` (18 tests).
 
 ### Phase 2 — Move low-risk, no-dependency modules
 Modules with no local imports move first:
@@ -495,12 +510,12 @@ Each move is a single PR: new location, root shim re-exports for backward compat
 - `srt_writer.py` → `core/subtitles/`
 - `asr.py` → `core/asr/` (retire legacy `asr.Segment` at this point — static review #7)
 - `mt.py` → `core/mt/` (rename direction-specific functions)
-- `llm_polish.py` → `core/polish/` (extract CJK filter to `packs/language/ja_en/`)
+- `llm_polish.py` → `core/polish/` (CJK filter already extracted to `packs/language/ja_en/cjk_filter.py`)
 - `benchmark.py` → `core/benchmark/`
 
 ### Phase 4 — Convert runtime and remove legacy glue
 - `config.py` → `core/runtime/` with dependency injection refactor
-- `orchestrator.py` → `core/runtime/`
+- `orchestrator.py` → `core/runtime/` (move `_LANG_ALIASES` to `packs/language/ja_en/aliases.py`)
 - `batch_process.py` → `core/runtime/` (switch to `run_generate`)
 - `main.py` → slim entry point that imports from `core/runtime`
 - Remove `main.process_video()` (legacy pipeline)
@@ -508,52 +523,53 @@ Each move is a single PR: new location, root shim re-exports for backward compat
 
 ### Phase 5 — Build unimplemented modules
 After migration, build net-new modules:
-- `core/ocr/` (Issue #21)
-- `core/artifacts/` (Issue #18)
-- `core/policy/`
-- `core/review/` (Issue #22)
-- `packs/language/ja_en/` (Issue #29, #26)
-- `packs/domain/anime/` (Issue #23)
-- `packs/domain/jav/` (Issue #24)
+- `core/ocr/` (Issue #21) — interface stub exists; implementation needed
+- `core/artifacts/` (Issue #18) — stub exists; SQLite implementation needed
+- `core/policy/` — stub exists; threshold routing implementation needed
+- `core/review/` (Issue #22) — stub exists; queue implementation needed
+- Populate `packs/domain/anime/glossary.yaml` (Issue #23)
+- Complete `packs/domain/jav/` privacy audit (Issue #24)
 
 ---
 
 ## 11. Acceptance Criteria Mapping
 
-This section maps directly to the acceptance criteria stated in Issue #28.
+This section maps directly to the acceptance criteria stated in Issue #28 and the parent EPIC.
 
 | Acceptance criterion | Status | Where addressed |
 |---|---|---|
 | Architecture doc exists | ✅ Done | This document, committed at `docs/architecture/module-boundaries.md` |
-| Module/pack interfaces defined | ✅ Defined (as ownership boundaries; formal interface specs come in #29, #30) | Section 6 (module map), Section 8 (package layout) |
+| ADR for local-first platform | ✅ Done | `docs/architecture/adr-001-local-first-platform.md` |
+| ADR for anime + JAV pack model | ✅ Done | `docs/architecture/adr-002-pack-model.md` |
+| Module/pack interfaces defined | ✅ Done (Phase 1) | Abstract base classes in `core/asr`, `core/mt`, `core/polish`, `core/ocr`; specs in `specs/29-*`, `specs/30-*` |
 | Repo structure documented | ✅ Done | Section 8 (target package layout), Section 9 (current file mapping) |
 | Each capability has a single defined owner | ✅ Done | Section 6: 12 modules defined, each with exclusive ownership of its capability |
-| Shared platform services distinguished from pack-specific logic | ✅ Done | Section 7 (core vs non-core table), Section 5 (principles), Section 6 (each module's "does not belong here") |
-| Target repo/package layout included | ✅ Done | Section 8 |
+| Shared platform services distinguished from pack-specific logic | ✅ Done | Section 7 (core vs non-core table); `packs/language/ja_en/` and `packs/domain/` hold pack logic |
+| Target repo/package layout included | ✅ Done | Section 8; `core/` and `packs/` skeleton committed |
+| Language pack interface defined | ✅ Done | `packs/language/ja_en/` reference pack; `specs/29-language-pack-interface.md`; `acceptance/29-language-pack-interface.md` |
+| Domain pack interface defined | ✅ Done | `packs/domain/anime/` and `packs/domain/jav/`; `specs/30-domain-pack-interface.md`; `acceptance/30-domain-pack-interface.md` |
+| Future growth path explicit | ✅ Done | ADR-002 Growth Path section; Phase 2–5 guidance above |
 | Design explicit enough for child issues to reference | ✅ Done | Each module entry in Section 6 is directly referenceable; Section 9 maps every current file |
 
 ---
 
 ## 12. Open Questions and Follow-on Issues
 
-The following work items should be opened as child issues referencing this document:
+**Resolved in Phase 1:**
+- **#29** — Language pack interface: ✅ implemented in `packs/language/ja_en/`.
+- **#30** — Domain pack interface: ✅ implemented in `packs/domain/anime/` and `packs/domain/jav/`.
+- **#31** — ADR: local-first platform: ✅ `docs/architecture/adr-001-local-first-platform.md`.
+- **#32** — ADR: anime + JAV pack model: ✅ `docs/architecture/adr-002-pack-model.md`.
 
-**Immediate (M0 completion):**
-- **#29** — Define language pack interface. Reference Section 6 (`core/media`, `core/mt`, `core/polish`) for the injection points language packs must satisfy.
-- **#30** — Define domain pack interface. Reference Section 7 (domain pack column) for what domains supply.
-- **#31** — Write ADR: local-first platform architecture. Reference Section 5 (core principles) and Section 8 (package layout) for the structural commitments.
-- **#32** — Write ADR: anime + JAV pack model. Reference Section 6 (`packs/domain/anime`, `packs/domain/jav`) for the split design.
-- **#17** — AI dev workflow and repo standards. Reference Section 8 for where `specs/`, `prompts/`, `fixtures/`, `acceptance/` directories land.
-- **#18** — Persistent state and artifact registry. Reference Section 6 (`core/artifacts`) for ownership and scope.
-
-**Near-term (Phase 1/2 of migration):**
-- Package skeleton creation: create `core/` and `packs/` trees with `__init__.py` and stub interfaces.
+**Open / near-term (Phase 2/3):**
 - Runtime interface cleanup: define Config injection pattern to replace global singleton.
 - Extraction split: separate audio extraction from subtitle mux into distinct sub-modules within `core/extract`.
 - Legacy retirement: `asr.Segment`, `find_japanese_audio_track()`, `process_video()` — tracked as static review item #7.
+- **#17** — AI dev workflow: Reference Section 8 for where `specs/`, `prompts/`, `fixtures/`, `acceptance/` directories land.
+- **#18** — Persistent state and artifact registry: Reference Section 6 (`core/artifacts`) for ownership and scope.
 
 **Open questions to resolve before Phase 3:**
-- Should language pack aliases live in `config.yaml` or in Python pack files? (affects how `core/media` reads normalization tables)
+- Should language pack aliases live in `config.yaml` or in Python pack files? Decision: Python pack files (as implemented in `packs/language/ja_en/aliases.py`); runtime config can reference pack ID.
 - Is `ConcurrentPolisher` in `llm_polish.py` used in production? If not, remove it before migrating the module.
 - The benchmark HTML renderer referenced in Issue #20 — does it live in `core/benchmark` or as a separate reporting layer?
 - `build_dataset.py` and `extract_training_data.py` — are these platform tooling or external scripts? Clarify before Phase 3.
