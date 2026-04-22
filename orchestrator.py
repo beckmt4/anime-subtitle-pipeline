@@ -287,7 +287,7 @@ def run_generate(
         logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
         if use_llm_polish:
             with start_span("llm_polish_embedded_jp"):
-                polished = polish_candidate_with_llm(mt_candidate, cfg)
+                polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
                 # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
                 candidate = enforce_constraints_on_candidate(polished, cfg)
             polish_stats = _compare_candidates(mt_candidate, candidate)
@@ -319,7 +319,7 @@ def run_generate(
         logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
         if use_llm_polish:
             with start_span("llm_polish_ja_audio"):
-                polished = polish_candidate_with_llm(mt_candidate, cfg)
+                polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
                 # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
                 candidate = enforce_constraints_on_candidate(polished, cfg)
             polish_stats = _compare_candidates(mt_candidate, candidate)
@@ -377,7 +377,7 @@ def run_generate(
         logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
         if use_llm_polish:
             with start_span("llm_polish_untagged_audio"):
-                polished = polish_candidate_with_llm(mt_candidate, cfg)
+                polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
                 # polish_candidate_with_llm already appends "_llm".
                 candidate = enforce_constraints_on_candidate(polished, cfg)
             polish_stats = _compare_candidates(mt_candidate, candidate)

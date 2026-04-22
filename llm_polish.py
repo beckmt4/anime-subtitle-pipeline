@@ -16,13 +16,14 @@ Key features:
 import logging
 import re
 import time
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
 import requests
 
 from asr import Segment  # legacy
 from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
+from subtitle_corrector import check_drift
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,53 @@ _CJK_RE = re.compile(
 )
 
 _SENTENCE_END_RE = re.compile(r'[.!?…]$')
+
+# Stock phrases that the LLM occasionally collapses unrelated lines into.
+# If ALL polished outputs in a batch match one of these generic replies the
+# entire batch is flagged as a "stock-phrase collapse" and reverted.
+_STOCK_PHRASES = frozenset({
+    "sure thing.",
+    "sure thing",
+    "got it.",
+    "got it",
+    "here you go.",
+    "here you go",
+    "oh my god!",
+    "oh my god",
+    "okay.",
+    "okay",
+    "alright.",
+    "alright",
+})
+
+
+class PolishStats(NamedTuple):
+    """Counters returned by per-segment LLM polishing runs."""
+    total: int
+    polished: int       # accepted polished output (different from raw, not reverted)
+    reverted: int       # drift-flagged, reverted to raw
+    unchanged: int      # identical to raw (LLM made no change)
+
+
+def _is_stock_phrase_collapse(raw_texts: List[str], polished_texts: List[str]) -> bool:
+    """Return True when distinct raw lines all collapsed to the same stock phrase.
+
+    Collapse is declared when:
+    - There are at least 2 segments, AND
+    - All polished outputs are identical, AND
+    - That output (lower-cased, stripped) is a known stock phrase, AND
+    - The raw inputs are not all identical (i.e. the LLM introduced collapse).
+    """
+    if len(polished_texts) < 2:
+        return False
+    unique_polished = {p.strip().lower() for p in polished_texts}
+    if len(unique_polished) != 1:
+        return False  # outputs differ — no collapse
+    collapsed_phrase = next(iter(unique_polished))
+    if collapsed_phrase not in _STOCK_PHRASES:
+        return False  # not a known filler phrase
+    unique_raw = {r.strip().lower() for r in raw_texts}
+    return len(unique_raw) > 1  # raw inputs were diverse → collapse is bad
 
 
 def _recover_leading_english(polished: str) -> Optional[str]:
@@ -260,45 +308,88 @@ Improve the English subtitle:"""
     ) -> List[Segment]:
         """
         Polish all segments in the list.
-        
+
         Updates each segment with text_en_final field containing polished text.
-        Processes segments one by one with progress logging.
-        
+        Applies per-segment drift detection: if the polished output drifts from
+        the raw MT text (noun change or extreme length ratio), the raw text is
+        kept instead.  Emits structured counters at the end of the run.
+
         Args:
             segments: List of Segment objects with text_ja and text_en_raw
             style: Override style for this batch
-            
+
         Returns:
             The same list of segments with text_en_final populated
         """
         if not segments:
             return segments
-        
+
         logger.info(f"Polishing {len(segments)} segments with LLM ({self.style} style)")
-        
+
         # Check connection first
         if not self.check_connection():
             logger.warning("LLM endpoint not accessible, skipping polishing")
-            # Fall back to raw translations
             for seg in segments:
                 seg.text_en_final = seg.text_en_raw
             return segments
-        
-        # Process each segment
+
+        n_polished = 0
+        n_reverted = 0
+        n_unchanged = 0
+
+        raw_texts: List[str] = []
+        candidate_texts: List[str] = []
+
         for i, seg in enumerate(segments, 1):
             if i % 10 == 0:
                 logger.debug(f"Polishing segment {i}/{len(segments)}")
-            
+
             polished = self.polish_text(
                 text_ja=seg.text_ja,
                 text_en_raw=seg.text_en_raw,
                 style=style
             )
-            
-            seg.text_en_final = polished
-        
-        logger.info("Polishing complete")
-        
+            raw_texts.append(seg.text_en_raw)
+            candidate_texts.append(polished)
+
+        # Stock-phrase collapse guard: revert entire batch if applicable.
+        if _is_stock_phrase_collapse(raw_texts, candidate_texts):
+            logger.warning(
+                "LLM polish: stock-phrase collapse detected across %d segments "
+                "(%r); reverting all to raw MT.",
+                len(segments),
+                candidate_texts[0] if candidate_texts else "",
+            )
+            for seg in segments:
+                seg.text_en_final = seg.text_en_raw
+                n_reverted += 1
+            logger.info(
+                "[llm_polish] polish_segments: total=%d polished=%d reverted=%d unchanged=%d",
+                len(segments), n_polished, n_reverted, n_unchanged,
+            )
+            return segments
+
+        for seg, polished in zip(segments, candidate_texts):
+            is_drift, reason, detail = check_drift(seg.text_en_raw, polished)
+            if is_drift:
+                logger.debug(
+                    "LLM polish drift reverted (reason=%s detail=%s): %r → %r",
+                    reason, detail, seg.text_en_raw, polished,
+                )
+                seg.text_en_final = seg.text_en_raw
+                n_reverted += 1
+            elif polished == seg.text_en_raw:
+                seg.text_en_final = polished
+                n_unchanged += 1
+            else:
+                seg.text_en_final = polished
+                n_polished += 1
+
+        logger.info(
+            "[llm_polish] polish_segments: total=%d polished=%d reverted=%d unchanged=%d",
+            len(segments), n_polished, n_reverted, n_unchanged,
+        )
+
         return segments
 
     # ---------------------------------------------------------------
@@ -307,12 +398,26 @@ Improve the English subtitle:"""
     def polish_candidate(
         self,
         candidate: SubtitleCandidate,
-        style: Optional[str] = None
+        ja_candidate: Optional[SubtitleCandidate] = None,
+        style: Optional[str] = None,
     ) -> SubtitleCandidate:
         """Return a new polished SubtitleCandidate.
 
         Input candidate expected to contain machine-translated English text
         in its segments. Output candidate has same timing with polished text.
+
+        Per-segment drift detection (noun change / length ratio) reverts any
+        segment whose polished text drifts from the raw MT. A stock-phrase
+        collapse guard reverts all segments when the LLM collapses diverse
+        inputs into a single generic filler phrase.
+
+        Args:
+            candidate: MT English candidate to polish.
+            ja_candidate: Optional matching Japanese source candidate. When
+                provided and the segment counts align, the original Japanese
+                text is passed to the LLM as context for each segment,
+                significantly reducing hallucination and drift.
+            style: Override configured LLM style for this run.
         """
         if not candidate.segments:
             return SubtitleCandidate(
@@ -337,17 +442,106 @@ Improve the English subtitle:"""
                 segments=passthrough_segments,
                 meta={"polisher_model": self.model_name, "fallback": True},
             )
-        polished_segments: List[GenericSegment] = []
-        for s in candidate.segments:
-            polished = self.polish_text(text_ja="", text_en_raw=s.text, style=style)  # original JA not available here
-            polished_segments.append(GenericSegment(s.start, s.end, polished))
+
+        # Build per-segment (text_ja, text_en_raw) pairs. Use the Japanese
+        # source candidate when the segment counts match; otherwise fall back
+        # to empty Japanese context.
+        ja_texts: List[str] = []
+        if (
+            ja_candidate is not None
+            and len(ja_candidate.segments) == len(candidate.segments)
+        ):
+            ja_texts = [s.text for s in ja_candidate.segments]
+            logger.debug(
+                "polish_candidate: using %d Japanese source segments for context",
+                len(ja_texts),
+            )
+        else:
+            if ja_candidate is not None:
+                logger.warning(
+                    "polish_candidate: ja_candidate segment count (%d) != "
+                    "en_candidate segment count (%d); ignoring Japanese context",
+                    len(ja_candidate.segments),
+                    len(candidate.segments),
+                )
+            ja_texts = [""] * len(candidate.segments)
+
+        raw_texts: List[str] = [s.text for s in candidate.segments]
+        candidate_texts: List[str] = []
+
+        for s, text_ja in zip(candidate.segments, ja_texts):
+            polished = self.polish_text(text_ja=text_ja, text_en_raw=s.text, style=style)
+            candidate_texts.append(polished)
+
+        # Stock-phrase collapse guard.
+        if _is_stock_phrase_collapse(raw_texts, candidate_texts):
+            logger.warning(
+                "LLM polish: stock-phrase collapse detected across %d segments "
+                "(%r); reverting all to raw MT.",
+                len(candidate.segments),
+                candidate_texts[0] if candidate_texts else "",
+            )
+            n_polished, n_reverted, n_unchanged = 0, len(candidate.segments), 0
+            polished_segments = [
+                GenericSegment(s.start, s.end, s.text) for s in candidate.segments
+            ]
+            stats = PolishStats(
+                total=len(candidate.segments),
+                polished=n_polished,
+                reverted=n_reverted,
+                unchanged=n_unchanged,
+            )
+            logger.info(
+                "[llm_polish] polish_candidate %s: total=%d polished=%d reverted=%d unchanged=%d",
+                candidate.id, stats.total, stats.polished, stats.reverted, stats.unchanged,
+            )
+            return SubtitleCandidate(
+                id=f"{candidate.id}_llm",
+                language=candidate.language,
+                source="mt_llm",
+                origin_stream=candidate.origin_stream,
+                segments=polished_segments,
+                meta={"polisher_model": self.model_name, "polish_stats": stats._asdict()},
+            )
+
+        # Per-segment drift check.
+        n_polished = 0
+        n_reverted = 0
+        n_unchanged = 0
+        polished_segments = []
+        for s, polished in zip(candidate.segments, candidate_texts):
+            is_drift, reason, detail = check_drift(s.text, polished)
+            if is_drift:
+                logger.debug(
+                    "LLM polish drift reverted (reason=%s detail=%s): %r → %r",
+                    reason, detail, s.text, polished,
+                )
+                polished_segments.append(GenericSegment(s.start, s.end, s.text))
+                n_reverted += 1
+            elif polished == s.text:
+                polished_segments.append(GenericSegment(s.start, s.end, polished))
+                n_unchanged += 1
+            else:
+                polished_segments.append(GenericSegment(s.start, s.end, polished))
+                n_polished += 1
+
+        stats = PolishStats(
+            total=len(candidate.segments),
+            polished=n_polished,
+            reverted=n_reverted,
+            unchanged=n_unchanged,
+        )
+        logger.info(
+            "[llm_polish] polish_candidate %s: total=%d polished=%d reverted=%d unchanged=%d",
+            candidate.id, stats.total, stats.polished, stats.reverted, stats.unchanged,
+        )
         return SubtitleCandidate(
             id=f"{candidate.id}_llm",
             language=candidate.language,
             source="mt_llm",
             origin_stream=candidate.origin_stream,
             segments=polished_segments,
-            meta={"polisher_model": self.model_name},
+            meta={"polisher_model": self.model_name, "polish_stats": stats._asdict()},
         )
 
 
@@ -379,9 +573,24 @@ def polish_english_subtitles_with_llm(
     return polisher.polish_segments(segments, style=style)
 
 
-def polish_candidate_with_llm(candidate: SubtitleCandidate, config: Config, style: Optional[str] = None) -> SubtitleCandidate:
+def polish_candidate_with_llm(
+    candidate: SubtitleCandidate,
+    config: Config,
+    ja_candidate: Optional[SubtitleCandidate] = None,
+    style: Optional[str] = None,
+) -> SubtitleCandidate:
+    """Convenience wrapper: polish a single MT candidate using the LLM.
+
+    Args:
+        candidate: MT English candidate to polish.
+        config: Pipeline configuration.
+        ja_candidate: Optional matching Japanese source candidate. When provided
+            and the segment counts align, the original Japanese text is forwarded
+            as context to the LLM, reducing hallucination and semantic drift.
+        style: Override configured LLM style.
+    """
     polisher = LLMPolisher(config)
-    return polisher.polish_candidate(candidate, style=style)
+    return polisher.polish_candidate(candidate, ja_candidate=ja_candidate, style=style)
 
 
 def enforce_subtitle_constraints_on_segments(segments: List[Segment], config: Config) -> int:
@@ -455,7 +664,12 @@ class BatchPolisher:
         
         return self.polisher.polish_segments(segments, style=style)
 
-    def polish_candidate(self, candidate: SubtitleCandidate, style: Optional[str] = None) -> SubtitleCandidate:
+    def polish_candidate(
+        self,
+        candidate: SubtitleCandidate,
+        ja_candidate: Optional[SubtitleCandidate] = None,
+        style: Optional[str] = None,
+    ) -> SubtitleCandidate:
         if not self.enabled:
             return SubtitleCandidate(
                 id=f"{candidate.id}_llm",
@@ -465,10 +679,11 @@ class BatchPolisher:
                 segments=[GenericSegment(s.start, s.end, s.text) for s in candidate.segments],
                 meta={"fallback": True},
             )
-        return self.polisher.polish_candidate(candidate, style=style)
+        return self.polisher.polish_candidate(candidate, ja_candidate=ja_candidate, style=style)
 
 __all__ = [
     "LLMPolisher",
+    "PolishStats",
     "polish_english_subtitles_with_llm",
     "polish_candidate_with_llm",
     "enforce_subtitle_constraints_on_segments",
