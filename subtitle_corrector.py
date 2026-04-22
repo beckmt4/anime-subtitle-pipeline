@@ -27,7 +27,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, NamedTuple
 
 import requests
 
@@ -67,6 +67,13 @@ class DriftEvent:
     reason: str   # "noun_change" | "length_ratio"
     detail: str   # noun string | ratio string
     timestamp: str  # ISO 8601
+
+
+class CorrectionStats(NamedTuple):
+    cues_in: int
+    cues_out: int
+    corrected: int
+    drift_reverted: int
 
 
 def _extract_nouns(text: str) -> set:
@@ -230,42 +237,18 @@ def _render_srt(cues: List[Dict]) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def correct_srt(
+def _run_correction(
     cues: List[Dict],
-    model: Optional[str] = None,
-    batch_size: int = BATCH_SIZE,
-    timeout: int = 120,
-    dry_run: bool = False,
-    verbose: bool = False,
-    drift_log: Optional[str] = None,
-    label: str = "",
-) -> str:
-    """Correct subtitle grammar and flow using a local Ollama model.
-
-    Args:
-        cues: List of dicts, each with keys: index, start, end, text.
-              start/end may be float seconds or pre-formatted SRT timestamp strings.
-        model: Ollama model name. Falls back to the MODEL env var, then "mistral".
-        batch_size: Number of cues per API call (default 20).
-        timeout: Per-request HTTP timeout in seconds.
-        dry_run: If True, print the system prompt + first-batch user message and
-                 return the original SRT unchanged without calling the API.
-        verbose: Print a DRIFT REVERTED block for each reverted cue.
-        drift_log: Path to a file for JSON-lines drift event output (append mode).
-        label: Label used in the summary line (typically the filename).
-
-    Returns:
-        Corrected SRT as a complete string with original timing preserved exactly.
-
-    Raises:
-        ValueError: If cues is empty.
-        RuntimeError: If Ollama is unreachable or returns an unusable response.
-    """
-    if not cues:
-        raise ValueError("correct_srt: cues list is empty")
-
-    effective_model = model or os.environ.get("MODEL", DEFAULT_MODEL)
-    corrected = [dict(cue) for cue in cues]  # work on copies; never mutate input
+    effective_model: str,
+    batch_size: int,
+    timeout: int,
+    dry_run: bool,
+    verbose: bool,
+    drift_log: Optional[str],
+    label: str,
+) -> Tuple[str, CorrectionStats]:
+    """Inner implementation shared by correct_srt() and correct_srt_ex()."""
+    corrected = [dict(cue) for cue in cues]
     batches = [cues[i:i + batch_size] for i in range(0, len(cues), batch_size)]
 
     logger.info(
@@ -346,7 +329,77 @@ def correct_srt(
             except OSError as exc:
                 logger.warning("Could not write drift log to %s: %s", drift_log, exc)
 
-    return _render_srt(corrected)
+    srt = _render_srt(corrected)
+    stats = CorrectionStats(
+        cues_in=len(cues),
+        cues_out=len(corrected),
+        corrected=total_corrected,
+        drift_reverted=total_drift_reverted,
+    )
+    return srt, stats
+
+
+def correct_srt(
+    cues: List[Dict],
+    model: Optional[str] = None,
+    batch_size: int = BATCH_SIZE,
+    timeout: int = 120,
+    dry_run: bool = False,
+    verbose: bool = False,
+    drift_log: Optional[str] = None,
+    label: str = "",
+) -> str:
+    """Correct subtitle grammar and flow using a local Ollama model.
+
+    Args:
+        cues: List of dicts, each with keys: index, start, end, text.
+              start/end may be float seconds or pre-formatted SRT timestamp strings.
+        model: Ollama model name. Falls back to the MODEL env var, then "mistral".
+        batch_size: Number of cues per API call (default 20).
+        timeout: Per-request HTTP timeout in seconds.
+        dry_run: If True, print the system prompt + first-batch user message and
+                 return the original SRT unchanged without calling the API.
+        verbose: Print a DRIFT REVERTED block for each reverted cue.
+        drift_log: Path to a file for JSON-lines drift event output (append mode).
+        label: Label used in the summary line (typically the filename).
+
+    Returns:
+        Corrected SRT as a complete string with original timing preserved exactly.
+
+    Raises:
+        ValueError: If cues is empty.
+        RuntimeError: If Ollama is unreachable or returns an unusable response.
+    """
+    if not cues:
+        raise ValueError("correct_srt: cues list is empty")
+    effective_model = model or os.environ.get("MODEL", DEFAULT_MODEL)
+    srt, _ = _run_correction(cues, effective_model, batch_size, timeout, dry_run, verbose,
+                             drift_log, label)
+    return srt
+
+
+def correct_srt_ex(
+    cues: List[Dict],
+    model: Optional[str] = None,
+    batch_size: int = BATCH_SIZE,
+    timeout: int = 120,
+    dry_run: bool = False,
+    verbose: bool = False,
+    drift_log: Optional[str] = None,
+    label: str = "",
+) -> Tuple[str, CorrectionStats]:
+    """Like correct_srt() but also returns a CorrectionStats named tuple.
+
+    Returns:
+        (corrected_srt, CorrectionStats(cues_in, cues_out, corrected, drift_reverted))
+
+    All other args and exceptions are identical to correct_srt().
+    """
+    if not cues:
+        raise ValueError("correct_srt_ex: cues list is empty")
+    effective_model = model or os.environ.get("MODEL", DEFAULT_MODEL)
+    return _run_correction(cues, effective_model, batch_size, timeout, dry_run, verbose,
+                           drift_log, label)
 
 
 # ---------------------------------------------------------------------------
@@ -495,4 +548,5 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["correct_srt", "parse_srt", "check_drift", "_extract_nouns"]
+__all__ = ["correct_srt", "correct_srt_ex", "parse_srt", "check_drift", "_extract_nouns",
+           "CorrectionStats", "DriftEvent"]
