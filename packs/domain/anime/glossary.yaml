@@ -1,0 +1,33 @@
+# Anime domain pack — terminology glossary
+#
+# This file maps source-language terms (Japanese) to preferred English
+# translations or preserved forms for the anime domain.
+#
+# Status: STUB — population is tracked in Issue #23.
+#
+# Format:
+#   - source: <Japanese term or romaji>
+#     target: <preferred English form>
+#     note:   <optional explanation>
+#
+# Guidelines:
+# - Entries here override MT model defaults for these specific terms.
+# - Honorifics listed in style.py are handled separately; do not duplicate them.
+# - Terms with widely accepted loanword forms (e.g., "sensei") can use the
+#   loanword as the target.
+
+terms: []
+
+# Example entries (commented out until Issue #23 review):
+#
+# - source: "先輩"
+#   target: "senpai"
+#   note: Keep as loanword; audience recognises it.
+#
+# - source: "なるほど"
+#   target: "I see"
+#   note: Common filler; "I see" is more natural than "Indeed".
+#
+# - source: "お前"
+#   target: "you"
+#   note: Use plain "you"; "bastard" is too strong for general contexts.
