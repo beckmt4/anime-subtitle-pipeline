@@ -20,11 +20,14 @@ Usage from CLI:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
 import sys
-from typing import Dict, List, Optional
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
 
 import requests
 
@@ -48,6 +51,52 @@ _SYSTEM_PROMPT = (
     "- Return ONLY the corrected subtitle text, nothing else"
 )
 
+_CAPITALIZED_RE = re.compile(r"\b[A-Z][a-zA-Z]+\b")
+_QUOTED_RE = re.compile(r'["\']([^"\']+)["\']')
+
+
+# ---------------------------------------------------------------------------
+# Drift detection
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DriftEvent:
+    index: int
+    raw: str
+    llm: str
+    reason: str   # "noun_change" | "length_ratio"
+    detail: str   # noun string | ratio string
+    timestamp: str  # ISO 8601
+
+
+def _extract_nouns(text: str) -> set:
+    """Extract capitalized words (2+ chars) and quoted terms from text."""
+    nouns = set(_CAPITALIZED_RE.findall(text))
+    nouns.update(_QUOTED_RE.findall(text))
+    return nouns
+
+
+def check_drift(raw: str, llm: str) -> Tuple[bool, str, str]:
+    """Check whether an LLM correction has drifted from the raw cue.
+
+    Returns (is_drift, reason, detail).
+    Noun check runs before length check — nouns are non-negotiable.
+    """
+    if raw == llm:
+        return (False, "", "")
+
+    for noun in _extract_nouns(raw):
+        if noun not in llm:
+            return (True, "noun_change", noun)
+
+    raw_words = raw.split()
+    if raw_words:
+        ratio = len(llm.split()) / len(raw_words)
+        if ratio > 1.4 or ratio < 0.6:
+            return (True, "length_ratio", f"{ratio:.2f}")
+
+    return (False, "", "")
+
 
 # ---------------------------------------------------------------------------
 # Timestamp helpers
@@ -64,7 +113,7 @@ def _format_timestamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def _to_timestamp_str(value: float | str) -> str:
+def _to_timestamp_str(value) -> str:
     """Return an SRT timestamp string from either a float (seconds) or a pre-formatted string."""
     if isinstance(value, (int, float)):
         return _format_timestamp(float(value))
@@ -187,6 +236,9 @@ def correct_srt(
     batch_size: int = BATCH_SIZE,
     timeout: int = 120,
     dry_run: bool = False,
+    verbose: bool = False,
+    drift_log: Optional[str] = None,
+    label: str = "",
 ) -> str:
     """Correct subtitle grammar and flow using a local Ollama model.
 
@@ -198,6 +250,9 @@ def correct_srt(
         timeout: Per-request HTTP timeout in seconds.
         dry_run: If True, print the system prompt + first-batch user message and
                  return the original SRT unchanged without calling the API.
+        verbose: Print a DRIFT REVERTED block for each reverted cue.
+        drift_log: Path to a file for JSON-lines drift event output (append mode).
+        label: Label used in the summary line (typically the filename).
 
     Returns:
         Corrected SRT as a complete string with original timing preserved exactly.
@@ -220,6 +275,10 @@ def correct_srt(
         effective_model,
     )
 
+    total_corrected = 0
+    total_drift_reverted = 0
+    drift_events: List[DriftEvent] = []
+
     for batch_idx, batch in enumerate(batches):
         user_message = _build_user_message(batch)
 
@@ -241,13 +300,51 @@ def correct_srt(
         reply = _call_ollama(_SYSTEM_PROMPT, user_message, effective_model, timeout)
         corrections = _parse_numbered_response(reply, batch)
 
-        # Write corrections back by matching on index value (not list position).
         index_to_correction = {
             batch[i - 1]["index"]: corrections[i] for i in range(1, len(batch) + 1)
         }
+
         for cue in corrected:
-            if cue["index"] in index_to_correction:
-                cue["text"] = index_to_correction[cue["index"]]
+            if cue["index"] not in index_to_correction:
+                continue
+            raw_text = cue["text"]
+            llm_text = index_to_correction[cue["index"]]
+
+            is_drift, reason, detail = check_drift(raw_text, llm_text)
+            if is_drift:
+                event = DriftEvent(
+                    index=cue["index"],
+                    raw=raw_text,
+                    llm=llm_text,
+                    reason=reason,
+                    detail=detail,
+                    timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                )
+                drift_events.append(event)
+                total_drift_reverted += 1
+
+                if verbose:
+                    print(f"DRIFT REVERTED #{cue['index']}:")
+                    print(f"  RAW: {raw_text}")
+                    print(f"  LLM: {llm_text}")
+                    print(f"  REASON: {reason} ({detail})")
+            elif llm_text != raw_text:
+                cue["text"] = llm_text
+                total_corrected += 1
+
+    if not dry_run:
+        print(
+            f"[corrector] {label}: {len(cues)} cues processed, "
+            f"{total_corrected} corrected, {total_drift_reverted} drift-reverted"
+        )
+
+        if drift_log and drift_events:
+            try:
+                with open(drift_log, "a", encoding="utf-8") as fh:
+                    for event in drift_events:
+                        fh.write(json.dumps(asdict(event)) + "\n")
+            except OSError as exc:
+                logger.warning("Could not write drift log to %s: %s", drift_log, exc)
 
     return _render_srt(corrected)
 
@@ -325,6 +422,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "calling the Ollama API. Useful for inspecting what the model will receive."
         ),
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print each drift-reverted cue with raw, LLM output, and reason.",
+    )
+    parser.add_argument(
+        "--drift-log",
+        metavar="PATH",
+        default=None,
+        help="Append drift events as JSON lines to this file.",
+    )
     return parser
 
 
@@ -356,7 +464,14 @@ def main() -> None:
     logger.info("Parsed %d cues from %s", len(cues), args.input)
 
     try:
-        result = correct_srt(cues, model=args.model, dry_run=args.dry_run)
+        result = correct_srt(
+            cues,
+            model=args.model,
+            dry_run=args.dry_run,
+            verbose=args.verbose,
+            drift_log=args.drift_log,
+            label=os.path.basename(args.input),
+        )
     except RuntimeError as exc:
         logger.error("%s", exc)
         sys.exit(1)
@@ -380,4 +495,4 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["correct_srt", "parse_srt"]
+__all__ = ["correct_srt", "parse_srt", "check_drift", "_extract_nouns"]
