@@ -70,7 +70,7 @@
 
 Tests run locally: `venv/Scripts/python -m pytest tests/ -v --tb=short -m "not integration"`
 
-**Result:** 126 passed in 0.99s
+**Result:** 167 passed (as of issue #37; count grew as subsequent issues added tests to `tests/`)
 
 Lint run locally: `venv/Scripts/python -m flake8 ... --select=E9,F --extend-ignore=F401,F841`
 
@@ -80,7 +80,7 @@ Lint run locally: `venv/Scripts/python -m flake8 ... --select=E9,F --extend-igno
 
 ## Notes
 
-- File number 33 is a placeholder — rename to actual GitHub issue number.
+- File name matches GitHub issue #33.
 - F401/F841 are excluded from CI lint because pre-existing violations in source
   files would block CI without a separate style cleanup PR. These should be fixed
   in a follow-up chore PR.

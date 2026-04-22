@@ -1,5 +1,7 @@
 # Anime Subtitle Pipeline
 
+[![CI](https://github.com/beckmt4/anime-subtitle-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/beckmt4/anime-subtitle-pipeline/actions/workflows/ci.yml)
+
 A **production-quality**, **local-only** pipeline for generating English subtitles from Japanese anime, movies, and TV shows. No cloud services or external APIs required.
 
 ## Features
