@@ -48,25 +48,58 @@ _LANG_ALIASES = {
 
 
 def _lang_matches(stream_lang: str | None, target: str) -> bool:
-    """True if stream_lang (raw from container) belongs to target's alias set."""
+    """True if stream_lang (raw from container) belongs to target's alias set.
+
+    Handles:
+    - Exact codes and known aliases (e.g. 'eng', 'jpn')
+    - BCP-47 regional subtags (e.g. 'en-AU', 'en-CA', 'en-US' all match 'en')
+    """
     if not stream_lang:
         return False
-    return stream_lang.strip().lower() in _LANG_ALIASES.get(target, {target})
+    code = stream_lang.strip().lower()
+    aliases = _LANG_ALIASES.get(target, {target})
+    if code in aliases:
+        return True
+    # BCP-47 prefix: 'en-AU' → prefix 'en', check if prefix is a known alias.
+    prefix = code.split("-", 1)[0]
+    return prefix in aliases
 
 
 def _first_text_sub(media: MediaInfo, lang: str) -> int | None:
     for s in media.subtitle_streams:
         if s.is_bitmap:
+            logger.debug(
+                "  subtitle stream %d (codec=%s lang=%s): skipped — bitmap/image-based track",
+                s.index, s.codec, s.language or s.raw_language or "?",
+            )
             continue
-        if _lang_matches(s.language or s.raw_language, lang):
+        raw = s.language or s.raw_language
+        if _lang_matches(raw, lang):
+            logger.info(
+                "  subtitle stream %d (codec=%s lang=%s): ACCEPTED as %s text subtitle",
+                s.index, s.codec, raw or "?", lang,
+            )
             return s.index
+        logger.debug(
+            "  subtitle stream %d (codec=%s lang=%s): rejected — does not match target '%s'",
+            s.index, s.codec, raw or "?", lang,
+        )
     return None
 
 
 def _first_audio_order(media: MediaInfo, lang: str) -> int | None:
     for order, stream in enumerate(media.audio_streams):
-        if _lang_matches(stream.language or stream.raw_language, lang):
+        raw = stream.language or stream.raw_language
+        if _lang_matches(raw, lang):
+            logger.debug(
+                "  audio stream order=%d idx=%d (codec=%s lang=%s): ACCEPTED as %s audio",
+                order, stream.index, stream.codec, raw or "?", lang,
+            )
             return order
+        logger.debug(
+            "  audio stream order=%d idx=%d (codec=%s lang=%s): rejected — does not match target '%s'",
+            order, stream.index, stream.codec, raw or "?", lang,
+        )
     return None
 
 

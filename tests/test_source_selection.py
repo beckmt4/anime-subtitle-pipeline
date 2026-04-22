@@ -90,6 +90,22 @@ class TestLangMatches:
         assert _lang_matches("zz", "zz") is True
         assert _lang_matches("ja", "zz") is False
 
+    # --- BCP-47 regional subtag tests ---
+
+    @pytest.mark.parametrize("code", ["en-AU", "en-CA", "en-IE", "en-NZ", "en-IN"])
+    def test_bcp47_en_regional_variants_match_en(self, code):
+        """BCP-47 regional English codes not in the alias list must still match."""
+        assert _lang_matches(code, "en") is True
+
+    @pytest.mark.parametrize("code", ["ja-Latn", "ja-JP"])
+    def test_bcp47_ja_regional_variants_match_ja(self, code):
+        """BCP-47 Japanese subtags must still match."""
+        assert _lang_matches(code, "ja") is True
+
+    def test_bcp47_prefix_does_not_cause_false_positive(self):
+        """'fr-CA' must not match 'en'."""
+        assert _lang_matches("fr-CA", "en") is False
+
 
 # ---------------------------------------------------------------------------
 # _first_text_sub
@@ -128,6 +144,37 @@ class TestFirstTextSub:
         media = make_media(sub_specs=[("en", "subrip"), ("en", "ass")])
         idx = _first_text_sub(media, "en")
         assert idx == 0  # first matching stream
+
+    # --- Regression: real-world tag variants ---
+
+    def test_finds_en_by_eng_tag(self):
+        """Regression: 'eng' (ISO 639-2) tagged subtitle must be detected as English."""
+        media = make_media(sub_specs=[("eng", "subrip")])
+        idx = _first_text_sub(media, "en")
+        assert idx is not None, "Expected to find English subtitle tagged 'eng'"
+
+    def test_finds_en_by_bcp47_en_us_tag(self):
+        """Regression (Once Upon a Crime): 'en-US' BCP-47 tag must be detected as English."""
+        media = make_media(sub_specs=[("en-US", "subrip")])
+        idx = _first_text_sub(media, "en")
+        assert idx is not None, "Expected to find English subtitle tagged 'en-US'"
+
+    def test_couple_of_cuckoos_regression(self):
+        """Regression: bitmap JA sub first, text EN sub (eng tag) second — must find EN."""
+        media = make_media(sub_specs=[("jpn", "pgssub"), ("eng", "subrip")])
+        idx = _first_text_sub(media, "en")
+        assert idx is not None, "Expected to find English text subtitle after skipping bitmap JA"
+        # stream indexes: 0=jpn/pgssub, 1=eng/subrip → index 1
+        assert idx == 1
+
+    def test_once_upon_a_crime_regression(self):
+        """Regression: JA subs followed by en-US BCP-47 tagged sub — must find EN."""
+        media = make_media(
+            audio_langs=["jpn"],
+            sub_specs=[("jpn", "pgssub"), ("jpn", "subrip"), ("en-US", "subrip")],
+        )
+        idx = _first_text_sub(media, "en")
+        assert idx is not None, "Expected to find English subtitle tagged 'en-US'"
 
 
 # ---------------------------------------------------------------------------

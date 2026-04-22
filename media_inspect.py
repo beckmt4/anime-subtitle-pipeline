@@ -17,16 +17,22 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-# Basic language normalization map (extend as needed)
+# Basic language normalization map (extend as needed).
+# Keys must be lowercase. Full language names (e.g. "english") are included
+# because some container muxers write the full name instead of an ISO code.
 LANG_MAP = {
     "jpn": "ja",
     "ja": "ja",
+    "japanese": "ja",
     "eng": "en",
     "en": "en",
+    "english": "en",
     "fre": "fr",
     "fra": "fr",
+    "french": "fr",
     "chi": "zh",
     "zho": "zh",
+    "chinese": "zh",
     "und": "und",
 }
 
