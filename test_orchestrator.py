@@ -30,13 +30,22 @@ def stub_extract_subtitle_track(video, sub_index, language, output_dir=None):
     )
 
 
-def stub_extract_audio_with_ffmpeg(video_path: str, out_path: str, audio_order: int):
+def stub_extract_audio_with_ffmpeg(video_path: str, out_path: str, audio_order: int, **kwargs):
     Path(out_path).write_bytes(b"")  # create dummy file
     return out_path
 
 
 class DummyASR:
+    # Override per-test to control probe outcome: (language, probability)
+    probe_result: tuple[str, float] = ("en", 0.95)
+
     def __init__(self, cfg):
+        pass
+
+    def detect_language(self, audio_path: str) -> tuple[str, float]:
+        return DummyASR.probe_result
+
+    def unload_model(self) -> None:
         pass
 
     def transcribe_audio_to_segments(self, path: str, language: str = "en"):
@@ -236,6 +245,92 @@ def test_skip_embedded_en_forces_generation():
     print("✓ skip_embedded_en=True correctly bypasses embedded EN subtitles")
 
 
+# ---------------------------------------------------------------------------
+# Language probe tests (issue #59)
+# ---------------------------------------------------------------------------
+
+def test_mislabeled_ja_audio_rerouted_via_probe():
+    """EN-tagged audio that Whisper identifies as Japanese must route through JA ASR → MT."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    DummyASR.probe_result = ("ja", 0.97)
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        DummyASR.probe_result = ("en", 0.95)
+    assert meta["strategy"] == "ja_audio_asr_mt", (
+        f"Expected ja_audio_asr_mt but got {meta['strategy']} — "
+        "mislabeled JA audio was not rerouted by language probe"
+    )
+    print("✓ Mislabeled JA audio (EN-tagged) correctly rerouted to ja_audio_asr_mt via probe")
+
+
+def test_probe_confirmed_en_keeps_en_asr():
+    """EN-tagged audio confirmed as English by probe stays on the EN ASR path."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    DummyASR.probe_result = ("en", 0.95)
+    meta = orch.run_generate(media, cfg)
+    assert meta["strategy"] == "en_audio_asr", (
+        f"Expected en_audio_asr but got {meta['strategy']} — "
+        "confirmed EN audio should not be rerouted"
+    )
+    print("✓ Confirmed English audio stays on en_audio_asr path")
+
+
+def test_probe_skipped_when_ja_audio_present():
+    """Probe must not run when a proper JA-tagged audio track already exists."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=True)
+    # If probe ran and returned "en", it would (incorrectly) keep EN audio.
+    # The correct path is ja_audio_asr_mt regardless.
+    DummyASR.probe_result = ("en", 0.99)
+    meta = orch.run_generate(media, cfg)
+    assert meta["strategy"] == "ja_audio_asr_mt", (
+        f"Expected ja_audio_asr_mt but got {meta['strategy']} — "
+        "probe should be skipped when a JA-tagged track is present"
+    )
+    print("✓ Probe skipped when explicit JA audio track exists")
+
+
+def test_probe_skipped_with_audio_track_override():
+    """When --audio-track is specified, the probe must be bypassed entirely."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    # probe_result = "en" would keep EN ASR if probe ran; override forces JA path
+    DummyASR.probe_result = ("en", 0.99)
+    meta = orch.run_generate(media, cfg, audio_track_override=0)
+    assert meta["strategy"] == "ja_audio_asr_mt", (
+        f"Expected ja_audio_asr_mt but got {meta['strategy']} — "
+        "--audio-track override should bypass probe and force JA path"
+    )
+    print("✓ Probe bypassed when --audio-track override is set")
+
+
+def test_inconclusive_probe_falls_back_to_metadata():
+    """Low-confidence probe result must not reroute — honour the metadata tag."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    DummyASR.probe_result = ("ja", 0.50)  # below 0.85 threshold
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        DummyASR.probe_result = ("en", 0.95)
+    assert meta["strategy"] == "en_audio_asr", (
+        f"Expected en_audio_asr but got {meta['strategy']} — "
+        "inconclusive probe should not reroute"
+    )
+    print("✓ Inconclusive probe (low confidence) does not reroute; metadata tag honoured")
+
+
 def run_all_tests():
     test_strategy_embedded_en()
     test_strategy_en_audio_when_no_en_sub_and_en_audio_preferred()
@@ -252,6 +347,12 @@ def run_all_tests():
     test_polish_status_no_change_in_metadata()
     test_polish_status_fallback_in_metadata()
     test_no_polish_status_for_non_mt_strategies()
+    # Language probe tests (issue #59)
+    test_mislabeled_ja_audio_rerouted_via_probe()
+    test_probe_confirmed_en_keeps_en_asr()
+    test_probe_skipped_when_ja_audio_present()
+    test_probe_skipped_with_audio_track_override()
+    test_inconclusive_probe_falls_back_to_metadata()
     print("\n✅ All orchestrator strategy tests PASSED")
 
 
