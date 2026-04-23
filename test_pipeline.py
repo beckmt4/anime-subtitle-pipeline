@@ -8,6 +8,8 @@ and validate the complete pipeline.
 import logging
 from pathlib import Path
 
+import pytest
+
 from config import Config, set_config
 from audio_utils import check_ffmpeg_available, get_audio_tracks
 from asr import FasterWhisperASR, Segment
@@ -89,7 +91,8 @@ def test_config():
         return False
 
 
-def test_video_info(video_path: str):
+@pytest.mark.integration
+def test_video_info(video_path: str = None):
     """Test video file and show audio track information."""
     logger.info(f"\nTesting video: {video_path}")
     
@@ -109,7 +112,8 @@ def test_video_info(video_path: str):
         return False
 
 
-def test_asr(config: Config):
+@pytest.mark.integration
+def test_asr(config: Config = None):
     """Test ASR model loading."""
     logger.info("\nTesting ASR model...")
     
@@ -133,7 +137,8 @@ def test_asr(config: Config):
         return False
 
 
-def test_mt(config: Config):
+@pytest.mark.integration
+def test_mt(config: Config = None):
     """Test machine translation model."""
     logger.info("\nTesting MT model...")
     
@@ -154,7 +159,8 @@ def test_mt(config: Config):
         return False
 
 
-def test_llm(config: Config):
+@pytest.mark.integration
+def test_llm(config: Config = None):
     """Test LLM connection."""
     logger.info("\nTesting LLM connection...")
     
@@ -182,7 +188,8 @@ def test_llm(config: Config):
         return False
 
 
-def test_srt_writer(config: Config):
+@pytest.mark.integration
+def test_srt_writer(config: Config = None):
     """Test SRT writing."""
     logger.info("\nTesting SRT writer...")
     

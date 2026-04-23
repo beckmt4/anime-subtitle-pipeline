@@ -59,7 +59,7 @@ def dummy_extract_subtitle_track(video, sub_index, language, output_dir=None):
 def dummy_translate_candidate_jp_to_en(cand: SubtitleCandidate, config: Config):
     # Produce a shallow copy with language changed and id updated
     return SubtitleCandidate(
-        id=cand.id.replace("_ja_", "_en_").replace("embedded_ja", "embedded_jp_mt"),
+        id=cand.id.replace("embedded_ja", "embedded_jp_mt").replace("_ja_", "_en_"),
         language="en",
         source="embedded_mt" if cand.source == "embedded" else "asr_mt",
         origin_stream=cand.origin_stream,
@@ -132,8 +132,8 @@ def test_generalized_generation_and_reference():
     _install_monkeypatches()
     cfg = Config()
     # Enable pairwise comparisons for second part of test
-    cfg._data.setdefault("benchmark", {})
-    cfg._data["benchmark"].update({
+    cfg._config.setdefault("benchmark", {})
+    cfg._config["benchmark"].update({
         "sources": {
             "use_embedded_en": True,
             "use_embedded_jp": True,
@@ -164,7 +164,7 @@ def test_generalized_generation_and_reference():
     assert len([c for c in results["comparisons"] if c["ref_id"] == results["reference_id"]]) == 4
 
     # Enable full pairwise matrix
-    cfg._data["benchmark"]["compare_all_pairs"] = True
+    cfg._config["benchmark"]["compare_all_pairs"] = True
     results_full = bm.run_benchmark(str(dummy_video), cfg, use_llm=False)
     # Total comparisons = (N-1 reference) + N*(N-1)/2 pairwise
     n = 5
@@ -182,8 +182,8 @@ def test_reference_selection_without_embedded_en():
     cfg = Config()
     # Remove embedded EN stream from synthetic media
     _SYNTH_MEDIA.subtitle_streams = [s for s in _SYNTH_MEDIA.subtitle_streams if s.language != "en"]
-    cfg._data.setdefault("benchmark", {})
-    cfg._data["benchmark"].update({
+    cfg._config.setdefault("benchmark", {})
+    cfg._config["benchmark"].update({
         "sources": {
             "use_embedded_en": True,  # Enabled but absent
             "use_embedded_jp": True,

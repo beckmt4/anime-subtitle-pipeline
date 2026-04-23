@@ -2,6 +2,9 @@
 import os
 import tempfile
 from pathlib import Path
+
+import pytest
+
 from config import Config
 from models import Segment, SubtitleCandidate
 from mt import translate_candidate_jp_to_en
@@ -9,6 +12,7 @@ from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candida
 from srt_writer import write_candidate_srt
 
 
+@pytest.mark.integration
 def test_candidate_pipeline():
     """Create synthetic Japanese candidate; translate; polish (if enabled); write SRT; validate."""
     
