@@ -1,25 +1,73 @@
 """core.artifacts — processing ledger and artifact storage.
 
-Status: **not yet implemented** (Issue #18).
-
-Planned responsibilities
-------------------------
-- SQLite-backed processing ledger: tracks which files have been processed
-  and with what outcomes.
-- Subtitle candidate versioning: stores SubtitleCandidate objects keyed by
-  (media_hash, source_id, model_version).
-- Benchmark run storage: retains metric snapshots for regression comparison.
-- Re-processing records: supports explicit re-queue with recorded reason.
-
-Planned public API
-------------------
+Public API
+----------
 ArtifactRegistry              Main facade for all storage operations.
-ProcessingLedger              Ledger of processed files and outcomes.
-store_candidate(…)            Persist a SubtitleCandidate with metadata.
-get_candidate(…)              Retrieve a previously stored candidate.
-record_benchmark_run(…)       Save a benchmark result set.
+ProcessingLedger              Read-oriented view over the artifact registry.
+
+Record types
+------------
+MediaAssetRecord              A tracked media file.
+StreamAssetRecord             An individual audio/subtitle/video stream.
+SubtitleCandidateRecord       A stored subtitle candidate (versioned by
+                              media_hash + source_id + model_version).
+BenchmarkRunRecord            A benchmark run result snapshot.
+ReviewTaskRecord              A review task (pending/approved/rejected/reprocess).
+
+Status constants
+----------------
+CANDIDATE_STATUS_PENDING          ``'pending'``
+CANDIDATE_STATUS_ACCEPTED         ``'accepted'``
+CANDIDATE_STATUS_FAILED           ``'failed'``
+CANDIDATE_STATUS_REVIEW_REQUIRED  ``'review_required'``
+REVIEW_STATUS_PENDING             ``'pending'``
+REVIEW_STATUS_APPROVED            ``'approved'``
+REVIEW_STATUS_REJECTED            ``'rejected'``
+REVIEW_STATUS_REPROCESS           ``'reprocess'``
 """
 
 from __future__ import annotations
 
-__all__: list = []  # Empty until Issue #18 is implemented.
+from core.artifacts.ledger import ProcessingLedger
+from core.artifacts.models import (
+    BenchmarkRunRecord,
+    CANDIDATE_STATUS_ACCEPTED,
+    CANDIDATE_STATUS_FAILED,
+    CANDIDATE_STATUS_PENDING,
+    CANDIDATE_STATUS_REVIEW_REQUIRED,
+    CANDIDATE_STATUSES,
+    MediaAssetRecord,
+    REVIEW_STATUS_APPROVED,
+    REVIEW_STATUS_PENDING,
+    REVIEW_STATUS_REJECTED,
+    REVIEW_STATUS_REPROCESS,
+    REVIEW_STATUSES,
+    ReviewTaskRecord,
+    StreamAssetRecord,
+    SubtitleCandidateRecord,
+)
+from core.artifacts.registry import ArtifactRegistry
+
+__all__ = [
+    # Facade and ledger
+    "ArtifactRegistry",
+    "ProcessingLedger",
+    # Record types
+    "MediaAssetRecord",
+    "StreamAssetRecord",
+    "SubtitleCandidateRecord",
+    "BenchmarkRunRecord",
+    "ReviewTaskRecord",
+    # Candidate status constants
+    "CANDIDATE_STATUS_PENDING",
+    "CANDIDATE_STATUS_ACCEPTED",
+    "CANDIDATE_STATUS_FAILED",
+    "CANDIDATE_STATUS_REVIEW_REQUIRED",
+    "CANDIDATE_STATUSES",
+    # Review status constants
+    "REVIEW_STATUS_PENDING",
+    "REVIEW_STATUS_APPROVED",
+    "REVIEW_STATUS_REJECTED",
+    "REVIEW_STATUS_REPROCESS",
+    "REVIEW_STATUSES",
+]
