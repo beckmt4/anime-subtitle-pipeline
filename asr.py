@@ -193,6 +193,20 @@ class FasterWhisperASR:
             logger.error(f"Transcription failed: {e}")
             raise RuntimeError(f"Failed to transcribe audio: {e}") from e
     
+    def detect_language(self, audio_path: str) -> tuple[str, float]:
+        """Probe the dominant language of an audio clip.
+
+        Loads the model if needed. Call unload_model() when done if you
+        don't plan to transcribe immediately after.
+
+        Returns:
+            (language_code, probability) — e.g. ("ja", 0.97)
+        """
+        self.load_model()
+        lang, prob = self.model.detect_language(str(audio_path))
+        logger.debug("Language probe: '%s' confidence=%.2f", lang, prob)
+        return lang, prob
+
     def unload_model(self) -> None:
         """
         Unload the model to free memory.

@@ -131,7 +131,8 @@ def extract_audio_with_ffmpeg(
     output_audio_path: str,
     audio_track_index: int = 0,
     target_sample_rate: int = 16000,
-    target_channels: int = 1
+    target_channels: int = 1,
+    duration_sec: int | None = None,
 ) -> Path:
     """
     Extract an audio track from a video file using ffmpeg.
@@ -184,8 +185,10 @@ def extract_audio_with_ffmpeg(
         "-ac", str(target_channels),          # Channels
         "-c:a", "pcm_s16le",                  # Codec
         "-y",                                  # Overwrite
-        str(output_path)
     ]
+    if duration_sec is not None:
+        cmd += ["-t", str(duration_sec)]
+    cmd += [str(output_path)]
     
     try:
         # Run ffmpeg with minimal output

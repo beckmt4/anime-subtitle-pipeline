@@ -10,6 +10,13 @@ Generation strategy decision tree (default priorities):
 4. Else if Japanese audio exists → JP audio ASR → MT (→ optional LLM)
 5. Else fallback to any available audio (EN or JP) → appropriate path
 
+Language probe (auto mode only):
+  When only an EN-tagged audio track is found and prefer_audio_language is
+  "auto", a 30-second clip is probed with Whisper's language detector before
+  the decision tree runs. If Japanese is detected with ≥ 0.85 confidence, the
+  track is treated as Japanese and routed through JA ASR → MT, catching files
+  where the container metadata language tag is wrong.
+
 Config overrides (config.yaml generate section):
   generate:
     prefer_subtitles: true
@@ -37,6 +44,11 @@ from models import SubtitleCandidate
 from tracing import start_span
 
 logger = logging.getLogger(__name__)
+
+
+# Audio language probe settings (used when metadata tag is absent or suspect).
+_PROBE_DURATION_SEC = 30       # seconds of audio to sample
+_PROBE_JA_THRESHOLD = 0.85    # minimum Whisper confidence to reroute
 
 
 # ISO-639-1 → common ISO-639-2 / localized variants that should all be treated
@@ -165,6 +177,45 @@ def _compare_candidates(raw: SubtitleCandidate, polished: SubtitleCandidate) -> 
     }
 
 
+def _probe_audio_language(
+    video_path: Path,
+    audio_order: int,
+    cfg: Config,
+) -> str | None:
+    """Extract a short clip and probe its language with Whisper.
+
+    Used when the container's language tag may be wrong (e.g., Japanese audio
+    labelled 'en'). Extracts the first _PROBE_DURATION_SEC seconds, runs
+    Whisper's language detector, and returns the detected language code if
+    confidence exceeds _PROBE_JA_THRESHOLD, otherwise None.
+    """
+    probe_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_probe_a{audio_order}.wav"
+    try:
+        extract_audio_with_ffmpeg(
+            str(video_path), str(probe_path), audio_order,
+            duration_sec=_PROBE_DURATION_SEC,
+        )
+        asr = FasterWhisperASR(cfg)
+        lang, prob = asr.detect_language(str(probe_path))
+        asr.unload_model()
+        logger.info(
+            "Language probe (track %d, first %ds): detected '%s' (confidence=%.2f)",
+            audio_order, _PROBE_DURATION_SEC, lang, prob,
+        )
+        if prob >= _PROBE_JA_THRESHOLD:
+            return lang
+        logger.info(
+            "Language probe inconclusive (confidence %.2f < threshold %.2f)",
+            prob, _PROBE_JA_THRESHOLD,
+        )
+        return None
+    except Exception as exc:
+        logger.warning("Language probe failed: %s — proceeding with metadata tag", exc)
+        return None
+    finally:
+        probe_path.unlink(missing_ok=True)
+
+
 def run_generate(
     media: MediaInfo,
     cfg: Config,
@@ -215,6 +266,31 @@ def run_generate(
     logger.info(
         f"Sources detected: en_sub={en_sub_idx} ja_sub={ja_sub_idx} en_audio={en_audio_order} ja_audio={ja_audio_order}"
     )
+
+    # When auto-routing and the only audio found is EN-tagged (no JA track),
+    # probe the actual audio content so mislabeled Japanese files are routed
+    # through the JA ASR → MT path instead of being silently transcribed as
+    # English gibberish.
+    if (
+        audio_track_override is None
+        and prefer_audio_language == "auto"
+        and ja_audio_order is None
+        and en_audio_order is not None
+    ):
+        probed_lang = _probe_audio_language(video_path, en_audio_order, cfg)
+        if probed_lang == "ja":
+            logger.warning(
+                "Language probe detected Japanese in EN-tagged audio track %d — "
+                "rerouting through JA ASR → MT path (container tag is likely wrong).",
+                en_audio_order,
+            )
+            ja_audio_order = en_audio_order
+            en_audio_order = None
+        elif probed_lang == "en":
+            logger.info(
+                "Language probe confirmed English in track %d — keeping EN ASR path.",
+                en_audio_order,
+            )
 
     # --extract-en-subs: embedded EN subs were already written to outbox by the
     # caller; skip them here so the pipeline runs ASR → MT (→ LLM) and produces
