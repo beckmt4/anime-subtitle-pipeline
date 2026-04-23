@@ -115,24 +115,32 @@ flake8 media_inspect.py compare_core.py config.py models.py orchestrator.py \
   tracing.py batch_process.py benchmark.py \
   --select=E9,F --extend-ignore=F401,F841 --exclude venv
 
-# Unit tests (no live services required)
-pytest tests/ -v -m "not integration"
+# Unit tests (no live services required) — covers both root and tests/
+pytest -v -m "not integration"
 ```
 
-All new tests go under `tests/`. Fixtures go in `fixtures/`.
+Tests live in both the repo root (`test_*.py`) and `tests/`. New tests go under
+`tests/`; existing root-level tests are migrated incrementally. All non-integration
+tests in both locations are collected and run by CI.
 
-### Manual system validation (not CI-gated)
+### Intentionally excluded from CI
 
-The root-level test scripts (`test_pipeline.py`, `test_orchestrator.py`, etc.)
-require live local services (ffmpeg, Faster-Whisper, GPU, Ollama) and are run
-manually by the developer. They are not part of the automated CI gate.
+Tests marked `@pytest.mark.integration` are excluded from the default CI run
+because they require live local services (ffmpeg, Faster-Whisper, GPU, Ollama):
+
+- `test_subtitle_utils.py::test_extract` — requires ffmpeg to mux/demux
+- `test_candidate_pipeline.py::test_candidate_pipeline` — requires a loaded MT model
+- Any test in `tests/` or the root marked `@pytest.mark.integration`
+
+Run integration tests locally when you have the required services available:
 
 ```bash
-# Full end-to-end validation (requires ffmpeg + GPU + Ollama)
+# Full integration suite (requires ffmpeg + GPU + Ollama)
+pytest -v -m "integration"
+
+# Full end-to-end validation script (requires ffmpeg + GPU + Ollama)
 python test_pipeline.py path/to/test.mkv
 ```
-
-These scripts should remain working but are not the merge gate.
 
 ## Testing requirements
 

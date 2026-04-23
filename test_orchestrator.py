@@ -65,7 +65,7 @@ def stub_translate_candidate_jp_to_en(cand: SubtitleCandidate, cfg: Config):
     )
 
 
-def stub_polish_candidate_with_llm(cand: SubtitleCandidate, cfg: Config):
+def stub_polish_candidate_with_llm(cand: SubtitleCandidate, cfg: Config, **kwargs):
     return SubtitleCandidate(
         id=cand.id + "_llm",
         language="en",
@@ -76,7 +76,7 @@ def stub_polish_candidate_with_llm(cand: SubtitleCandidate, cfg: Config):
     )
 
 
-def stub_polish_candidate_no_change(cand: SubtitleCandidate, cfg: Config):
+def stub_polish_candidate_no_change(cand: SubtitleCandidate, cfg: Config, **kwargs):
     """Polish stub that returns identical text — simulates a no-op LLM."""
     return SubtitleCandidate(
         id=cand.id + "_llm",
@@ -88,7 +88,7 @@ def stub_polish_candidate_no_change(cand: SubtitleCandidate, cfg: Config):
     )
 
 
-def stub_polish_candidate_fallback(cand: SubtitleCandidate, cfg: Config):
+def stub_polish_candidate_fallback(cand: SubtitleCandidate, cfg: Config, **kwargs):
     """Polish stub that simulates LLM unreachable (fallback pass-through)."""
     return SubtitleCandidate(
         id=cand.id + "_llm",

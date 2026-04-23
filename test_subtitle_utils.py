@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 import sys
 
+import pytest
+
 from media_inspect import inspect_media
 from subtitle_utils import extract_subtitle_track
 
@@ -49,6 +51,7 @@ def mux_subtitle():
     subprocess.run(cmd, capture_output=True, text=True, check=True)
 
 
+@pytest.mark.integration
 def test_extract():
     create_sample_video()
     create_sample_srt()

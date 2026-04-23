@@ -1,9 +1,10 @@
-"""pytest configuration for tests/.
+"""pytest configuration — project root.
 
 Stubs out heavy ML/GPU packages so all source modules can be imported
 in CI without installing faster-whisper, transformers, torch, or
-opentelemetry. When those packages are actually installed (dev machine),
-setdefault is a no-op so the real packages are used instead.
+opentelemetry. Applies to tests in both the repo root and tests/.
+When those packages are actually installed (dev machine), setdefault is
+a no-op so the real packages are used instead.
 """
 import sys
 from unittest.mock import MagicMock

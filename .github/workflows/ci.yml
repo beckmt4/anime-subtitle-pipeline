@@ -36,4 +36,4 @@ jobs:
             --select=E9,F --extend-ignore=F401,F841 --exclude venv
 
       - name: Run unit tests
-        run: pytest tests/ -v --tb=short -m "not integration"
+        run: pytest -v --tb=short -m "not integration"

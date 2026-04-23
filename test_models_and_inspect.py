@@ -39,7 +39,7 @@ def test_models() -> bool:
     return True
 
 
-def test_media_inspect(video_path: Path | None) -> bool:
+def test_media_inspect(video_path: Path = None) -> bool:
     logger.info("Testing media inspection...")
     if video_path is None:
         # Attempt default sample path
