@@ -17,6 +17,7 @@ from core.artifacts.models import (
     CANDIDATE_STATUS_REVIEW_REQUIRED,
     ReviewTaskRecord,
     REVIEW_STATUS_PENDING,
+    REVIEW_STATUS_REPROCESS,
     SubtitleCandidateRecord,
 )
 from core.artifacts.registry import ArtifactRegistry
@@ -97,7 +98,7 @@ class ProcessingLedger:
 
     def reprocess_candidates(self, media_hash: str) -> List[SubtitleCandidateRecord]:
         """Return all candidates that are linked to a 'reprocess' review task."""
-        tasks = self._registry.list_review_tasks(media_hash, status="reprocess")
+        tasks = self._registry.list_review_tasks(media_hash, status=REVIEW_STATUS_REPROCESS)
         result = []
         for task in tasks:
             cand = self._registry.get_candidate(task.candidate_id)

@@ -164,12 +164,12 @@ class TestStreamAsset:
         media = registry.upsert_media_asset(
             media_hash="mh2", file_path="/f.mkv", file_name="f.mkv"
         )
-        for i, (stype, lang) in enumerate([("audio", "ja"), ("subtitle", "en"), ("video", None)]):
+        for i, (stream_type, lang) in enumerate([("audio", "ja"), ("subtitle", "en"), ("video", None)]):
             registry.store_stream_asset(
                 StreamAssetRecord(
                     media_asset_id=media.id,
                     stream_index=i,
-                    stream_type=stype,
+                    stream_type=stream_type,
                     language=lang,
                 )
             )
