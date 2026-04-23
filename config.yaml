@@ -51,7 +51,7 @@ audio:
 
 # Machine Translation - Helsinki-NLP MarianMT
 mt:
-  model_name: "Helsinki-NLP/opus-mt-tc-big-ja-en"
+  model_name: "Helsinki-NLP/opus-mt-ja-en"
   device: "cpu"                   # MT runs on CPU to save VRAM
   batch_size: 16                  # Process multiple segments at once
   max_length: 512                 # Maximum token length per segment
