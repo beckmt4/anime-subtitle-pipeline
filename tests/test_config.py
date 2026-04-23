@@ -175,3 +175,73 @@ class TestConfigProperties:
         cfg = Config(str(p))
         # config sets device: cpu — no torch import triggered
         assert cfg.asr_device == "cpu"
+
+
+# ---------------------------------------------------------------------------
+# Path resolution
+# ---------------------------------------------------------------------------
+
+def write_config_relative_paths(config_file: Path) -> None:
+    """Write a minimal config with relative paths sections."""
+    cfg = {
+        "runtime": {"profile": "dev"},
+        "paths": {
+            "inbox": "./inbox",
+            "outbox": "./outbox",
+            "logs": "./logs",
+            "temp": "./temp",
+        },
+    }
+    config_file.write_text(yaml.dump(cfg), encoding="utf-8")
+
+
+class TestGetPathResolution:
+    def test_relative_path_resolves_to_config_dir(self, tmp_path):
+        """Relative paths resolve relative to the config file, not the cwd."""
+        nested = tmp_path / "project" / "configs"
+        nested.mkdir(parents=True)
+        config_file = nested / "config.yaml"
+        write_config_relative_paths(config_file)
+
+        cfg = Config(str(config_file))
+        assert cfg.get_path("outbox") == str(nested / "outbox")
+
+    def test_absolute_path_returned_unchanged(self, tmp_path):
+        """Absolute paths in config are returned as-is."""
+        abs_outbox = str(tmp_path / "absolute" / "outbox")
+        # Use the standard helper but override the outbox to an absolute path
+        extra = {"paths": {
+            "inbox": str(tmp_path / "inbox"),
+            "outbox": abs_outbox,
+            "logs": str(tmp_path / "logs"),
+            "temp": str(tmp_path / "temp"),
+        }}
+        config_file = write_config(tmp_path, extra=extra)
+
+        cfg = Config(str(config_file))
+        assert cfg.get_path("outbox") == abs_outbox
+
+    def test_cwd_independent_resolution(self, tmp_path, monkeypatch):
+        """Path resolution must not depend on the process cwd."""
+        nested = tmp_path / "project"
+        nested.mkdir()
+        config_file = nested / "config.yaml"
+        write_config_relative_paths(config_file)
+
+        # Change the cwd to somewhere completely different
+        monkeypatch.chdir(tmp_path)
+
+        cfg = Config(str(config_file))
+        assert cfg.get_path("inbox") == str(nested / "inbox")
+        assert cfg.get_path("logs") == str(nested / "logs")
+
+    def test_directories_created_relative_to_config_dir(self, tmp_path):
+        """_ensure_directories should create dirs relative to the config file."""
+        nested = tmp_path / "project" / "configs"
+        nested.mkdir(parents=True)
+        config_file = nested / "config.yaml"
+        write_config_relative_paths(config_file)
+
+        Config(str(config_file))
+        for name in ("inbox", "outbox", "logs", "temp"):
+            assert (nested / name).is_dir(), f"{name} was not created under config dir"

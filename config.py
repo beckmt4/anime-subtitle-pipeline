@@ -29,7 +29,7 @@ class Config:
             config_path: Path to config.yaml file
             profile_override: Override the profile from CLI (e.g., "dev" or "prod")
         """
-        self.config_path = Path(config_path)
+        self.config_path = Path(config_path).resolve()
         
         if not self.config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -96,9 +96,17 @@ class Config:
         return value
     
     def get_path(self, path_name: str) -> str:
-        """Get an absolute path from the paths section."""
+        """Get an absolute path from the paths section.
+
+        Relative paths are resolved relative to the directory containing the
+        loaded config file, so behaviour is independent of the process cwd.
+        Absolute paths are returned unchanged.
+        """
         rel_path = self.get("paths", path_name, default=".")
-        return str(Path(rel_path).resolve())
+        p = Path(rel_path)
+        if p.is_absolute():
+            return str(p)
+        return str((self.config_path.parent / p).resolve())
     
     # Convenient property accessors for common settings
     
