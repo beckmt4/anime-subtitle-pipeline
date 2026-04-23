@@ -15,6 +15,8 @@ pyyaml>=6.0
 # ASR - Faster-Whisper with CTranslate2
 faster-whisper>=1.0.0
 # Note: faster-whisper will install ctranslate2 and other dependencies
+# CTranslate2 lazy-loads libcublas.so.12 at inference time, even under CUDA 13 torch installs.
+nvidia-cublas-cu12  # required for CTranslate2/faster-whisper GPU inference
 
 # Machine Translation - Hugging Face Transformers
 transformers>=4.35.0
@@ -46,13 +48,16 @@ jiwer>=3.0.0  # Word Error Rate for subtitle comparison
 # ============================================================================
 # GPU Support Notes:
 # ============================================================================
+# Tested configuration: NVIDIA RTX 4090, driver 580.142, CUDA 13.0, torch 2.11.0+cu130
+#
 # For CUDA GPU support:
-#   1. Install NVIDIA CUDA Toolkit (11.8 or 12.1 recommended)
-#   2. Install PyTorch 2.6+ with CUDA support BEFORE running pip install -r requirements.txt:
-#      pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-#      (Replace cu118 with your CUDA version, e.g., cu121 for CUDA 12.1)
-#   3. Then install other requirements:
+#   1. Install PyTorch with CUDA support BEFORE running pip install -r requirements.txt:
+#      pip install torch --index-url https://download.pytorch.org/whl/cu128
+#      (cu128 = CUDA 12.8, the latest stable wheel; use cu121 for CUDA 12.1)
+#   2. Then install other requirements:
 #      pip install -r requirements.txt
+#   Note: nvidia-cublas-cu12 is included above — it is REQUIRED even on CUDA 13 installs
+#         because CTranslate2/faster-whisper lazy-loads libcublas.so.12 at runtime.
 #
 # For CPU-only (no GPU):
 #   pip install torch>=2.6.0
