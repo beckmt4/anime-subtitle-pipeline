@@ -20,7 +20,7 @@ paths:
 
 # ASR (Automatic Speech Recognition) - Faster-Whisper
 asr:
-  model_name: "large-v3-turbo"  # Whisper model variant
+  model_name: "large-v3"         # Whisper model variant
   device: "cuda"                 # auto | cuda | cpu
   
   # Dev profile settings (6GB GPU)
@@ -51,7 +51,7 @@ audio:
 
 # Machine Translation - Helsinki-NLP MarianMT
 mt:
-  model_name: "Helsinki-NLP/opus-mt-ja-en"
+  model_name: "Helsinki-NLP/opus-mt-tc-big-ja-en"
   device: "cpu"                   # MT runs on CPU to save VRAM
   batch_size: 16                  # Process multiple segments at once
   max_length: 512                 # Maximum token length per segment
@@ -65,7 +65,7 @@ llm:
   dev:
     model_name: "qwen2.5:7b"      # 7B model, 4-bit quantized
   prod:
-    model_name: "qwen2.5:14b-instruct"  # 14B model for better quality
+    model_name: "qwen2.5:32b"           # 32B model, fits in 4090 24GB VRAM
   
   style: "natural"                # "natural" | "literal"
   
