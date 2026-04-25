@@ -41,6 +41,7 @@ from mt import translate_candidate_jp_to_en
 from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candidate
 from srt_writer import write_candidate_srt
 from models import SubtitleCandidate
+from subtitle_qc import run_qc
 from tracing import start_span
 
 logger = logging.getLogger(__name__)
@@ -473,12 +474,31 @@ def run_generate(
     with start_span("write_final_srt"):
         write_candidate_srt(candidate, str(out_srt), cfg)
 
+    # Run QC on the written SRT
+    with start_span("subtitle_qc"):
+        qc_summary = run_qc(
+            out_srt,
+            min_duration=cfg.subtitle_min_duration,
+            max_duration=cfg.subtitle_max_duration,
+            max_cps=cfg.qc_max_cps,
+            max_line_chars=cfg.llm_max_chars_per_line,
+            max_lines=cfg.llm_max_lines,
+        )
+
+    # Write machine-readable QC summary alongside the SRT
+    import json
+    qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
+    qc_path.write_text(json.dumps(qc_summary, indent=2), encoding="utf-8")
+    logger.info("QC summary written: %s", qc_path.name)
+
     metadata = {
         "video": str(video_path.name),
         "strategy": strategy,
         "candidate_id": candidate.id,
         "segment_count": candidate.segment_count,
         "output_srt": str(out_srt),
+        "qc": qc_summary,
+        "qc_json": str(qc_path),
     }
     if polish_stats is not None:
         metadata.update(polish_stats)
