@@ -106,5 +106,26 @@ class ProcessingLedger:
                 result.append(cand)
         return result
 
+    def candidate_lineage(
+        self, candidate_id: int
+    ) -> List[SubtitleCandidateRecord]:
+        """Return the full ancestor chain for a candidate, root first.
+
+        Traverses ``parent_candidate_id`` links upward until reaching a source
+        candidate (one with no parent).  The returned list starts with the
+        root source candidate and ends with *candidate_id* itself.
+
+        Returns an empty list if *candidate_id* does not exist.
+        """
+        chain: List[SubtitleCandidateRecord] = []
+        current = self._registry.get_candidate(candidate_id)
+        while current is not None:
+            chain.append(current)
+            if current.parent_candidate_id is None:
+                break
+            current = self._registry.get_candidate(current.parent_candidate_id)
+        chain.reverse()
+        return chain
+
 
 __all__ = ["ProcessingLedger"]

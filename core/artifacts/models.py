@@ -74,18 +74,21 @@ class SubtitleCandidateRecord:
     """One row of the ``subtitle_candidates`` table.
 
     Attributes:
-        media_hash:     SHA-256 hex digest of the source media file.
-        source_id:      ``SubtitleCandidate.id`` (e.g. ``'asr_ja'``).
-        model_version:  String identifying the model/version used.
-        language:       ISO 639-1 language code.
-        source:         Origin type: ``'asr'``, ``'embedded'``, ``'mt'``, ``'mt_llm'``.
-        origin_stream:  Stream identifier (``'audio:1'``, ``'sub:0'``, filename).
-        segments:       List of segment dicts (serialised to JSON in the DB).
-        meta:           Additional metadata dict.
-        status:         One of :data:`CANDIDATE_STATUSES`.
-        id:             Auto-assigned surrogate key (``None`` before INSERT).
-        created_at:     ISO-8601 timestamp string (set by the database).
-        updated_at:     ISO-8601 timestamp string (set by the database).
+        media_hash:          SHA-256 hex digest of the source media file.
+        source_id:           ``SubtitleCandidate.id`` (e.g. ``'asr_ja'``).
+        model_version:       String identifying the model/version used.
+        language:            ISO 639-1 language code.
+        source:              Origin type: ``'asr'``, ``'embedded'``, ``'mt'``, ``'mt_llm'``.
+        origin_stream:       Stream identifier (``'audio:1'``, ``'sub:0'``, filename).
+        parent_candidate_id: FK to the parent :class:`SubtitleCandidateRecord.id`, or
+                             ``None`` for source (ASR/embedded) candidates.  Set for
+                             MT and LLM-derived candidates to enable lineage tracing.
+        segments:            List of segment dicts (serialised to JSON in the DB).
+        meta:                Additional metadata dict.
+        status:              One of :data:`CANDIDATE_STATUSES`.
+        id:                  Auto-assigned surrogate key (``None`` before INSERT).
+        created_at:          ISO-8601 timestamp string (set by the database).
+        updated_at:          ISO-8601 timestamp string (set by the database).
     """
     media_hash: str
     source_id: str
@@ -93,6 +96,7 @@ class SubtitleCandidateRecord:
     source: str
     origin_stream: str
     model_version: str = ""
+    parent_candidate_id: Optional[int] = None
     segments: List[Dict[str, Any]] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=dict)
     status: str = CANDIDATE_STATUS_PENDING
@@ -148,7 +152,7 @@ class ReviewTaskRecord:
 
     Attributes:
         media_hash:       SHA-256 hex digest of the source media file.
-        candidate_id:     FK to :class:`SubtitleCandidateRecord.id`.
+        candidate_id:     FK to :class:`SubtitleCandidateRecord.id` (primary candidate).
         status:           One of :data:`REVIEW_STATUSES`.
         reprocess_reason: Free-text reason if status is ``'reprocess'``.
         reviewer_notes:   Free-text notes from the reviewer.
@@ -166,12 +170,116 @@ class ReviewTaskRecord:
     updated_at: Optional[str] = None
 
 
+# Allowed status values for artifacts
+ARTIFACT_STATUS_ACTIVE = "active"
+ARTIFACT_STATUS_SUPERSEDED = "superseded"
+ARTIFACT_STATUS_DELETED = "deleted"
+ARTIFACT_STATUSES = frozenset({
+    ARTIFACT_STATUS_ACTIVE,
+    ARTIFACT_STATUS_SUPERSEDED,
+    ARTIFACT_STATUS_DELETED,
+})
+
+
+@dataclass
+class BenchmarkComparisonRecord:
+    """One row of the ``benchmark_comparisons`` table.
+
+    Stores a single per-metric comparison between a reference and hypothesis
+    candidate within a benchmark run, enabling fine-grained analysis.
+
+    Attributes:
+        benchmark_run_id:        FK to :class:`BenchmarkRunRecord.id`.
+        reference_candidate_id:  FK to :class:`SubtitleCandidateRecord.id`.
+        hypothesis_candidate_id: FK to :class:`SubtitleCandidateRecord.id`.
+        metric_name:             Metric identifier (e.g. ``'wer'``, ``'bleu'``).
+        metric_value:            Numeric result for this metric.
+        meta:                    Additional metadata dict.
+        id:                      Auto-assigned surrogate key (``None`` before INSERT).
+        created_at:              ISO-8601 timestamp string (set by the database).
+    """
+    benchmark_run_id: int
+    reference_candidate_id: int
+    hypothesis_candidate_id: int
+    metric_name: str
+    metric_value: float
+    meta: Dict[str, Any] = field(default_factory=dict)
+    id: Optional[int] = None
+    created_at: Optional[str] = None
+
+
+@dataclass
+class ArtifactRecord:
+    """One row of the ``artifacts`` table.
+
+    Tracks versioned output files (e.g. ``.srt``, ``.ass``) produced for a
+    subtitle candidate.  ``version`` increments on reprocess so the full
+    production history is preserved.
+
+    Attributes:
+        candidate_id:  FK to :class:`SubtitleCandidateRecord.id`.
+        media_hash:    SHA-256 hex digest of the source media file.
+        artifact_type: Output format: ``'srt'``, ``'ass'``, ``'vtt'``,
+                       ``'json'``, or ``'raw'``.
+        file_path:     Path to the artifact file.
+        file_hash:     SHA-256 of the artifact file content.
+        version:       Monotonically increasing per (candidate_id, artifact_type).
+        status:        One of :data:`ARTIFACT_STATUSES`.
+        meta:          Additional metadata dict.
+        id:            Auto-assigned surrogate key (``None`` before INSERT).
+        created_at:    ISO-8601 timestamp string (set by the database).
+    """
+    candidate_id: int
+    media_hash: str
+    artifact_type: str
+    file_path: str
+    file_hash: str
+    version: int = 1
+    status: str = ARTIFACT_STATUS_ACTIVE
+    meta: Dict[str, Any] = field(default_factory=dict)
+    id: Optional[int] = None
+    created_at: Optional[str] = None
+
+
+@dataclass
+class StateTransitionRecord:
+    """One row of the ``state_transitions`` table.
+
+    Records every status change for candidates, review tasks, and artifacts so
+    the full processing history can be audited and replayed.
+
+    Attributes:
+        entity_type:  ``'subtitle_candidate'``, ``'review_task'``, or
+                      ``'artifact'``.
+        entity_id:    Surrogate key of the entity being transitioned.
+        from_status:  Previous status (``None`` for the initial creation event).
+        to_status:    New status after the transition.
+        reason:       Free-text reason for the change (e.g. reprocess reason).
+        actor:        System component or user that triggered the change.
+        meta:         Additional metadata dict.
+        id:           Auto-assigned surrogate key (``None`` before INSERT).
+        created_at:   ISO-8601 timestamp string (set by the database).
+    """
+    entity_type: str
+    entity_id: int
+    to_status: str
+    from_status: Optional[str] = None
+    reason: Optional[str] = None
+    actor: Optional[str] = None
+    meta: Dict[str, Any] = field(default_factory=dict)
+    id: Optional[int] = None
+    created_at: Optional[str] = None
+
+
 __all__ = [
     "MediaAssetRecord",
     "StreamAssetRecord",
     "SubtitleCandidateRecord",
     "BenchmarkRunRecord",
+    "BenchmarkComparisonRecord",
+    "ArtifactRecord",
     "ReviewTaskRecord",
+    "StateTransitionRecord",
     "CANDIDATE_STATUS_PENDING",
     "CANDIDATE_STATUS_ACCEPTED",
     "CANDIDATE_STATUS_FAILED",
@@ -182,4 +290,8 @@ __all__ = [
     "REVIEW_STATUS_REJECTED",
     "REVIEW_STATUS_REPROCESS",
     "REVIEW_STATUSES",
+    "ARTIFACT_STATUS_ACTIVE",
+    "ARTIFACT_STATUS_SUPERSEDED",
+    "ARTIFACT_STATUS_DELETED",
+    "ARTIFACT_STATUSES",
 ]

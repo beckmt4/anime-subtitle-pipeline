@@ -10,6 +10,8 @@ import pytest
 
 from core.artifacts import (
     ArtifactRegistry,
+    ArtifactRecord,
+    BenchmarkComparisonRecord,
     BenchmarkRunRecord,
     CANDIDATE_STATUS_ACCEPTED,
     CANDIDATE_STATUS_FAILED,
@@ -21,6 +23,7 @@ from core.artifacts import (
     REVIEW_STATUS_PENDING,
     REVIEW_STATUS_REPROCESS,
     ReviewTaskRecord,
+    StateTransitionRecord,
     StreamAssetRecord,
     SubtitleCandidateRecord,
 )
@@ -531,3 +534,335 @@ class TestProcessingLedger:
         reprocess = ledger.reprocess_candidates("h1")
         assert len(reprocess) == 1
         assert reprocess[0].id == cand.id
+
+    def test_candidate_lineage_single_node(self, registry, ledger):
+        cand = registry.store_candidate(_make_candidate("h1"))
+        chain = ledger.candidate_lineage(cand.id)
+        assert len(chain) == 1
+        assert chain[0].id == cand.id
+
+    def test_candidate_lineage_three_levels(self, registry, ledger):
+        asr = registry.store_candidate(_make_candidate("h1", source_id="asr_ja", source="asr"))
+        mt = registry.store_candidate(
+            _make_candidate("h1", source_id="mt_en", source="mt", parent_candidate_id=asr.id)
+        )
+        llm = registry.store_candidate(
+            _make_candidate("h1", source_id="mt_llm_en", source="mt_llm", parent_candidate_id=mt.id)
+        )
+        chain = ledger.candidate_lineage(llm.id)
+        assert len(chain) == 3
+        assert chain[0].id == asr.id
+        assert chain[1].id == mt.id
+        assert chain[2].id == llm.id
+
+    def test_candidate_lineage_missing_id(self, ledger):
+        assert ledger.candidate_lineage(9999) == []
+
+
+# ===========================================================================
+# SubtitleCandidate lineage (parent_candidate_id)
+# ===========================================================================
+
+class TestCandidateLineage:
+    def test_store_candidate_with_parent(self, registry):
+        parent = registry.store_candidate(_make_candidate("h1", source_id="asr_ja", source="asr"))
+        child = registry.store_candidate(
+            _make_candidate("h1", source_id="mt_en", source="mt", parent_candidate_id=parent.id)
+        )
+        assert child.parent_candidate_id == parent.id
+
+    def test_store_candidate_without_parent(self, registry):
+        cand = registry.store_candidate(_make_candidate("h1"))
+        assert cand.parent_candidate_id is None
+
+    def test_roundtrip_parent_candidate_id(self, registry):
+        parent = registry.store_candidate(_make_candidate("h1"))
+        child = registry.store_candidate(
+            _make_candidate("h1", parent_candidate_id=parent.id)
+        )
+        fetched = registry.get_candidate(child.id)
+        assert fetched.parent_candidate_id == parent.id
+
+
+# ===========================================================================
+# BenchmarkComparison
+# ===========================================================================
+
+class TestBenchmarkComparison:
+    def _setup(self, registry):
+        ref = registry.store_candidate(_make_candidate("h1", source_id="ref"))
+        hyp = registry.store_candidate(_make_candidate("h1", source_id="hyp"))
+        run = registry.record_benchmark_run(
+            BenchmarkRunRecord(
+                media_hash="h1",
+                run_id="run-cmp-001",
+                metrics={},
+                reference_candidate_id=ref.id,
+                hypothesis_candidate_id=hyp.id,
+            )
+        )
+        return ref, hyp, run
+
+    def test_store_and_list_comparison(self, registry):
+        ref, hyp, run = self._setup(registry)
+        cmp = registry.store_benchmark_comparison(
+            BenchmarkComparisonRecord(
+                benchmark_run_id=run.id,
+                reference_candidate_id=ref.id,
+                hypothesis_candidate_id=hyp.id,
+                metric_name="wer",
+                metric_value=0.12,
+            )
+        )
+        assert cmp.id is not None
+        assert cmp.metric_name == "wer"
+        assert cmp.metric_value == pytest.approx(0.12)
+
+    def test_list_benchmark_comparisons_multiple_metrics(self, registry):
+        ref, hyp, run = self._setup(registry)
+        for name, val in [("wer", 0.1), ("bleu", 80.0), ("chrf", 75.0)]:
+            registry.store_benchmark_comparison(
+                BenchmarkComparisonRecord(
+                    benchmark_run_id=run.id,
+                    reference_candidate_id=ref.id,
+                    hypothesis_candidate_id=hyp.id,
+                    metric_name=name,
+                    metric_value=val,
+                )
+            )
+        cmps = registry.list_benchmark_comparisons(run.id)
+        assert len(cmps) == 3
+        names = {c.metric_name for c in cmps}
+        assert names == {"wer", "bleu", "chrf"}
+
+    def test_list_benchmark_comparisons_empty(self, registry):
+        assert registry.list_benchmark_comparisons(9999) == []
+
+    def test_comparison_tied_to_candidate_ids(self, registry):
+        ref, hyp, run = self._setup(registry)
+        cmp = registry.store_benchmark_comparison(
+            BenchmarkComparisonRecord(
+                benchmark_run_id=run.id,
+                reference_candidate_id=ref.id,
+                hypothesis_candidate_id=hyp.id,
+                metric_name="wer",
+                metric_value=0.05,
+            )
+        )
+        assert cmp.reference_candidate_id == ref.id
+        assert cmp.hypothesis_candidate_id == hyp.id
+
+    def test_comparison_meta_persisted(self, registry):
+        ref, hyp, run = self._setup(registry)
+        meta = {"segment_count": 100}
+        cmp = registry.store_benchmark_comparison(
+            BenchmarkComparisonRecord(
+                benchmark_run_id=run.id,
+                reference_candidate_id=ref.id,
+                hypothesis_candidate_id=hyp.id,
+                metric_name="wer",
+                metric_value=0.1,
+                meta=meta,
+            )
+        )
+        cmps = registry.list_benchmark_comparisons(run.id)
+        assert cmps[0].meta == meta
+
+
+# ===========================================================================
+# Artifact
+# ===========================================================================
+
+class TestArtifact:
+    def _make_artifact(self, candidate_id: int, **kwargs):
+        defaults = dict(
+            candidate_id=candidate_id,
+            media_hash="deadbeef",
+            artifact_type="srt",
+            file_path="/out/ep01.srt",
+            file_hash="abc123",
+        )
+        defaults.update(kwargs)
+        return ArtifactRecord(**defaults)
+
+    def test_store_and_retrieve_artifact(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        art = registry.store_artifact(self._make_artifact(cand.id))
+        assert art.id is not None
+        assert art.candidate_id == cand.id
+        assert art.artifact_type == "srt"
+        assert art.version == 1
+        assert art.status == "active"
+
+    def test_get_artifact_by_id(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        stored = registry.store_artifact(self._make_artifact(cand.id))
+        found = registry.get_artifact(stored.id)
+        assert found is not None
+        assert found.id == stored.id
+
+    def test_get_artifact_missing_returns_none(self, registry):
+        assert registry.get_artifact(9999) is None
+
+    def test_list_artifacts_by_candidate(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        registry.store_artifact(self._make_artifact(cand.id, artifact_type="srt", version=1))
+        registry.store_artifact(self._make_artifact(cand.id, artifact_type="srt", version=2))
+        registry.store_artifact(self._make_artifact(cand.id, artifact_type="ass", version=1))
+        arts = registry.list_artifacts(cand.id)
+        assert len(arts) == 3
+
+    def test_list_artifacts_filtered_by_type(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        registry.store_artifact(self._make_artifact(cand.id, artifact_type="srt"))
+        registry.store_artifact(self._make_artifact(cand.id, artifact_type="ass"))
+        srt_arts = registry.list_artifacts(cand.id, artifact_type="srt")
+        assert len(srt_arts) == 1
+        assert srt_arts[0].artifact_type == "srt"
+
+    def test_list_artifacts_filtered_by_status(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        art1 = registry.store_artifact(self._make_artifact(cand.id, version=1))
+        registry.store_artifact(self._make_artifact(cand.id, version=2))
+        registry.update_artifact_status(art1.id, "superseded")
+        active = registry.list_artifacts(cand.id, status="active")
+        superseded = registry.list_artifacts(cand.id, status="superseded")
+        assert len(active) == 1
+        assert len(superseded) == 1
+
+    def test_update_artifact_status(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        art = registry.store_artifact(self._make_artifact(cand.id))
+        registry.update_artifact_status(art.id, "superseded")
+        updated = registry.get_artifact(art.id)
+        assert updated.status == "superseded"
+
+    def test_update_artifact_status_invalid_raises(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        art = registry.store_artifact(self._make_artifact(cand.id))
+        with pytest.raises(ValueError, match="Invalid artifact status"):
+            registry.update_artifact_status(art.id, "bad_status")
+
+    def test_update_artifact_status_missing_raises(self, registry):
+        with pytest.raises(LookupError):
+            registry.update_artifact_status(9999, "superseded")
+
+    def test_artifact_meta_persisted(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        meta = {"encoding": "utf-8", "lines": 240}
+        art = registry.store_artifact(self._make_artifact(cand.id, meta=meta))
+        found = registry.get_artifact(art.id)
+        assert found.meta == meta
+
+
+# ===========================================================================
+# StateTransition
+# ===========================================================================
+
+class TestStateTransition:
+    def test_record_and_list_transitions(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        t1 = registry.record_state_transition(
+            StateTransitionRecord(
+                entity_type="subtitle_candidate",
+                entity_id=cand.id,
+                from_status=None,
+                to_status="pending",
+                actor="pipeline",
+            )
+        )
+        assert t1.id is not None
+        assert t1.entity_type == "subtitle_candidate"
+        assert t1.to_status == "pending"
+
+    def test_list_state_transitions_ordered(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        for from_s, to_s in [(None, "pending"), ("pending", "review_required"), ("review_required", "accepted")]:
+            registry.record_state_transition(
+                StateTransitionRecord(
+                    entity_type="subtitle_candidate",
+                    entity_id=cand.id,
+                    from_status=from_s,
+                    to_status=to_s,
+                )
+            )
+        transitions = registry.list_state_transitions("subtitle_candidate", cand.id)
+        assert len(transitions) == 3
+        assert transitions[0].to_status == "pending"
+        assert transitions[-1].to_status == "accepted"
+
+    def test_list_state_transitions_empty(self, registry):
+        assert registry.list_state_transitions("subtitle_candidate", 9999) == []
+
+    def test_state_transition_reason_and_actor(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        t = registry.record_state_transition(
+            StateTransitionRecord(
+                entity_type="subtitle_candidate",
+                entity_id=cand.id,
+                from_status="pending",
+                to_status="review_required",
+                reason="WER too high",
+                actor="quality_gate",
+            )
+        )
+        fetched = registry.list_state_transitions("subtitle_candidate", cand.id)
+        assert len(fetched) == 1
+        assert fetched[0].reason == "WER too high"
+        assert fetched[0].actor == "quality_gate"
+
+    def test_state_transition_meta_persisted(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        meta = {"threshold": 0.25, "actual_wer": 0.31}
+        registry.record_state_transition(
+            StateTransitionRecord(
+                entity_type="subtitle_candidate",
+                entity_id=cand.id,
+                to_status="review_required",
+                meta=meta,
+            )
+        )
+        transitions = registry.list_state_transitions("subtitle_candidate", cand.id)
+        assert transitions[0].meta == meta
+
+    def test_state_transition_isolated_by_entity(self, registry):
+        cand1 = registry.store_candidate(_make_candidate("h1"))
+        cand2 = registry.store_candidate(_make_candidate("h2"))
+        registry.record_state_transition(
+            StateTransitionRecord(entity_type="subtitle_candidate", entity_id=cand1.id, to_status="accepted")
+        )
+        registry.record_state_transition(
+            StateTransitionRecord(entity_type="subtitle_candidate", entity_id=cand2.id, to_status="failed")
+        )
+        assert len(registry.list_state_transitions("subtitle_candidate", cand1.id)) == 1
+        assert len(registry.list_state_transitions("subtitle_candidate", cand2.id)) == 1
+
+
+# ===========================================================================
+# ReviewTask multi-candidate (join table)
+# ===========================================================================
+
+class TestReviewTaskCandidates:
+    def test_add_and_list_review_task_candidates(self, registry):
+        cand1 = registry.store_candidate(_make_candidate("h1", source_id="c1"))
+        cand2 = registry.store_candidate(_make_candidate("h1", source_id="c2"))
+        task = registry.create_review_task(
+            ReviewTaskRecord(media_hash="h1", candidate_id=cand1.id)
+        )
+        registry.add_review_task_candidate(task.id, cand1.id)
+        registry.add_review_task_candidate(task.id, cand2.id)
+        ids = registry.get_review_task_candidate_ids(task.id)
+        assert set(ids) == {cand1.id, cand2.id}
+
+    def test_add_review_task_candidate_idempotent(self, registry):
+        cand = registry.store_candidate(_make_candidate("h1"))
+        task = registry.create_review_task(ReviewTaskRecord(media_hash="h1", candidate_id=cand.id))
+        registry.add_review_task_candidate(task.id, cand.id)
+        registry.add_review_task_candidate(task.id, cand.id)  # duplicate — should be ignored
+        ids = registry.get_review_task_candidate_ids(task.id)
+        assert ids.count(cand.id) == 1
+
+    def test_get_review_task_candidate_ids_empty(self, registry):
+        cand = registry.store_candidate(_make_candidate("h1"))
+        task = registry.create_review_task(ReviewTaskRecord(media_hash="h1", candidate_id=cand.id))
+        assert registry.get_review_task_candidate_ids(task.id) == []
