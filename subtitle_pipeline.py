@@ -34,7 +34,7 @@ from subtitle_corrector import correct_srt_ex, parse_srt
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LOG_PATH = "/mnt/user/videos/subtitle_pipeline.log"
+DEFAULT_LOG_PATH = os.environ.get("PIPELINE_LOG", "./subtitle_pipeline.log")
 
 # When a model produces no_change, suggest this fallback in the log entry.
 _FALLBACK_MODEL: dict = {

@@ -12,6 +12,10 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+# Environment variable overrides — set these in docker-compose or shell to
+# avoid editing config.yaml per deployment.
+#   LLM_BASE_URL  — Ollama endpoint (e.g. http://192.168.1.147:11434 for Unraid)
+
 
 class Config:
     """
@@ -160,7 +164,7 @@ class Config:
     
     @property
     def llm_base_url(self) -> str:
-        return self.get("llm", "base_url", default="http://localhost:11434")
+        return os.environ.get("LLM_BASE_URL") or self.get("llm", "base_url", default="http://localhost:11434")
     
     @property
     def llm_model_name(self) -> str:

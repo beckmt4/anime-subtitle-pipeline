@@ -9,7 +9,7 @@
 # - dev: Optimized for NVIDIA RTX A3000 6GB (quantized models, smaller batches)
 # - prod: Optimized for NVIDIA RTX 4090 24GB (FP16, larger batches)
 runtime:
-  profile: "prod"
+  profile: "prod"  # dev = A3000 6GB laptop | prod = RTX 4090 workstation
 
 # Directory paths
 paths:
