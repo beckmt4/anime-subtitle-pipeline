@@ -62,6 +62,31 @@ _STRATEGY_CONFIDENCE_TIER: Dict[str, str] = {
     "untagged_audio_asr_mt": "very_low",
 }
 
+# Base quality scores (0–70) per strategy.  Each step in the processing chain
+# (ASR, MT) introduces potential accuracy loss, so strategies that apply more
+# transformations receive lower base scores.
+#
+#   embedded_en         — direct English subtitles; no lossy steps               → 70
+#   en_audio_asr        — English audio → ASR (one lossy step)                   → 55
+#   embedded_jp_mt      — Japanese subs → MT (one lossy step)                    → 40
+#   ja_audio_asr_mt     — Japanese audio → ASR → MT (two lossy steps)            → 30
+#   untagged_audio_asr_mt — unknown audio → ASR → MT + source uncertainty        → 15
+_STRATEGY_BASE_SCORE: Dict[str, int] = {
+    "embedded_en": 70,
+    "en_audio_asr": 55,
+    "embedded_jp_mt": 40,
+    "ja_audio_asr_mt": 30,
+    "untagged_audio_asr_mt": 15,
+}
+
+# Grade thresholds for the 0–100 total score.
+_SCORE_GRADE_THRESHOLDS = [
+    (80, "A"),
+    (60, "B"),
+    (40, "C"),
+    (20, "D"),
+]
+
 # Strategies that involve machine translation or an untagged fallback should
 # be flagged for human review because accuracy cannot be guaranteed.
 _REVIEW_RECOMMENDED_STRATEGIES = {"embedded_jp_mt", "ja_audio_asr_mt", "untagged_audio_asr_mt"}
@@ -191,6 +216,148 @@ def _compare_candidates(raw: SubtitleCandidate, polished: SubtitleCandidate) -> 
         "segments_changed": changed,
         "segments_unchanged": unchanged,
     }
+
+
+def score_candidate(
+    strategy: str,
+    candidate: SubtitleCandidate,
+    qc_summary: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Score a subtitle candidate and expose the contributing factors.
+
+    The score is a 0–100 float composed of three additive factors:
+
+    1. **strategy_base** (max 70): Reflects source-type quality.  Direct
+       English sources score highest; each additional lossy processing step
+       (ASR, MT) reduces the base score.  See ``_STRATEGY_BASE_SCORE`` for the
+       per-strategy values.
+
+    2. **qc_pass_rate** (max 20): Fraction of cues that pass QC error checks,
+       multiplied by 20.  A perfect QC run yields the full 20 points; each
+       error-level violation proportionally reduces this contribution.  When no
+       QC summary is available the factor contributes 10 points (neutral).
+
+    3. **segment_yield** (max 10): Rewards a viable segment count.  Full 10
+       points are awarded when the candidate contains ≥ 5 segments; fewer
+       segments scale linearly down to 0.
+
+    Grade thresholds (based on total_score):
+      - A: ≥ 80
+      - B: ≥ 60
+      - C: ≥ 40
+      - D: ≥ 20
+      - F: < 20
+
+    Args:
+        strategy: The selected generation strategy name
+            (e.g. ``"embedded_en"``, ``"ja_audio_asr_mt"``).
+        candidate: The ``SubtitleCandidate`` produced by the pipeline.
+        qc_summary: Optional QC summary dict returned by ``run_qc``.  When
+            provided the ``qc_pass_rate`` factor uses it; otherwise a neutral
+            half-score is applied.
+
+    Returns:
+        A JSON-serialisable dict with keys:
+          - ``total_score``: float in [0, 100]
+          - ``grade``: letter grade ("A" | "B" | "C" | "D" | "F")
+          - ``factors``: list of factor dicts, each containing:
+            - ``name``: factor identifier
+            - ``description``: human-readable explanation
+            - ``raw_value``: the measured input value
+            - ``max_contribution``: maximum points the factor can contribute
+            - ``contribution``: actual points added to the total
+    """
+    factors = []
+
+    # --- Factor 1: strategy_base ---
+    base_score = _STRATEGY_BASE_SCORE.get(strategy, 0)
+    max_base = max(_STRATEGY_BASE_SCORE.values()) if _STRATEGY_BASE_SCORE else 70
+    factors.append({
+        "name": "strategy_base",
+        "description": (
+            "Source type quality — direct English sources score highest; "
+            "each additional lossy processing step (ASR, MT) reduces the base score"
+        ),
+        "raw_value": strategy,
+        "max_contribution": max_base,
+        "contribution": base_score,
+    })
+
+    # --- Factor 2: qc_pass_rate ---
+    _MAX_QC = 20
+    if qc_summary is not None:
+        cue_count = qc_summary.get("cue_count", 0)
+        error_count = qc_summary.get("error_count", 0)
+        if cue_count > 0:
+            pass_rate = 1.0 - min(error_count / cue_count, 1.0)
+        else:
+            pass_rate = 0.0
+        qc_contribution = round(pass_rate * _MAX_QC, 2)
+        qc_raw = round(pass_rate, 4)
+    else:
+        # No QC data; award neutral half-score.
+        pass_rate = 0.5
+        qc_contribution = round(pass_rate * _MAX_QC, 2)
+        qc_raw = None
+    factors.append({
+        "name": "qc_pass_rate",
+        "description": (
+            "Fraction of cues free of QC errors "
+            "(error violations proportionally reduce this factor)"
+        ),
+        "raw_value": qc_raw,
+        "max_contribution": _MAX_QC,
+        "contribution": qc_contribution,
+    })
+
+    # --- Factor 3: segment_yield ---
+    _MAX_YIELD = 10
+    _MIN_VIABLE_SEGMENTS = 5
+    seg_count = candidate.segment_count
+    yield_ratio = min(seg_count / _MIN_VIABLE_SEGMENTS, 1.0)
+    yield_contribution = round(yield_ratio * _MAX_YIELD, 2)
+    factors.append({
+        "name": "segment_yield",
+        "description": (
+            f"Candidate has a viable segment count "
+            f"(full score at ≥ {_MIN_VIABLE_SEGMENTS} segments)"
+        ),
+        "raw_value": seg_count,
+        "max_contribution": _MAX_YIELD,
+        "contribution": yield_contribution,
+    })
+
+    total = round(sum(f["contribution"] for f in factors), 2)
+    total = min(max(total, 0.0), 100.0)
+
+    grade = "F"
+    for threshold, letter in _SCORE_GRADE_THRESHOLDS:
+        if total >= threshold:
+            grade = letter
+            break
+
+    return {
+        "total_score": total,
+        "grade": grade,
+        "factors": factors,
+    }
+
+
+def _log_candidate_score(score: Dict[str, Any]) -> None:
+    """Emit a concise candidate score summary to the logger."""
+    logger.info(
+        "Candidate score: %.1f / 100  (grade %s)",
+        score["total_score"],
+        score["grade"],
+    )
+    for f in score["factors"]:
+        logger.info(
+            "  %-20s  %5.1f / %d  — %s",
+            f["name"],
+            f["contribution"],
+            f["max_contribution"],
+            f["description"],
+        )
 
 
 def _build_selection_report(
@@ -819,6 +986,11 @@ def run_generate(
     qc_path.write_text(json.dumps(qc_summary, indent=2), encoding="utf-8")
     logger.info("QC summary written: %s", qc_path.name)
 
+    # Score the selected candidate and log an explainable breakdown
+    with start_span("score_candidate"):
+        candidate_score = score_candidate(strategy, candidate, qc_summary)
+    _log_candidate_score(candidate_score)
+
     metadata = {
         "video": str(video_path.name),
         "strategy": strategy,
@@ -828,6 +1000,7 @@ def run_generate(
         "qc": qc_summary,
         "qc_json": str(qc_path),
         "selection_report": selection_report,
+        "candidate_score": candidate_score,
     }
     if polish_stats is not None:
         metadata.update(polish_stats)
@@ -835,4 +1008,4 @@ def run_generate(
     return metadata
 
 
-__all__ = ["run_generate"]
+__all__ = ["run_generate", "score_candidate"]
