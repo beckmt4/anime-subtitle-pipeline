@@ -230,31 +230,4 @@ class Config:
         
         # Fill in formatting placeholders
         return prompt_template.format(
-            max_lines=self.llm_max_lines,
-            max_chars_per_line=self.llm_max_chars_per_line
-        )
-    
-    def __repr__(self) -> str:
-        return f"Config(profile={self.profile}, config_path={self.config_path})"
-
-
-# Global config instance (initialized in main.py)
-_global_config: Optional[Config] = None
-
-
-def get_config() -> Config:
-    """Get the global configuration instance."""
-    if _global_config is None:
-        raise RuntimeError("Configuration not initialized. Call set_config() first.")
-    return _global_config
-
-
-def set_config(config: Config) -> None:
-    """
-    Set the global configuration instance.
-    
-    Args:
-        config: Configuration object to set as global
-    """
-    global _global_config
-    _global_config = config
+            max_lines=self.llm_max_li

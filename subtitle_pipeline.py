@@ -311,18 +311,4 @@ def main() -> None:
     output_dir = Path(args.output_dir) if args.output_dir else None
     model = args.model or os.environ.get("MODEL", "mistral")
 
-    exit_code = run_pipeline(
-        input_files=input_files,
-        output_dir=output_dir,
-        model=model,
-        log_path=args.log,
-        batch_size=args.batch_size,
-        timeout=args.timeout,
-        verbose=args.verbose,
-        drift_log=args.drift_log,
-    )
-    sys.exit(exit_code)
-
-
-if __name__ == "__main__":
-    main()
+    exit_cod
