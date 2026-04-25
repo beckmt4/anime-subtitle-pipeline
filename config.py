@@ -201,6 +201,11 @@ class Config:
     @property
     def subtitle_max_duration(self) -> float:
         return self.get("subtitles", "max_duration_sec", default=7.0)
+
+    @property
+    def qc_max_cps(self) -> float:
+        """Maximum reading speed in characters per second for QC validation."""
+        return self.get("qc", "max_cps", default=20.0)
     
     @property
     def log_level(self) -> str:
