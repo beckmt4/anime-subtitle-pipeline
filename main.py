@@ -583,6 +583,11 @@ Examples:
                 logger.info(f"  Confidence tier: {rpt['confidence_tier']}")
                 if rpt.get("review_recommended"):
                     logger.warning(f"  ⚠ Review recommended: {rpt.get('review_reason', '')}")
+            if "candidate_score" in meta:
+                cs = meta["candidate_score"]
+                logger.info(
+                    f"  Candidate score: {cs['total_score']:.1f} / 100  (grade {cs['grade']})"
+                )
             sys.exit(0)
         else:  # legacy subtitle mode
             logger.info("Running in legacy SUBTITLE mode (JP audio → ASR → MT → LLM)")

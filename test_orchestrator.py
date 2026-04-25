@@ -365,7 +365,189 @@ def run_all_tests():
     test_selection_report_untagged_audio_fallback()
     test_selection_report_probe_reroute_reflected()
     test_selection_report_rationale_is_nonempty_string()
+    # Candidate scoring tests
+    test_score_candidate_structure()
+    test_score_candidate_embedded_en_high_score()
+    test_score_candidate_untagged_audio_low_score()
+    test_score_candidate_ordering()
+    test_score_candidate_qc_penalises_errors()
+    test_score_candidate_no_qc_uses_neutral()
+    test_score_candidate_segment_yield_partial()
+    test_score_candidate_in_run_generate_metadata()
+    test_score_candidate_grade_thresholds()
     print("\n✅ All orchestrator strategy tests PASSED")
+
+
+# ---------------------------------------------------------------------------
+# score_candidate unit tests
+# ---------------------------------------------------------------------------
+
+def _make_candidate(candidate_id: str = "test", segment_count: int = 5) -> "SubtitleCandidate":
+    return SubtitleCandidate(
+        id=candidate_id,
+        language="en",
+        source="embedded",
+        origin_stream="sub:0",
+        segments=make_segments("test")[:segment_count] if segment_count <= 2
+        else [Segment(float(i), float(i + 1), f"seg {i}") for i in range(segment_count)],
+        meta={},
+    )
+
+
+def _make_qc_summary(cue_count: int, error_count: int = 0, warning_count: int = 0) -> dict:
+    return {
+        "parsed_ok": True,
+        "cue_count": cue_count,
+        "violations": [],
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "pass_qc": error_count == 0,
+    }
+
+
+def test_score_candidate_structure():
+    """score_candidate must return the expected keys and types."""
+    cand = _make_candidate(segment_count=5)
+    result = orch.score_candidate("embedded_en", cand, _make_qc_summary(5))
+    assert "total_score" in result, result
+    assert "grade" in result, result
+    assert "factors" in result, result
+    assert isinstance(result["total_score"], (int, float)), result
+    assert isinstance(result["grade"], str), result
+    assert isinstance(result["factors"], list), result
+    for f in result["factors"]:
+        for key in ("name", "description", "raw_value", "max_contribution", "contribution"):
+            assert key in f, f"factor missing key '{key}': {f}"
+    print("✓ score_candidate: structure correct")
+
+
+def test_score_candidate_embedded_en_high_score():
+    """embedded_en with clean QC and sufficient segments must achieve grade A."""
+    cand = _make_candidate(segment_count=10)
+    result = orch.score_candidate("embedded_en", cand, _make_qc_summary(10))
+    assert result["total_score"] >= 80, result
+    assert result["grade"] == "A", result
+    print(f"✓ embedded_en scores {result['total_score']:.1f} (grade {result['grade']})")
+
+
+def test_score_candidate_untagged_audio_low_score():
+    """untagged_audio_asr_mt with low segment count must score below embedded_en."""
+    embedded = orch.score_candidate("embedded_en", _make_candidate(10), _make_qc_summary(10))
+    untagged = orch.score_candidate("untagged_audio_asr_mt", _make_candidate(2), _make_qc_summary(2))
+    assert untagged["total_score"] < embedded["total_score"], (
+        f"Expected untagged ({untagged['total_score']}) < embedded_en ({embedded['total_score']})"
+    )
+    print(
+        f"✓ untagged_audio_asr_mt ({untagged['total_score']}) "
+        f"< embedded_en ({embedded['total_score']})"
+    )
+
+
+def test_score_candidate_ordering():
+    """Higher-quality strategies must score higher than lower-quality ones (equal QC/segments)."""
+    qc = _make_qc_summary(10)
+    cand = _make_candidate(segment_count=10)
+    scores = {
+        s: orch.score_candidate(s, cand, qc)["total_score"]
+        for s in ("embedded_en", "en_audio_asr", "embedded_jp_mt",
+                  "ja_audio_asr_mt", "untagged_audio_asr_mt")
+    }
+    assert scores["embedded_en"] > scores["en_audio_asr"], scores
+    assert scores["en_audio_asr"] > scores["embedded_jp_mt"], scores
+    assert scores["embedded_jp_mt"] > scores["ja_audio_asr_mt"], scores
+    assert scores["ja_audio_asr_mt"] > scores["untagged_audio_asr_mt"], scores
+    print("✓ Strategy score ordering correct:", {k: round(v, 1) for k, v in scores.items()})
+
+
+def test_score_candidate_qc_penalises_errors():
+    """QC errors must reduce the qc_pass_rate factor contribution."""
+    cand = _make_candidate(segment_count=10)
+    clean_score = orch.score_candidate("embedded_jp_mt", cand, _make_qc_summary(10, error_count=0))
+    dirty_score = orch.score_candidate("embedded_jp_mt", cand, _make_qc_summary(10, error_count=5))
+    assert clean_score["total_score"] > dirty_score["total_score"], (
+        f"Clean ({clean_score['total_score']}) should exceed dirty ({dirty_score['total_score']})"
+    )
+    clean_qc = next(f for f in clean_score["factors"] if f["name"] == "qc_pass_rate")
+    dirty_qc = next(f for f in dirty_score["factors"] if f["name"] == "qc_pass_rate")
+    assert clean_qc["contribution"] > dirty_qc["contribution"], (
+        f"qc_pass_rate contribution should be lower when errors present"
+    )
+    print(
+        f"✓ QC errors reduce score: clean={clean_score['total_score']:.1f} "
+        f"vs dirty={dirty_score['total_score']:.1f}"
+    )
+
+
+def test_score_candidate_no_qc_uses_neutral():
+    """When qc_summary is None, the qc_pass_rate factor must use the neutral value."""
+    cand = _make_candidate(segment_count=10)
+    result = orch.score_candidate("embedded_en", cand, None)
+    qc_factor = next(f for f in result["factors"] if f["name"] == "qc_pass_rate")
+    assert qc_factor["raw_value"] is None, qc_factor
+    # Neutral = 0.5 × max (10 pts)
+    assert qc_factor["contribution"] == 10.0, qc_factor
+    print("✓ No QC summary: neutral half-score applied to qc_pass_rate")
+
+
+def test_score_candidate_segment_yield_partial():
+    """Candidates with fewer than 5 segments must receive a partial segment_yield score."""
+    cand_few = _make_candidate(segment_count=2)
+    cand_full = _make_candidate(segment_count=5)
+    qc = _make_qc_summary(5)
+    score_few = orch.score_candidate("embedded_en", cand_few, qc)
+    score_full = orch.score_candidate("embedded_en", cand_full, qc)
+    yield_few = next(f for f in score_few["factors"] if f["name"] == "segment_yield")
+    yield_full = next(f for f in score_full["factors"] if f["name"] == "segment_yield")
+    assert yield_few["contribution"] < yield_full["contribution"], (
+        f"Partial yield ({yield_few['contribution']}) should be < full yield ({yield_full['contribution']})"
+    )
+    assert yield_full["contribution"] == yield_full["max_contribution"], yield_full
+    print(
+        f"✓ Partial segment yield: 2 segs → {yield_few['contribution']} pts, "
+        f"5 segs → {yield_full['contribution']} pts"
+    )
+
+
+def test_score_candidate_in_run_generate_metadata():
+    """run_generate must include 'candidate_score' with correct structure in its return value."""
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=False, jp_sub=False, jp_audio=False)
+    meta = orch.run_generate(media, cfg)
+    assert "candidate_score" in meta, "candidate_score missing from metadata"
+    cs = meta["candidate_score"]
+    assert "total_score" in cs, cs
+    assert "grade" in cs, cs
+    assert "factors" in cs, cs
+    assert isinstance(cs["total_score"], (int, float)), cs
+    factor_names = {f["name"] for f in cs["factors"]}
+    assert "strategy_base" in factor_names, factor_names
+    assert "qc_pass_rate" in factor_names, factor_names
+    assert "segment_yield" in factor_names, factor_names
+    print(
+        f"✓ candidate_score in run_generate metadata: "
+        f"score={cs['total_score']:.1f}, grade={cs['grade']}"
+    )
+
+
+def test_score_candidate_grade_thresholds():
+    """Grade must be correctly assigned based on total_score thresholds."""
+    # Force specific total scores via untagged strategy + controlled QC
+    # untagged_audio_asr_mt base = 15 → with 1 segment and 100% errors total ≈ 3
+    cand_tiny = _make_candidate(segment_count=1)
+    qc_all_errors = _make_qc_summary(cue_count=1, error_count=1)
+    result_f = orch.score_candidate("untagged_audio_asr_mt", cand_tiny, qc_all_errors)
+    assert result_f["grade"] == "F", f"Expected F but got {result_f['grade']} ({result_f['total_score']})"
+
+    # embedded_en + perfect QC + 10 segs → should be A
+    cand_good = _make_candidate(segment_count=10)
+    qc_clean = _make_qc_summary(cue_count=10, error_count=0)
+    result_a = orch.score_candidate("embedded_en", cand_good, qc_clean)
+    assert result_a["grade"] == "A", f"Expected A but got {result_a['grade']} ({result_a['total_score']})"
+
+    print(
+        f"✓ Grade thresholds: F at {result_f['total_score']:.1f}, "
+        f"A at {result_a['total_score']:.1f}"
+    )
 
 
 # ---------------------------------------------------------------------------
