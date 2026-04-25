@@ -656,18 +656,22 @@ def test_selection_report_probe_reroute_reflected():
 
 
 def test_selection_report_rationale_is_nonempty_string():
-    """The 'rationale' field must always be a non-empty string."""
+    """The 'rationale' field must always be a non-empty string for every strategy."""
     cfg = Config()
-    for media in [
-        _media(en_sub=True),
-        _media(en_audio=True, jp_audio=True),
-        _media(jp_sub=True),
-        _media(jp_audio=True),
-    ]:
+    cases = [
+        (_media(en_sub=True),                 "embedded_en"),
+        (_media(en_audio=True, jp_audio=True), "ja_audio_asr_mt"),
+        (_media(jp_sub=True),                  "embedded_jp_mt"),
+        (_media(jp_audio=True),                "ja_audio_asr_mt"),
+    ]
+    for media, expected_strategy in cases:
         meta = orch.run_generate(media, cfg)
         rpt = meta["selection_report"]
+        assert rpt["selected_source"] == expected_strategy, (
+            f"Expected strategy {expected_strategy!r} but got {rpt['selected_source']!r}"
+        )
         assert isinstance(rpt["rationale"], str) and rpt["rationale"], (
-            f"Empty rationale for strategy {rpt['selected_source']}"
+            f"Empty rationale for strategy {rpt['selected_source']!r}"
         )
     print("✓ Rationale is a non-empty string for all strategies")
 

@@ -406,7 +406,14 @@ def _build_selection_report(
         selected_entry = next(
             (s for s in sources_evaluated if s["status"] == "selected"), None
         )
-        rationale = selected_entry["reason"] if selected_entry else f"Strategy {strategy} selected"
+        if selected_entry is None:
+            # This should never happen if the decision tree and sources list are in
+            # sync; raise here so any future logic errors surface immediately.
+            raise AssertionError(
+                f"_build_selection_report: no source marked 'selected' "
+                f"for strategy '{strategy}'"
+            )
+        rationale = selected_entry["reason"]
 
         # Prepend a probe context note when the probe drove the decision
         if probe_rerouted:
@@ -415,7 +422,14 @@ def _build_selection_report(
                 + rationale
             )
 
-    confidence_tier = _STRATEGY_CONFIDENCE_TIER.get(strategy, "unknown")
+    confidence_tier = _STRATEGY_CONFIDENCE_TIER.get(strategy)
+    if confidence_tier is None:
+        logger.warning(
+            "_build_selection_report: strategy '%s' is not in _STRATEGY_CONFIDENCE_TIER; "
+            "confidence tier will be reported as 'unknown'",
+            strategy,
+        )
+        confidence_tier = "unknown"
     review_recommended = strategy in _REVIEW_RECOMMENDED_STRATEGIES
     review_reason = (
         "MT pipeline output (machine translation); manual review recommended for accuracy"
