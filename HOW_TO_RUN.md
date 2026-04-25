@@ -1,23 +1,22 @@
 # How To Run the Anime Subtitle Pipeline
 
-This guide walks you through running the full, local-only pipeline end-to-end on Windows PowerShell (pwsh). Commands for Linux/macOS are similar unless noted.
+This guide walks you through running the full, local-only pipeline end-to-end on Fedora Linux.
 
 ## TL;DR (Quick Start)
 
-```powershell
-# From the repo root: C:\Users\<you>\Projects\anime-subtitle-pipeline
+```bash
+# From the repo root
 
 # 1) Create and activate a venv
-python -m venv venv
-.\n+venv\Scripts\Activate.ps1
+python3 -m venv venv
+source venv/bin/activate
 
 # 2) Install PyTorch (choose ONE that matches your setup)
-# CUDA 11.8 GPU:
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-# CUDA 12.1 GPU:
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-# CPU-only:
-# pip install torch torchvision torchaudio
+# CPU-only (no GPU):
+pip install torch
+
+# CUDA 12.8 GPU:
+# pip install torch --index-url https://download.pytorch.org/whl/cu128
 
 # 3) Install other requirements
 pip install -r requirements.txt
@@ -25,8 +24,8 @@ pip install -r requirements.txt
 # 4) Make sure ffmpeg is installed and on PATH
 ffmpeg -version
 
-# 5) Run the pipeline (positional video path; no --video)
-python .\main.py "C:\Path\To\Your Video.mkv"
+# 5) Run the pipeline
+python main.py "Your Video.mkv"
 ```
 
 Outputs go to `outbox/Your Video.en.srt`. A detailed JSON log is written to `logs/Your Video.json`.
@@ -35,14 +34,18 @@ Outputs go to `outbox/Your Video.en.srt`. A detailed JSON log is written to `log
 
 ## Prerequisites
 
-- Python 3.9 or newer
+- Python 3.9 or newer (Fedora 43 ships Python 3.14)
 - ffmpeg installed and available in PATH
-  - Windows: install via Chocolatey `choco install ffmpeg` or download from https://ffmpeg.org/ and add `bin` to PATH
-- GPU (optional but faster): NVIDIA with CUDA 11.8 or 12.1 + recent driver
+
+```bash
+sudo dnf install ffmpeg
+```
+
+- GPU (optional but faster): NVIDIA with CUDA + recent driver
 
 Verify ffmpeg:
 
-```powershell
+```bash
 ffmpeg -version
 ```
 
@@ -50,28 +53,27 @@ ffmpeg -version
 
 1) Create and activate a virtual environment
 
-```powershell
-python -m venv venv
-.
-venv\Scripts\Activate.ps1
+```bash
+python3 -m venv venv
+source venv/bin/activate
 ```
 
 2) Install PyTorch (pick the variant that matches your system)
 
-```powershell
-# CUDA 11.8
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```bash
+# CPU-only
+pip install torch
+
+# CUDA 12.8 (latest stable wheel)
+pip install torch --index-url https://download.pytorch.org/whl/cu128
 
 # CUDA 12.1
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# CPU-only
-# pip install torch torchvision torchaudio
+pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
 
 3) Install remaining dependencies
 
-```powershell
+```bash
 pip install -r requirements.txt
 ```
 
@@ -79,7 +81,7 @@ pip install -r requirements.txt
 
 The polishing step uses a local LLM via Ollama. If you skip it, pass `--no-llm` when running.
 
-```powershell
+```bash
 # Install Ollama from https://ollama.ai/
 ollama pull qwen2.5:7b
 ollama serve
@@ -99,29 +101,29 @@ You can override profile on the CLI with `--profile dev|prod`.
 
 ## Run the Pipeline
 
-Basic command (positional video path, no `--video`):
+Basic command:
 
-```powershell
-python .\main.py "C:\Users\<you>\Videos\Your Video.mkv"
+```bash
+python main.py "Your Video.mkv"
 ```
 
 Common options:
 
-```powershell
+```bash
 # Use prod profile (e.g., 24GB GPU)
-python .\main.py "video.mkv" --profile prod
+python main.py "video.mkv" --profile prod
 
 # Skip LLM polishing (faster, uses raw MT output)
-python .\main.py "video.mkv" --no-llm
+python main.py "video.mkv" --no-llm
 
 # Generate SRT only (don't mux back into video)
-python .\main.py "video.mkv" --no-mux
+python main.py "video.mkv" --no-mux
 
 # Force a specific audio track index
-python .\main.py "video.mkv" --audio-track 1
+python main.py "video.mkv" --audio-track 1
 
 # Verbose logging
-python .\main.py "video.mkv" --log-level DEBUG
+python main.py "video.mkv" --log-level DEBUG
 ```
 
 ## Tracing (Optional)
@@ -130,73 +132,68 @@ You can enable OpenTelemetry traces to see timing and steps.
 
 Console exporter:
 
-```powershell
-$env:TRACING_ENABLED = "1"
-$env:TRACING_EXPORTER = "console"
-python .\main.py "video.mkv"
+```bash
+TRACING_ENABLED=1 TRACING_EXPORTER=console python main.py "video.mkv"
 ```
 
 OTLP (Jaeger) exporter:
 
-```powershell
+```bash
 # Start Jaeger (one-time)
 docker run --name jaeger -e COLLECTOR_OTLP_ENABLED=true -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one:1.54
 
 # Send traces to Jaeger via OTLP HTTP
-$env:TRACING_ENABLED = "1"
-$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
-python .\main.py "video.mkv"
+TRACING_ENABLED=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 python main.py "video.mkv"
 
-# Open Jaeger UI
-# http://localhost:16686 (service: anime-subtitle-pipeline)
+# Open Jaeger UI: http://localhost:16686 (service: anime-subtitle-pipeline)
 ```
 
 ## Verify Results
 
 - Terminal: look for `✓ Processing complete!`
-- Exit code: `echo $LASTEXITCODE` returns `0` on success
+- Exit code: `echo $?` returns `0` on success
 - Files:
-  - `outbox\<video>.en.srt` — generated subtitles
-  - `logs\<video>.json` — per-segment details (timestamps, JA/EN text)
-  - If muxing enabled: `outbox\<video>.en.mkv`
+  - `outbox/<video>.en.srt` — generated subtitles
+  - `logs/<video>.json` — per-segment details (timestamps, JA/EN text)
+  - If muxing enabled: `outbox/<video>.en.mkv`
 
 Quick checks:
 
-```powershell
+```bash
 # List outputs
-Get-ChildItem .\outbox\*.en.srt
-Get-ChildItem .\logs\*.json
+ls outbox/*.en.srt
+ls logs/*.json
 
 # Preview first 30 lines of SRT
-Get-Content -First 30 ".\outbox\Your Video.en.srt"
+head -30 "outbox/Your Video.en.srt"
 
 # Peek first 40 lines of log
-Get-Content -First 40 ".\logs\Your Video.json"
+head -40 "logs/Your Video.json"
 ```
 
 ## Common Scenarios
 
 CPU-only run:
 
-```powershell
-pip install torch torchvision torchaudio
+```bash
+pip install torch
 pip install -r requirements.txt
-python .\main.py "video.mkv" --no-llm
+python main.py "video.mkv" --no-llm
 ```
 
 Process a folder:
 
-```powershell
-Get-ChildItem .\inbox\*.mkv | ForEach-Object {
-    python .\main.py $_.FullName --no-llm
-}
+```bash
+for f in inbox/*.mkv; do
+    python main.py "$f" --no-llm
+done
 ```
 
 ## Troubleshooting
 
-- PyTorch load error requires 2.6+: install the correct PyTorch build as shown above (CUDA 11.8/12.1 or CPU)
+- PyTorch load error requires 2.6+: install the correct PyTorch build as shown above
 - CUDA OOM: lower ASR batch size in `config.yaml` (e.g., dev batch_size: 4)
-- ffmpeg not found: install via Chocolatey or add ffmpeg `bin` to PATH
+- ffmpeg not found: `sudo dnf install ffmpeg`
 - No Japanese audio detected: specify `--audio-track 1` (or appropriate index)
 - Paths with spaces/parentheses: always wrap in quotes `"..."`
 

@@ -3,9 +3,11 @@
 Stubs out heavy ML/GPU packages so all source modules can be imported
 in CI without installing faster-whisper, transformers, torch, or
 opentelemetry. Applies to tests in both the repo root and tests/.
-When those packages are actually installed (dev machine), setdefault is
-a no-op so the real packages are used instead.
+
+Only stubs a package when it cannot be found on the system — so dev
+machines with the real packages installed use those instead.
 """
+import importlib.util
 import sys
 from unittest.mock import MagicMock
 
@@ -41,4 +43,6 @@ _HEAVY_STUBS = [
 ]
 
 for _mod in _HEAVY_STUBS:
-    sys.modules.setdefault(_mod, MagicMock())
+    base_mod = _mod.split(".")[0]
+    if importlib.util.find_spec(base_mod) is None:
+        sys.modules.setdefault(_mod, MagicMock())

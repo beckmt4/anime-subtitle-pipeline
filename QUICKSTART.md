@@ -22,12 +22,11 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ## ============================================================================
 
 # Create and activate virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1  # Windows PowerShell
-# source venv/bin/activate     # Linux/macOS
+python3 -m venv venv
+source venv/bin/activate
 
-# Install PyTorch with CUDA support (for GPU)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# Install PyTorch (CPU-only; for GPU see README)
+pip install torch
 
 # Install other dependencies
 pip install -r requirements.txt
@@ -116,8 +115,8 @@ python main.py anime_episode.mkv --log-level DEBUG
 # - Specify track: python main.py video.mkv --audio-track 1
 
 # ffmpeg Not Found?
-# - Windows: Add to PATH or install via: choco install ffmpeg
-# - Linux: sudo apt-get install ffmpeg
+# - Fedora/RHEL: sudo dnf install ffmpeg
+# - Debian/Ubuntu: sudo apt-get install ffmpeg
 # - macOS: brew install ffmpeg
 
 
@@ -125,15 +124,10 @@ python main.py anime_episode.mkv --log-level DEBUG
 ## ============================================================================
 
 # Process all MKV files in inbox/ directory
-Get-ChildItem inbox/*.mkv | ForEach-Object {
-    Write-Host "Processing: $($_.Name)"
-    python main.py $_.FullName
-}
-
-# Or on Linux/macOS:
-# for file in inbox/*.mkv; do
-#     python main.py "$file"
-# done
+for file in inbox/*.mkv; do
+    echo "Processing: $file"
+    python main.py "$file"
+done
 
 
 ## PERFORMANCE EXPECTATIONS

@@ -67,8 +67,8 @@ jiwer>=3.0.0  # Word Error Rate for subtitle comparison
 # External Dependencies (not Python packages):
 # ============================================================================
 # - ffmpeg: Required for audio extraction and video muxing
-#   Windows: Download from https://ffmpeg.org/ and add to PATH
-#   Linux: sudo apt-get install ffmpeg
+#   Fedora/RHEL: sudo dnf install ffmpeg
+#   Debian/Ubuntu: sudo apt-get install ffmpeg
 #   macOS: brew install ffmpeg
 #
 # - Ollama (optional): For LLM polishing

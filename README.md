@@ -39,13 +39,12 @@ A **production-quality**, **local-only** pipeline for generating English subtitl
 
 #### ffmpeg (Required)
 
-```powershell
-# Windows: Download from https://ffmpeg.org/ and add to PATH
-# Or use Chocolatey:
-choco install ffmpeg
+```bash
+# Fedora/RHEL:
+sudo dnf install ffmpeg
 
-# Linux:
-sudo apt-get install ffmpeg
+# Debian/Ubuntu:
+sudo dnf install ffmpeg
 
 # macOS:
 brew install ffmpeg
@@ -53,7 +52,7 @@ brew install ffmpeg
 
 Verify installation:
 
-```powershell
+```bash
 ffmpeg -version
 ```
 
@@ -68,40 +67,34 @@ Download and install NVIDIA CUDA Toolkit:
 
 Python 3.9+ required.
 
-```powershell
+```bash
 # Create virtual environment
-python -m venv venv
+python3 -m venv venv
 
-# Activate (Windows PowerShell)
-.\venv\Scripts\Activate.ps1
-
-# Activate (Linux/macOS)
+# Activate
 source venv/bin/activate
 ```
 
 ### 3. Install Dependencies
 
-#### For GPU (CUDA 11.8)
+#### For CPU-only
 
-```powershell
-# Install PyTorch 2.6+ with CUDA support (required for security fixes)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```bash
+pip install torch
+pip install -r requirements.txt
+```
 
-# Install other dependencies
+#### For GPU (CUDA 12.8 — latest stable)
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 ```
 
 #### For GPU (CUDA 12.1)
 
-```powershell
-# Install PyTorch 2.6+ with CUDA support
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install -r requirements.txt
-```
-
-#### For CPU-only
-
-```powershell
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
@@ -109,22 +102,17 @@ pip install -r requirements.txt
 
 You can enable OpenTelemetry tracing to visualize each pipeline step.
 
-```powershell
+```bash
 # Enable tracing with console exporter
-$env:TRACING_ENABLED = "1"
-$env:TRACING_EXPORTER = "console"
+TRACING_ENABLED=1 TRACING_EXPORTER=console python main.py video.mkv
 
-# Or send traces to an OTLP endpoint (e.g., Jaeger via OpenTelemetry Collector)
-$env:TRACING_ENABLED = "1"
-$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
-
-# Run the pipeline
-python main.py video.mkv
+# Or send traces to an OTLP endpoint (e.g., Jaeger)
+TRACING_ENABLED=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 python main.py video.mkv
 ```
 
 To run Jaeger locally via Docker (optional):
 
-```powershell
+```bash
 docker run --name jaeger -e COLLECTOR_OTLP_ENABLED=true -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one:1.54
 # Open Jaeger UI at http://localhost:16686
 ```
@@ -133,7 +121,7 @@ docker run --name jaeger -e COLLECTOR_OTLP_ENABLED=true -p 16686:16686 -p 4318:4
 
 Download and install Ollama from https://ollama.ai/
 
-```powershell
+```bash
 # Pull the Qwen 2.5 model (7B for dev, 14B for prod)
 ollama pull qwen2.5:7b
 
@@ -150,7 +138,7 @@ The server runs on `http://localhost:11434` by default.
 
 ### Basic Usage (Generate Mode)
 
-```powershell
+```bash
 # Process a video with default settings
 python main.py video.mkv
 ```
@@ -171,7 +159,7 @@ Override selection via `generate` section in `config.yaml`.
 
 Generate all possible English subtitle candidates and compare with WER, BLEU, chrF:
 
-```powershell
+```bash
 python main.py video.mkv --mode benchmark
 ```
 
@@ -213,7 +201,7 @@ python main.py video.mkv --mode subtitle
 python main.py video.mkv --mode benchmark
 
 
-```powershell
+```bash
 # Use prod profile (for 4090 GPU)
 python main.py video.mkv --profile prod
 
@@ -315,7 +303,7 @@ else:
 
 ## Example Commands
 
-```powershell
+```bash
 # Production (auto strategy)
 python main.py movie.mkv --mode generate
 
@@ -455,7 +443,7 @@ outbox/
 **Error**: `ValueError: Due to a serious vulnerability issue in torch.load, even with weights_only=True, we now require users to upgrade torch to at least v2.6`
 
 **Solution**: Upgrade PyTorch to 2.6+
-```powershell
+```bash
 # For CUDA 11.8:
 pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
@@ -475,13 +463,13 @@ asr:
 ```
 
 ### No Japanese Audio Detected
-```powershell
+```bash
 # Manually specify audio track
 python main.py video.mkv --audio-track 1
 ```
 
 ### LLM Connection Failed
-```powershell
+```bash
 # Verify Ollama is running
 ollama list
 ollama serve
@@ -491,34 +479,30 @@ python main.py video.mkv --no-llm
 ```
 
 ### ffmpeg Not Found
-```powershell
-# Windows: Add ffmpeg to PATH
-$env:PATH += ";C:\path\to\ffmpeg\bin"
-
-# Or install via Chocolatey
-choco install ffmpeg
+```bash
+sudo dnf install ffmpeg
 ```
 
 ## Advanced Usage
 
 ### Batch Processing Multiple Files
 
-```powershell
+```bash
 # Process all MKV files in inbox/
-Get-ChildItem inbox/*.mkv | ForEach-Object {
-    python main.py $_.FullName
-}
+for f in inbox/*.mkv; do
+    python main.py "$f"
+done
 ```
 
 ### Custom Config File
 
-```powershell
+```bash
 python main.py video.mkv --config custom_config.yaml
 ```
 
 ### Processing Multiple Audio Tracks
 
-```powershell
+```bash
 # List audio tracks first
 ffprobe -v error -select_streams a -show_entries stream=index,codec_name:stream_tags=language -of json video.mkv
 
