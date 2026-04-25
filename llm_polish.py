@@ -247,9 +247,8 @@ Improve the English subtitle:"""
         # Try with retries
         for attempt in range(retry_count + 1):
             try:
-                # Security: Ensure we're only connecting to localhost
-                if not self.base_url.startswith(("http://localhost", "http://127.0.0.1")):
-                    logger.warning(f"Non-localhost LLM endpoint: {self.base_url}")
+                # Note: non-localhost endpoints (e.g. Unraid Ollama) are valid
+                # for production deployments; no warning needed here.
                 
                 response = requests.post(
                     f"{self.base_url}/api/generate",

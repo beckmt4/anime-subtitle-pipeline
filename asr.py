@@ -210,7 +210,7 @@ class FasterWhisperASR:
     def unload_model(self) -> None:
         """
         Unload the model to free memory.
-        
+
         Useful when processing multiple files sequentially or
         when switching to a different model. Sets the model reference
         to None, allowing Python's garbage collector to free the memory.
@@ -218,6 +218,16 @@ class FasterWhisperASR:
         if self.model is not None:
             logger.debug("Unloading Whisper model")
             self.model = None
+
+    def _build_candidate_from_segments(self, segments: List[Segment], language: str, origin_stream: str) -> SubtitleCandidate:
+        """Build a SubtitleCandidate from legacy ASR Segment list."""
+        return build_candidate_from_segments(
+            segments,
+            self.config,
+            candidate_id=f"asr_{language}",
+            language=language,
+            origin_stream=origin_stream,
+        )
 
 
 def transcribe_audio_to_segments(audio_path: str, config: Config) -> List[Segment]:
@@ -328,19 +338,6 @@ def transcribe_audio_to_candidate(
         origin_stream=origin_stream,
     )
 
-
-# Internal method added to class dynamically (kept outside to avoid clutter in main body)
-def _build_candidate_from_segments(self, segments: List[Segment], language: str, origin_stream: str) -> SubtitleCandidate:
-    return build_candidate_from_segments(
-        segments,
-        self.config,
-        candidate_id=f"asr_{language}",
-        language=language,
-        origin_stream=origin_stream,
-    )
-
-# Attach helper to class
-setattr(FasterWhisperASR, "_build_candidate_from_segments", _build_candidate_from_segments)
 
 __all__ = [
     "Segment",
