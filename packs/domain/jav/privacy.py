@@ -33,6 +33,7 @@ _REDACTED_KEYS: frozenset[str] = frozenset({
     "video_path",
     "input_path",
     "output_path",
+    "qc_json",
     "source",
     "origin_stream",
 })

@@ -44,5 +44,12 @@ _HEAVY_STUBS = [
 
 for _mod in _HEAVY_STUBS:
     base_mod = _mod.split(".")[0]
-    if importlib.util.find_spec(base_mod) is None:
+    try:
+        spec = importlib.util.find_spec(base_mod)
+    except ValueError:
+        # find_spec raises ValueError when a module has been injected into
+        # sys.modules without a valid __spec__ (e.g. by a pytest plugin).
+        # Treat this the same as "not found" so MagicMock stubs are used.
+        spec = None
+    if spec is None:
         sys.modules.setdefault(_mod, MagicMock())
