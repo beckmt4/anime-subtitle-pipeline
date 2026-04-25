@@ -353,6 +353,18 @@ def run_all_tests():
     test_probe_skipped_when_ja_audio_present()
     test_probe_skipped_with_audio_track_override()
     test_inconclusive_probe_falls_back_to_metadata()
+    # Explainable selection report tests (issue #52 / #20)
+    test_selection_report_present_in_metadata()
+    test_selection_report_embedded_en_high_confidence()
+    test_selection_report_alternatives_listed_for_embedded_en()
+    test_selection_report_not_available_sources_shown()
+    test_selection_report_mt_strategy_low_confidence_review_recommended()
+    test_selection_report_embedded_jp_mt_low_confidence_review_recommended()
+    test_selection_report_skip_embedded_en_override()
+    test_selection_report_audio_track_override()
+    test_selection_report_untagged_audio_fallback()
+    test_selection_report_probe_reroute_reflected()
+    test_selection_report_rationale_is_nonempty_string()
     print("\n✅ All orchestrator strategy tests PASSED")
 
 
@@ -472,6 +484,192 @@ def test_no_polish_status_for_non_mt_strategies():
     assert meta["strategy"] == "embedded_en"
     assert "polish_status" not in meta, meta
     print("✓ polish_status absent for strategies that skip LLM polish")
+
+
+# ---------------------------------------------------------------------------
+# Explainable source-selection report tests (issue #52 / #20)
+# ---------------------------------------------------------------------------
+
+def test_selection_report_present_in_metadata():
+    """run_generate must always include a 'selection_report' key in its return value."""
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=False, jp_sub=False, jp_audio=False)
+    meta = orch.run_generate(media, cfg)
+    assert "selection_report" in meta, "selection_report missing from metadata"
+    rpt = meta["selection_report"]
+    for key in ("selected_source", "confidence_tier", "rationale", "sources_evaluated",
+                "overrides_active", "review_recommended"):
+        assert key in rpt, f"selection_report missing key '{key}'"
+    print("✓ selection_report present with all required keys")
+
+
+def test_selection_report_embedded_en_high_confidence():
+    """embedded_en strategy must produce confidence_tier=high and no review recommendation."""
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=True, jp_sub=True, jp_audio=True)
+    meta = orch.run_generate(media, cfg)
+    rpt = meta["selection_report"]
+    assert rpt["selected_source"] == "embedded_en", rpt
+    assert rpt["confidence_tier"] == "high", rpt
+    assert rpt["review_recommended"] is False, rpt
+    assert rpt["review_reason"] is None, rpt
+    print("✓ embedded_en: high confidence, no review recommended")
+
+
+def test_selection_report_alternatives_listed_for_embedded_en():
+    """When embedded_en wins, all other available sources must appear as 'skipped'."""
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=True, jp_sub=True, jp_audio=True)
+    meta = orch.run_generate(media, cfg)
+    rpt = meta["selection_report"]
+    statuses = {s["source"]: s["status"] for s in rpt["sources_evaluated"]}
+    assert statuses["embedded_en"] == "selected", statuses
+    assert statuses["en_audio_asr"] == "skipped", statuses
+    assert statuses["embedded_jp_mt"] == "skipped", statuses
+    assert statuses["ja_audio_asr_mt"] == "skipped", statuses
+    print("✓ All alternatives shown as skipped when embedded_en is selected")
+
+
+def test_selection_report_not_available_sources_shown():
+    """Sources absent from the container must appear with status 'not_available'."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=False, jp_audio=True)
+    meta = orch.run_generate(media, cfg)
+    rpt = meta["selection_report"]
+    statuses = {s["source"]: s["status"] for s in rpt["sources_evaluated"]}
+    assert statuses["embedded_en"] == "not_available", statuses
+    assert statuses["en_audio_asr"] == "not_available", statuses
+    assert statuses["embedded_jp_mt"] == "not_available", statuses
+    assert statuses["ja_audio_asr_mt"] == "selected", statuses
+    print("✓ Not-available sources correctly flagged in selection report")
+
+
+def test_selection_report_mt_strategy_low_confidence_review_recommended():
+    """ja_audio_asr_mt must be flagged as low confidence and require review."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=False, jp_audio=True)
+    meta = orch.run_generate(media, cfg)
+    rpt = meta["selection_report"]
+    assert rpt["selected_source"] == "ja_audio_asr_mt", rpt
+    assert rpt["confidence_tier"] == "low", rpt
+    assert rpt["review_recommended"] is True, rpt
+    assert rpt["review_reason"] is not None, rpt
+    print("✓ ja_audio_asr_mt: low confidence, review recommended")
+
+
+def test_selection_report_embedded_jp_mt_low_confidence_review_recommended():
+    """embedded_jp_mt must be flagged as low confidence and require review."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=False)
+    meta = orch.run_generate(media, cfg)
+    rpt = meta["selection_report"]
+    assert rpt["selected_source"] == "embedded_jp_mt", rpt
+    assert rpt["confidence_tier"] == "low", rpt
+    assert rpt["review_recommended"] is True, rpt
+    print("✓ embedded_jp_mt: low confidence, review recommended")
+
+
+def test_selection_report_skip_embedded_en_override():
+    """When skip_embedded_en is True, the report must list 'skip_embedded_en' as an override
+    and show embedded_en as 'skipped' (not 'not_available')."""
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=False, jp_sub=False, jp_audio=True)
+    meta = orch.run_generate(media, cfg, skip_embedded_en=True)
+    rpt = meta["selection_report"]
+    assert "skip_embedded_en" in rpt["overrides_active"], rpt
+    statuses = {s["source"]: s["status"] for s in rpt["sources_evaluated"]}
+    assert statuses["embedded_en"] == "skipped", statuses
+    # The stream reference should still be present since it was detected
+    en_entry = next(s for s in rpt["sources_evaluated"] if s["source"] == "embedded_en")
+    assert en_entry["detected"] is True, en_entry
+    print("✓ skip_embedded_en override correctly reflected in selection report")
+
+
+def test_selection_report_audio_track_override():
+    """When audio_track_override is set, the report must note the override and show
+    all other sources as bypassed."""
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=True, jp_sub=True, jp_audio=False)
+    meta = orch.run_generate(media, cfg, audio_track_override=0)
+    rpt = meta["selection_report"]
+    assert any("audio_track_override" in o for o in rpt["overrides_active"]), rpt
+    assert rpt["selected_source"] == "ja_audio_asr_mt", rpt
+    statuses = {s["source"]: s["status"] for s in rpt["sources_evaluated"]}
+    assert statuses["embedded_en"] == "skipped", statuses
+    assert statuses["en_audio_asr"] == "skipped", statuses
+    assert statuses["embedded_jp_mt"] == "skipped", statuses
+    assert statuses["ja_audio_asr_mt"] == "selected", statuses
+    print("✓ audio_track_override correctly reflected in selection report")
+
+
+def test_selection_report_untagged_audio_fallback():
+    """When only an untagged audio stream is present, the report must record
+    the untagged_audio_asr_mt fallback with very_low confidence."""
+    from media_inspect import AudioStream
+    untagged_audio_stream = AudioStream(index=0, codec="aac", language=None)
+    media = MediaInfo(
+        path=Path("untagged.mkv"),
+        format_name="matroska",
+        duration=120.0,
+        audio_streams=[untagged_audio_stream],
+        subtitle_streams=[],
+    )
+    cfg = Config()
+    meta = orch.run_generate(media, cfg)
+    assert meta["strategy"] == "untagged_audio_asr_mt", meta
+    rpt = meta["selection_report"]
+    assert rpt["selected_source"] == "untagged_audio_asr_mt", rpt
+    assert rpt["confidence_tier"] == "very_low", rpt
+    assert rpt["review_recommended"] is True, rpt
+    untagged_entry = next(
+        (s for s in rpt["sources_evaluated"] if s["source"] == "untagged_audio_asr_mt"),
+        None,
+    )
+    assert untagged_entry is not None, "untagged_audio_asr_mt missing from sources_evaluated"
+    assert untagged_entry["status"] == "selected", untagged_entry
+    print("✓ untagged_audio_asr_mt fallback: very_low confidence, review recommended")
+
+
+def test_selection_report_probe_reroute_reflected():
+    """When a language probe reroutes EN-tagged audio to ja_audio_asr_mt, the report
+    must explain this in the rationale and show en_audio_asr as 'skipped'."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    DummyASR.probe_result = ("ja", 0.97)
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        DummyASR.probe_result = ("en", 0.95)
+    rpt = meta["selection_report"]
+    assert rpt["selected_source"] == "ja_audio_asr_mt", rpt
+    statuses = {s["source"]: s["status"] for s in rpt["sources_evaluated"]}
+    assert statuses["en_audio_asr"] == "skipped", statuses
+    assert statuses["ja_audio_asr_mt"] == "selected", statuses
+    # Rationale or the ja_audio entry's reason should mention the probe
+    ja_entry = next(s for s in rpt["sources_evaluated"] if s["source"] == "ja_audio_asr_mt")
+    assert "probe" in ja_entry["reason"].lower() or "probe" in rpt["rationale"].lower(), (
+        "language probe reroute not mentioned in selection report"
+    )
+    print("✓ Language probe reroute correctly described in selection report")
+
+
+def test_selection_report_rationale_is_nonempty_string():
+    """The 'rationale' field must always be a non-empty string."""
+    cfg = Config()
+    for media in [
+        _media(en_sub=True),
+        _media(en_audio=True, jp_audio=True),
+        _media(jp_sub=True),
+        _media(jp_audio=True),
+    ]:
+        meta = orch.run_generate(media, cfg)
+        rpt = meta["selection_report"]
+        assert isinstance(rpt["rationale"], str) and rpt["rationale"], (
+            f"Empty rationale for strategy {rpt['selected_source']}"
+        )
+    print("✓ Rationale is a non-empty string for all strategies")
 
 
 if __name__ == "__main__":
