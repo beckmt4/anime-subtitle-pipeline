@@ -288,10 +288,12 @@ def _build_selection_report(
 
         # --- en_audio_asr ---
         en_audio_detected = orig_en_audio_order is not None
+        # Compute probe_rerouted once — reused for both the en_audio and ja_audio entries.
+        probe_rerouted = probed_lang == "ja" and orig_ja_audio_order is None
         if not en_audio_detected:
             en_audio_status = "not_available"
             en_audio_reason = "No English audio stream detected in container"
-        elif probed_lang == "ja" and orig_ja_audio_order is None:
+        elif probe_rerouted:
             en_audio_status = "skipped"
             en_audio_reason = (
                 f"Language probe detected Japanese content in EN-tagged track "
@@ -349,7 +351,7 @@ def _build_selection_report(
         # --- ja_audio_asr_mt ---
         # The effective JA audio order may have been promoted from the
         # EN-tagged track if the language probe detected Japanese content.
-        if probed_lang == "ja" and orig_ja_audio_order is None:
+        if probe_rerouted:
             effective_ja_audio = orig_en_audio_order
             probe_rerouted = True
         else:

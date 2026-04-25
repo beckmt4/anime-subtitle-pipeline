@@ -580,7 +580,10 @@ def test_selection_report_skip_embedded_en_override():
     statuses = {s["source"]: s["status"] for s in rpt["sources_evaluated"]}
     assert statuses["embedded_en"] == "skipped", statuses
     # The stream reference should still be present since it was detected
-    en_entry = next(s for s in rpt["sources_evaluated"] if s["source"] == "embedded_en")
+    en_entry = next(
+        (s for s in rpt["sources_evaluated"] if s["source"] == "embedded_en"), None
+    )
+    assert en_entry is not None, "embedded_en entry missing from sources_evaluated"
     assert en_entry["detected"] is True, en_entry
     print("✓ skip_embedded_en override correctly reflected in selection report")
 
@@ -648,7 +651,10 @@ def test_selection_report_probe_reroute_reflected():
     assert statuses["en_audio_asr"] == "skipped", statuses
     assert statuses["ja_audio_asr_mt"] == "selected", statuses
     # Rationale or the ja_audio entry's reason should mention the probe
-    ja_entry = next(s for s in rpt["sources_evaluated"] if s["source"] == "ja_audio_asr_mt")
+    ja_entry = next(
+        (s for s in rpt["sources_evaluated"] if s["source"] == "ja_audio_asr_mt"), None
+    )
+    assert ja_entry is not None, "ja_audio_asr_mt entry missing from sources_evaluated"
     assert "probe" in ja_entry["reason"].lower() or "probe" in rpt["rationale"].lower(), (
         "language probe reroute not mentioned in selection report"
     )
