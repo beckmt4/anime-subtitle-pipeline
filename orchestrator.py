@@ -51,6 +51,21 @@ logger = logging.getLogger(__name__)
 _PROBE_DURATION_SEC = 30       # seconds of audio to sample
 _PROBE_JA_THRESHOLD = 0.85    # minimum Whisper confidence to reroute
 
+# Confidence tiers describe how much processing uncertainty the selected path
+# introduces.  Higher-tier sources require less lossy transformation and are
+# expected to be more accurate out of the box.
+_STRATEGY_CONFIDENCE_TIER: Dict[str, str] = {
+    "embedded_en": "high",
+    "en_audio_asr": "medium",
+    "embedded_jp_mt": "low",
+    "ja_audio_asr_mt": "low",
+    "untagged_audio_asr_mt": "very_low",
+}
+
+# Strategies that involve machine translation or an untagged fallback should
+# be flagged for human review because accuracy cannot be guaranteed.
+_REVIEW_RECOMMENDED_STRATEGIES = {"embedded_jp_mt", "ja_audio_asr_mt", "untagged_audio_asr_mt"}
+
 
 # ISO-639-1 → common ISO-639-2 / localized variants that should all be treated
 # as the same language for source-selection purposes. Keep this map small; it
@@ -178,6 +193,280 @@ def _compare_candidates(raw: SubtitleCandidate, polished: SubtitleCandidate) -> 
     }
 
 
+def _build_selection_report(
+    strategy: str,
+    orig_en_sub_idx: int | None,
+    orig_ja_sub_idx: int | None,
+    orig_en_audio_order: int | None,
+    orig_ja_audio_order: int | None,
+    prefer_subtitles: bool,
+    prefer_audio_language: str,
+    skip_embedded_en: bool,
+    audio_track_override: int | None,
+    probed_lang: str | None,
+) -> Dict[str, Any]:
+    """Build a structured explanation of why *strategy* was selected.
+
+    Returns a dict with:
+      - selected_source: chosen strategy name
+      - confidence_tier: "high" | "medium" | "low" | "very_low"
+      - rationale: human-readable explanation of the winning choice
+      - sources_evaluated: ordered list of all candidate sources, each with
+        their detection status, stream reference, and reason for selection or
+        rejection.  Possible status values: "selected", "skipped",
+        "not_available".
+      - overrides_active: list of override flag names that affected the
+        decision (e.g. ["skip_embedded_en", "audio_track_override=2"])
+      - review_recommended: True when the strategy involves a lossy processing
+        step (MT / untagged-audio fallback) and human review is advisable
+      - review_reason: human-readable justification (None when not recommended)
+    """
+    overrides_active = []
+    sources_evaluated = []
+
+    if audio_track_override is not None:
+        overrides_active.append(f"audio_track_override={audio_track_override}")
+        for src in ("embedded_en", "en_audio_asr", "embedded_jp_mt"):
+            sources_evaluated.append({
+                "source": src,
+                "stream": None,
+                "detected": False,
+                "status": "skipped",
+                "reason": (
+                    f"CLI --audio-track {audio_track_override} override active; "
+                    "all other sources bypassed"
+                ),
+            })
+        sources_evaluated.append({
+            "source": "ja_audio_asr_mt",
+            "stream": f"audio:{audio_track_override}",
+            "detected": True,
+            "status": "selected",
+            "reason": (
+                f"Forced via --audio-track {audio_track_override}; "
+                "specified track treated as Japanese and routed through ASR → MT"
+            ),
+        })
+        rationale = (
+            f"CLI --audio-track {audio_track_override} override active. "
+            "Specified track forced through Japanese ASR → MT pipeline."
+        )
+    else:
+        if skip_embedded_en:
+            overrides_active.append("skip_embedded_en")
+
+        # --- embedded_en ---
+        en_sub_detected = orig_en_sub_idx is not None
+        if not en_sub_detected:
+            en_sub_status = "not_available"
+            en_sub_reason = "No English text subtitle stream detected in container"
+        elif skip_embedded_en:
+            en_sub_status = "skipped"
+            en_sub_reason = (
+                "skip_embedded_en override active (--extract-en-subs); "
+                "bypassed so generation pipeline produces an independent SRT"
+            )
+        elif not prefer_subtitles:
+            en_sub_status = "skipped"
+            en_sub_reason = "prefer_subtitles=False in config"
+        elif strategy == "embedded_en":
+            en_sub_status = "selected"
+            en_sub_reason = (
+                f"Highest-priority source (stream sub:{orig_en_sub_idx}); "
+                "direct English subtitles require no processing"
+            )
+        else:
+            en_sub_status = "skipped"
+            en_sub_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "embedded_en",
+            "stream": f"sub:{orig_en_sub_idx}" if en_sub_detected else None,
+            "detected": en_sub_detected,
+            "status": en_sub_status,
+            "reason": en_sub_reason,
+        })
+
+        # --- en_audio_asr ---
+        en_audio_detected = orig_en_audio_order is not None
+        if not en_audio_detected:
+            en_audio_status = "not_available"
+            en_audio_reason = "No English audio stream detected in container"
+        elif probed_lang == "ja" and orig_ja_audio_order is None:
+            en_audio_status = "skipped"
+            en_audio_reason = (
+                f"Language probe detected Japanese content in EN-tagged track "
+                f"{orig_en_audio_order} (confidence ≥ {_PROBE_JA_THRESHOLD:.0%}); "
+                "rerouted to ja_audio_asr_mt path"
+            )
+        elif strategy == "en_audio_asr" and prefer_audio_language == "en":
+            en_audio_status = "selected"
+            en_audio_reason = (
+                f"English audio track {orig_en_audio_order} selected; "
+                "prefer_audio_language=en in config"
+            )
+        elif strategy == "en_audio_asr":
+            en_audio_status = "selected"
+            en_audio_reason = (
+                f"Fallback: English audio track {orig_en_audio_order} selected "
+                "(no Japanese sources available)"
+            )
+        elif prefer_audio_language == "en":
+            en_audio_status = "skipped"
+            en_audio_reason = f"Lower priority than selected source ({strategy})"
+        else:
+            en_audio_status = "skipped"
+            en_audio_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "en_audio_asr",
+            "stream": f"audio:{orig_en_audio_order}" if en_audio_detected else None,
+            "detected": en_audio_detected,
+            "status": en_audio_status,
+            "reason": en_audio_reason,
+        })
+
+        # --- embedded_jp_mt ---
+        ja_sub_detected = orig_ja_sub_idx is not None
+        if not ja_sub_detected:
+            ja_sub_status = "not_available"
+            ja_sub_reason = "No Japanese text subtitle stream detected in container"
+        elif strategy == "embedded_jp_mt":
+            ja_sub_status = "selected"
+            ja_sub_reason = (
+                f"Japanese subtitle stream (sub:{orig_ja_sub_idx}) selected; "
+                "fed through MT pipeline → English"
+            )
+        else:
+            ja_sub_status = "skipped"
+            ja_sub_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "embedded_jp_mt",
+            "stream": f"sub:{orig_ja_sub_idx}" if ja_sub_detected else None,
+            "detected": ja_sub_detected,
+            "status": ja_sub_status,
+            "reason": ja_sub_reason,
+        })
+
+        # --- ja_audio_asr_mt ---
+        # The effective JA audio order may have been promoted from the
+        # EN-tagged track if the language probe detected Japanese content.
+        if probed_lang == "ja" and orig_ja_audio_order is None:
+            effective_ja_audio = orig_en_audio_order
+            probe_rerouted = True
+        else:
+            effective_ja_audio = orig_ja_audio_order
+            probe_rerouted = False
+        ja_audio_detected = effective_ja_audio is not None
+        if not ja_audio_detected:
+            ja_audio_status = "not_available"
+            ja_audio_reason = "No Japanese audio stream detected in container"
+        elif strategy == "ja_audio_asr_mt":
+            ja_audio_status = "selected"
+            if probe_rerouted:
+                ja_audio_reason = (
+                    f"EN-tagged audio track {effective_ja_audio} rerouted by "
+                    f"language probe (detected Japanese, confidence ≥ "
+                    f"{_PROBE_JA_THRESHOLD:.0%}); processed via ASR → MT → English"
+                )
+            else:
+                ja_audio_reason = (
+                    f"Japanese audio track {effective_ja_audio} selected; "
+                    "fed through ASR → MT pipeline → English"
+                )
+        elif prefer_audio_language == "en":
+            ja_audio_status = "skipped"
+            ja_audio_reason = (
+                "prefer_audio_language='en' in config; "
+                "Japanese audio path not preferred"
+            )
+        else:
+            ja_audio_status = "skipped"
+            ja_audio_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "ja_audio_asr_mt",
+            "stream": f"audio:{effective_ja_audio}" if ja_audio_detected else None,
+            "detected": ja_audio_detected,
+            "status": ja_audio_status,
+            "reason": ja_audio_reason,
+        })
+
+        # --- untagged_audio_asr_mt (only shown when it was selected) ---
+        if strategy == "untagged_audio_asr_mt":
+            sources_evaluated.append({
+                "source": "untagged_audio_asr_mt",
+                "stream": "audio:0",
+                "detected": True,
+                "status": "selected",
+                "reason": (
+                    "Last-resort fallback: no language-tagged streams found; "
+                    "first audio track treated as Japanese and routed via ASR → MT"
+                ),
+            })
+
+        # Derive rationale from the winning entry
+        selected_entry = next(
+            (s for s in sources_evaluated if s["status"] == "selected"), None
+        )
+        rationale = selected_entry["reason"] if selected_entry else f"Strategy {strategy} selected"
+
+        # Prepend a probe context note when the probe drove the decision
+        if probe_rerouted:
+            rationale = (
+                f"Language probe overrode container tag on audio:{orig_en_audio_order}: "
+                + rationale
+            )
+
+    confidence_tier = _STRATEGY_CONFIDENCE_TIER.get(strategy, "unknown")
+    review_recommended = strategy in _REVIEW_RECOMMENDED_STRATEGIES
+    review_reason = (
+        "MT pipeline output (machine translation); manual review recommended for accuracy"
+        if review_recommended
+        else None
+    )
+
+    return {
+        "selected_source": strategy,
+        "confidence_tier": confidence_tier,
+        "rationale": rationale,
+        "sources_evaluated": sources_evaluated,
+        "overrides_active": overrides_active,
+        "review_recommended": review_recommended,
+        "review_reason": review_reason,
+    }
+
+
+def _log_selection_report(report: Dict[str, Any]) -> None:
+    """Emit a human-readable source-selection report to the logger."""
+    logger.info("-" * 50)
+    logger.info("SOURCE SELECTION REPORT")
+    logger.info(
+        "  Selected : %s  (confidence: %s)",
+        report["selected_source"],
+        report["confidence_tier"],
+    )
+    logger.info("  Rationale: %s", report["rationale"])
+    if report["overrides_active"]:
+        logger.info("  Overrides: %s", ", ".join(report["overrides_active"]))
+    logger.info("  Candidates evaluated:")
+    for src in report["sources_evaluated"]:
+        if src["status"] == "selected":
+            marker = "✓"
+        elif src["status"] == "not_available":
+            marker = "✗"
+        else:
+            marker = "⊘"
+        stream_info = f" [{src['stream']}]" if src.get("stream") else ""
+        logger.info(
+            "    %s %-25s%s — %s",
+            marker,
+            src["source"],
+            stream_info,
+            src["reason"],
+        )
+    if report["review_recommended"]:
+        logger.warning("  ⚠ Review recommended: %s", report["review_reason"])
+    logger.info("-" * 50)
+
+
 def _probe_audio_language(
     video_path: Path,
     audio_order: int,
@@ -263,6 +552,14 @@ def run_generate(
     ja_sub_idx = _first_text_sub(media, "ja")
     en_audio_order = _first_audio_order(media, "en")
     ja_audio_order = _first_audio_order(media, "ja")
+
+    # Capture original detection results before any overrides or probe mutations
+    # so the selection report can explain what was originally seen in the container.
+    orig_en_sub_idx = en_sub_idx
+    orig_ja_sub_idx = ja_sub_idx
+    orig_en_audio_order = en_audio_order
+    orig_ja_audio_order = ja_audio_order
+    probed_lang: str | None = None
 
     logger.info(
         f"Sources detected: en_sub={en_sub_idx} ja_sub={ja_sub_idx} en_audio={en_audio_order} ja_audio={ja_audio_order}"
@@ -469,6 +766,21 @@ def run_generate(
 
     assert candidate is not None, "Generation strategy produced no candidate"
 
+    # Build and log the explainable source-selection report
+    selection_report = _build_selection_report(
+        strategy=strategy,
+        orig_en_sub_idx=orig_en_sub_idx,
+        orig_ja_sub_idx=orig_ja_sub_idx,
+        orig_en_audio_order=orig_en_audio_order,
+        orig_ja_audio_order=orig_ja_audio_order,
+        prefer_subtitles=prefer_subtitles,
+        prefer_audio_language=prefer_audio_language,
+        skip_embedded_en=skip_embedded_en,
+        audio_track_override=audio_track_override,
+        probed_lang=probed_lang,
+    )
+    _log_selection_report(selection_report)
+
     # Write SRT
     out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
     with start_span("write_final_srt"):
@@ -499,6 +811,7 @@ def run_generate(
         "output_srt": str(out_srt),
         "qc": qc_summary,
         "qc_json": str(qc_path),
+        "selection_report": selection_report,
     }
     if polish_stats is not None:
         metadata.update(polish_stats)

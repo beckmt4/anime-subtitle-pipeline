@@ -578,6 +578,11 @@ Examples:
             logger.info(f"  Candidate: {meta['candidate_id']}")
             logger.info(f"  Segments: {meta['segment_count']}")
             logger.info(f"  Output SRT: {meta['output_srt']}")
+            if "selection_report" in meta:
+                rpt = meta["selection_report"]
+                logger.info(f"  Confidence tier: {rpt['confidence_tier']}")
+                if rpt.get("review_recommended"):
+                    logger.warning(f"  ⚠ Review recommended: {rpt.get('review_reason', '')}")
             sys.exit(0)
         else:  # legacy subtitle mode
             logger.info("Running in legacy SUBTITLE mode (JP audio → ASR → MT → LLM)")
