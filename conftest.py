@@ -44,5 +44,9 @@ _HEAVY_STUBS = [
 
 for _mod in _HEAVY_STUBS:
     base_mod = _mod.split(".")[0]
-    if importlib.util.find_spec(base_mod) is None:
+    try:
+        found = importlib.util.find_spec(base_mod)
+    except ValueError:
+        found = None
+    if found is None:
         sys.modules.setdefault(_mod, MagicMock())
