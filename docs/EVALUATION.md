@@ -79,10 +79,38 @@ In absence of embedded EN subtitles, compare EN audio ASR vs JP→EN paths:
 - Prefer lower WER if style differences acceptable.
 - If LLM-polished MT significantly improves chrF/BLEU with acceptable WER, choose MT path.
 
-## Reporting Enhancements (Planned)
-- HTML report with diff highlighting and per-segment metrics.
-- Aggregated statistics across multiple episodes.
-- Confidence scoring using ASR probabilities.
+## Reporting Enhancements
+- HTML report rendered automatically alongside `benchmark_results.json` as `benchmark_report.html`.
+- Self-contained single-file output (no external CSS/JS dependencies).
+- Per-candidate scorecard table ranked by composite quality score.
+- Diff viewer with per-segment reference vs. candidate highlighting.
+
+## Candidate Scorecards
+
+Each benchmark run produces a `scorecards` list in the output JSON.  One
+scorecard is emitted per candidate and contains:
+
+| Field | Description |
+|---|---|
+| `rank` | `"REF"` for the reference candidate; 1-based integer for others (1 = best) |
+| `wer` / `bleu` / `chrf` | Metrics from the reference-vs-candidate comparison |
+| `composite_score` | `0.5*(1-WER) + 0.25*(BLEU/100) + 0.25*(chrF/100)` |
+| `is_reference` | Boolean |
+
+## Result Persistence
+
+When a registry is available (`artifacts.db_path` in config), every pairwise
+comparison is stored as a `BenchmarkRunRecord` in the SQLite database.  Each
+record carries the WER/BLEU/chrF snapshot plus the full metrics JSON blob.
+The `run_id` field links all comparisons from the same session.
+
+Query stored runs:
+
+```python
+from core.artifacts import ArtifactRegistry
+reg = ArtifactRegistry("pipeline.db")
+runs = reg.list_benchmark_runs(media_hash)
+```
 
 ## Limitations
 - Metrics not filtered for very short segments (BLEU may be 0).

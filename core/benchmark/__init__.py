@@ -7,6 +7,7 @@ The root-level ``compare_core.py`` is a re-export shim pointing here.
 
 Public API
 ----------
+BenchmarkConfig                        typed config snapshot from Config
 compute_metrics(ref_texts, cand_texts) → dict   WER / BLEU / chrF
 align_segments(ref, cand)              → list   temporally aligned pairs
 compare_candidates(ref, cand)          → dict   full comparison report
@@ -21,12 +22,14 @@ from core.benchmark.compare_core import (  # noqa: F401
     compute_metrics,
     compare_candidates,
 )
+from core.benchmark.config import BenchmarkConfig  # noqa: F401
 from core.benchmark.html_report import (  # noqa: F401
     build_scorecards,
     render_html_report,
 )
 
 __all__ = [
+    "BenchmarkConfig",
     "align_segments",
     "compute_metrics",
     "compare_candidates",
