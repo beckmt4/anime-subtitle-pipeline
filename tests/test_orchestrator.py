@@ -881,6 +881,19 @@ def test_selection_report_rationale_is_nonempty_string():
     print("✓ Rationale is a non-empty string for all strategies")
 
 
+def test_generate_no_usable_source_error_case():
+    """No subtitles or audio sources should fail clearly."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=False, jp_audio=False)
+
+    try:
+        orch.run_generate(media, cfg)
+    except RuntimeError as exc:
+        assert "No usable source found" in str(exc)
+    else:
+        raise AssertionError("Expected run_generate to reject media with no usable sources")
+
+
 # ---------------------------------------------------------------------------
 # PolicyEngine unit tests (core.policy)
 # ---------------------------------------------------------------------------
