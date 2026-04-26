@@ -51,22 +51,31 @@ class Config:
         # Create directories if they don't exist
         self._ensure_directories()
     
+    # Known profile sub-dict keys that are removed after merging.
+    _PROFILE_KEYS = ("dev", "prod")
+
     def _apply_profile(self) -> None:
         """
         Apply profile-specific settings to the active configuration.
         
         Merges profile-specific settings (dev/prod) into the main configuration
         dictionary, overwriting base settings with profile-specific values.
+        Profile sub-dicts are removed after merging so that subsequent calls to
+        ``get()`` never accidentally return a nested dict.
         """
         # ASR profile settings
         if "asr" in self._config:
             asr_profile = self._config["asr"].get(self.profile, {})
             self._config["asr"].update(asr_profile)
+            for key in self._PROFILE_KEYS:
+                self._config["asr"].pop(key, None)
         
         # LLM profile settings
         if "llm" in self._config:
             llm_profile = self._config["llm"].get(self.profile, {})
             self._config["llm"].update(llm_profile)
+            for key in self._PROFILE_KEYS:
+                self._config["llm"].pop(key, None)
     
     def _ensure_directories(self) -> None:
         """

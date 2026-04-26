@@ -137,6 +137,26 @@ class TestProfileOverride:
         cfg = Config(str(p), profile_override="prod")
         assert cfg.profile == "prod"
 
+    def test_dev_sub_dict_removed_from_asr_after_apply(self, tmp_path):
+        p = write_config(tmp_path)
+        cfg = Config(str(p), profile_override="dev")
+        assert cfg.get("asr", "dev") is None
+
+    def test_prod_sub_dict_removed_from_asr_after_apply(self, tmp_path):
+        p = write_config(tmp_path)
+        cfg = Config(str(p), profile_override="prod")
+        assert cfg.get("asr", "prod") is None
+
+    def test_dev_sub_dict_removed_from_llm_after_apply(self, tmp_path):
+        p = write_config(tmp_path)
+        cfg = Config(str(p), profile_override="dev")
+        assert cfg.get("llm", "dev") is None
+
+    def test_prod_sub_dict_removed_from_llm_after_apply(self, tmp_path):
+        p = write_config(tmp_path)
+        cfg = Config(str(p), profile_override="prod")
+        assert cfg.get("llm", "prod") is None
+
 
 # ---------------------------------------------------------------------------
 # Property accessors
