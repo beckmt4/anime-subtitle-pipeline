@@ -798,8 +798,9 @@ def test_selection_report_audio_track_override():
 
 
 def test_selection_report_untagged_audio_fallback():
-    """When only an untagged audio stream is present, the report must record
-    the untagged_audio_asr_mt fallback with very_low confidence."""
+    """When only an untagged audio stream is present and the language probe is
+    inconclusive, the report must record the untagged_audio_asr_mt fallback with
+    very_low confidence."""
     from media_inspect import AudioStream
     untagged_audio_stream = AudioStream(index=0, codec="aac", language=None)
     media = MediaInfo(
@@ -810,7 +811,13 @@ def test_selection_report_untagged_audio_fallback():
         subtitle_streams=[],
     )
     cfg = Config()
-    meta = orch.run_generate(media, cfg)
+    # Simulate an inconclusive language probe (confidence below threshold)
+    # so the pipeline falls through to the untagged_audio_asr_mt path.
+    DummyASR.probe_result = ("und", 0.3)
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        DummyASR.probe_result = ("en", 0.95)
     assert meta["strategy"] == "untagged_audio_asr_mt", meta
     rpt = meta["selection_report"]
     assert rpt["selected_source"] == "untagged_audio_asr_mt", rpt
@@ -1012,7 +1019,12 @@ def test_routing_decision_review_for_untagged_audio_fallback():
         subtitle_streams=[],
     )
     cfg = Config()
-    meta = orch.run_generate(media, cfg)
+    # Simulate an inconclusive language probe so the untagged_audio_asr_mt path is taken.
+    DummyASR.probe_result = ("und", 0.3)
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        DummyASR.probe_result = ("en", 0.95)
     assert meta["strategy"] == "untagged_audio_asr_mt", meta["strategy"]
     rd = meta["routing_decision"]
     assert rd["decision"] in ("review", "reject"), (
@@ -1023,6 +1035,7 @@ def test_routing_decision_review_for_untagged_audio_fallback():
         "untagged_audio_asr_mt: triggered_by must be non-empty"
     )
     print(f"✓ untagged_audio_asr_mt fallback → routing decision {rd['decision'].upper()} (not PASS)")
+
 
 
 def test_routing_decision_structure_complete():

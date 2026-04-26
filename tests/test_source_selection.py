@@ -1,7 +1,8 @@
 """Unit tests for orchestrator source-selection helpers.
 
-Tests _lang_matches, _first_text_sub, and _first_audio_order — the pure
-decision logic that drives run_generate — without calling any live services.
+Tests _lang_matches, _first_text_sub, _first_audio_order, and
+_select_untagged_audio_fallback — the pure decision logic that drives
+run_generate — without calling any live services.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import _lang_matches, _first_text_sub, _first_audio_order
+from orchestrator import _lang_matches, _first_text_sub, _first_audio_order, _select_untagged_audio_fallback
 from media_inspect import MediaInfo, AudioStream, SubtitleStream
 
 
@@ -210,3 +211,137 @@ class TestFirstAudioOrder:
     def test_eng_tag_matches_en_target(self):
         media = make_media(audio_langs=["eng"])
         assert _first_audio_order(media, "en") == 0
+
+
+# ---------------------------------------------------------------------------
+# _select_untagged_audio_fallback
+# ---------------------------------------------------------------------------
+
+def _make_audio_stream(
+    index: int,
+    channels: int = 2,
+    language: str | None = None,
+    raw_language: str | None = None,
+    title: str | None = None,
+) -> AudioStream:
+    """Build an AudioStream with optional title tag for heuristic tests."""
+    tags: dict[str, str] = {}
+    if title is not None:
+        tags["title"] = title
+    return AudioStream(
+        index=index,
+        codec="aac",
+        channels=channels,
+        sample_rate=48000,
+        language=language,
+        raw_language=raw_language,
+        tags=tags,
+    )
+
+
+def _make_untagged_media(*streams: AudioStream) -> MediaInfo:
+    m = MediaInfo(path=Path("dummy.mkv"), format_name="matroska", duration=None)
+    m.audio_streams.extend(streams)
+    return m
+
+
+class TestSelectUntaggedAudioFallback:
+    def test_single_stereo_track_returns_order_0(self):
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=2),
+        )
+        order, reason = _select_untagged_audio_fallback(media)
+        assert order == 0
+        assert "stereo" in reason.lower() or "2-channel" in reason.lower()
+
+    def test_japanese_title_keyword_wins_over_stereo(self):
+        """A track with a Japanese title tag should be preferred over plain stereo."""
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=2),           # stereo, no title
+            _make_audio_stream(index=1, channels=2, title="Japanese Audio"),
+        )
+        order, reason = _select_untagged_audio_fallback(media)
+        assert order == 1
+        assert "japanese" in reason.lower() or "title" in reason.lower()
+
+    def test_jpn_title_keyword_detected(self):
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=2),
+            _make_audio_stream(index=1, channels=2, title="JPN"),
+        )
+        order, _ = _select_untagged_audio_fallback(media)
+        assert order == 1
+
+    def test_nihongo_title_keyword_detected(self):
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=2),
+            _make_audio_stream(index=1, channels=2, title="日本語"),
+        )
+        order, _ = _select_untagged_audio_fallback(media)
+        assert order == 1
+
+    def test_title_keyword_match_is_case_insensitive(self):
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=2, title="JAPANESE AUDIO"),
+        )
+        order, _ = _select_untagged_audio_fallback(media)
+        assert order == 0
+
+    def test_first_stereo_when_no_japanese_title(self):
+        """Without a Japanese title keyword, first stereo track wins."""
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=1),   # mono
+            _make_audio_stream(index=1, channels=2),   # stereo → should win
+            _make_audio_stream(index=2, channels=6),   # 5.1 surround
+        )
+        order, reason = _select_untagged_audio_fallback(media)
+        assert order == 1
+        assert "stereo" in reason.lower() or "2-channel" in reason.lower()
+
+    def test_track_0_fallback_when_all_mono(self):
+        """No stereo, no title → default to track 0."""
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=1),
+            _make_audio_stream(index=1, channels=1),
+        )
+        order, reason = _select_untagged_audio_fallback(media)
+        assert order == 0
+        assert "default" in reason.lower() or "first" in reason.lower()
+
+    def test_und_tagged_track_still_selectable(self):
+        """Tracks tagged 'und' (undefined) are still valid fallback candidates."""
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=2, language="und", raw_language="und"),
+        )
+        order, _ = _select_untagged_audio_fallback(media)
+        assert order == 0
+
+    def test_multiple_stereo_returns_first(self):
+        """When multiple stereo tracks exist and no title matches, return the first."""
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=2),
+            _make_audio_stream(index=1, channels=2),
+        )
+        order, _ = _select_untagged_audio_fallback(media)
+        assert order == 0
+
+    def test_stereo_before_title_match_when_at_lower_index(self):
+        """Title keyword at a HIGHER index still wins over a plain stereo track."""
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=2),           # stereo, no title
+            _make_audio_stream(index=1, channels=1, title="Japanese"),  # mono with title
+        )
+        order, _ = _select_untagged_audio_fallback(media)
+        # Title heuristic has higher priority than stereo channel heuristic
+        assert order == 1
+
+    def test_mixed_language_mul_tag_treated_as_fallback(self):
+        """A track tagged 'mul' (multiple languages) is treated like untagged."""
+        media = _make_untagged_media(
+            _make_audio_stream(index=0, channels=1, language="mul", raw_language="mul"),
+            _make_audio_stream(index=1, channels=2, title="Japanese"),
+        )
+        order, _ = _select_untagged_audio_fallback(media)
+        # Title wins regardless of the 'mul' tag on track 0
+        assert order == 1
+
