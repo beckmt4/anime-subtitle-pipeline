@@ -1,4 +1,4 @@
-"""core.artifacts.models -- plain-data record classes for the artifact registry.
+"""core.artifacts.models — plain-data record classes for the artifact registry.
 
 Each class mirrors a database table row and is intentionally lightweight
 (stdlib-only dataclasses with no ORM magic).
@@ -12,14 +12,14 @@ from typing import Any, Dict, List, Optional
 
 @dataclass
 class MediaAssetRecord:
-    """One row of the media_assets table.
+    """One row of the ``media_assets`` table.
 
     Attributes:
         media_hash:    SHA-256 hex digest of the file content (natural key).
         file_path:     Absolute or relative path as stored.
         file_name:     Basename of the file.
-        duration_sec:  Duration in seconds if known, else None.
-        id:            Auto-assigned surrogate key (None before INSERT).
+        duration_sec:  Duration in seconds if known, else ``None``.
+        id:            Auto-assigned surrogate key (``None`` before INSERT).
         created_at:    ISO-8601 timestamp string (set by the database).
         updated_at:    ISO-8601 timestamp string (set by the database).
     """
@@ -34,16 +34,16 @@ class MediaAssetRecord:
 
 @dataclass
 class StreamAssetRecord:
-    """One row of the stream_assets table.
+    """One row of the ``stream_assets`` table.
 
     Attributes:
-        media_asset_id: FK to MediaAssetRecord.id.
+        media_asset_id: FK to :class:`MediaAssetRecord.id`.
         stream_index:   Zero-based stream index within the container.
-        stream_type:    'audio', 'subtitle', or 'video'.
+        stream_type:    ``'audio'``, ``'subtitle'``, or ``'video'``.
         language:       ISO 639-1/BCP-47 language code, if known.
-        codec:          Codec name (e.g. 'aac', 'ass').
+        codec:          Codec name (e.g. ``'aac'``, ``'ass'``).
         title:          Stream title metadata if present.
-        id:             Auto-assigned surrogate key (None before INSERT).
+        id:             Auto-assigned surrogate key (``None`` before INSERT).
         created_at:     ISO-8601 timestamp string (set by the database).
     """
     media_asset_id: int
@@ -71,25 +71,21 @@ CANDIDATE_STATUSES = frozenset({
 
 @dataclass
 class SubtitleCandidateRecord:
-    """One row of the subtitle_candidates table.
+    """One row of the ``subtitle_candidates`` table.
 
     Attributes:
-        media_hash:           SHA-256 hex digest of the source media file.
-        source_id:            SubtitleCandidate.id (e.g. 'asr_ja').
-        model_version:        String identifying the model/version used.
-        language:             ISO 639-1 language code.
-        source:               Origin type: 'asr', 'embedded', 'mt', 'mt_llm'.
-        origin_stream:        Stream identifier ('audio:1', 'sub:0', filename).
-        segments:             List of segment dicts (serialised to JSON in the DB).
-        meta:                 Additional metadata dict.
-        status:               One of CANDIDATE_STATUSES.
-        parent_candidate_id:  FK to the candidate this was derived from (e.g. the
-                              ASR candidate that was MT-translated, or the MT
-                              candidate that was LLM-polished). None for source
-                              candidates.
-        id:                   Auto-assigned surrogate key (None before INSERT).
-        created_at:           ISO-8601 timestamp string (set by the database).
-        updated_at:           ISO-8601 timestamp string (set by the database).
+        media_hash:     SHA-256 hex digest of the source media file.
+        source_id:      ``SubtitleCandidate.id`` (e.g. ``'asr_ja'``).
+        model_version:  String identifying the model/version used.
+        language:       ISO 639-1 language code.
+        source:         Origin type: ``'asr'``, ``'embedded'``, ``'mt'``, ``'mt_llm'``.
+        origin_stream:  Stream identifier (``'audio:1'``, ``'sub:0'``, filename).
+        segments:       List of segment dicts (serialised to JSON in the DB).
+        meta:           Additional metadata dict.
+        status:         One of :data:`CANDIDATE_STATUSES`.
+        id:             Auto-assigned surrogate key (``None`` before INSERT).
+        created_at:     ISO-8601 timestamp string (set by the database).
+        updated_at:     ISO-8601 timestamp string (set by the database).
     """
     media_hash: str
     source_id: str
@@ -100,7 +96,6 @@ class SubtitleCandidateRecord:
     segments: List[Dict[str, Any]] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=dict)
     status: str = CANDIDATE_STATUS_PENDING
-    parent_candidate_id: Optional[int] = None
     id: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -121,18 +116,18 @@ REVIEW_STATUSES = frozenset({
 
 @dataclass
 class BenchmarkRunRecord:
-    """One row of the benchmark_runs table.
+    """One row of the ``benchmark_runs`` table.
 
     Attributes:
         media_hash:              SHA-256 hex digest of the source media file.
         run_id:                  Unique identifier for this benchmark run.
-        metrics:                 Full metrics dict (WER, BLEU, chrF, ...).
-        reference_candidate_id:  FK to SubtitleCandidateRecord.id, or None.
-        hypothesis_candidate_id: FK to SubtitleCandidateRecord.id, or None.
+        metrics:                 Full metrics dict (WER, BLEU, chrF, …).
+        reference_candidate_id:  FK to :class:`SubtitleCandidateRecord.id`, or ``None``.
+        hypothesis_candidate_id: FK to :class:`SubtitleCandidateRecord.id`, or ``None``.
         wer:                     Word Error Rate snapshot (convenience column).
         bleu:                    BLEU score snapshot (convenience column).
         chrf:                    chrF score snapshot (convenience column).
-        id:                      Auto-assigned surrogate key (None before INSERT).
+        id:                      Auto-assigned surrogate key (``None`` before INSERT).
         created_at:              ISO-8601 timestamp string (set by the database).
     """
     media_hash: str
@@ -149,15 +144,15 @@ class BenchmarkRunRecord:
 
 @dataclass
 class ReviewTaskRecord:
-    """One row of the review_tasks table.
+    """One row of the ``review_tasks`` table.
 
     Attributes:
         media_hash:       SHA-256 hex digest of the source media file.
-        candidate_id:     FK to SubtitleCandidateRecord.id.
-        status:           One of REVIEW_STATUSES.
-        reprocess_reason: Free-text reason if status is 'reprocess'.
+        candidate_id:     FK to :class:`SubtitleCandidateRecord.id`.
+        status:           One of :data:`REVIEW_STATUSES`.
+        reprocess_reason: Free-text reason if status is ``'reprocess'``.
         reviewer_notes:   Free-text notes from the reviewer.
-        id:               Auto-assigned surrogate key (None before INSERT).
+        id:               Auto-assigned surrogate key (``None`` before INSERT).
         created_at:       ISO-8601 timestamp string (set by the database).
         updated_at:       ISO-8601 timestamp string (set by the database).
     """
@@ -171,99 +166,12 @@ class ReviewTaskRecord:
     updated_at: Optional[str] = None
 
 
-# Allowed status values for pipeline runs
-PIPELINE_STATUS_RUNNING = "running"
-PIPELINE_STATUS_COMPLETED = "completed"
-PIPELINE_STATUS_FAILED = "failed"
-PIPELINE_STATUS_CANCELLED = "cancelled"
-PIPELINE_STATUSES = frozenset({
-    PIPELINE_STATUS_RUNNING,
-    PIPELINE_STATUS_COMPLETED,
-    PIPELINE_STATUS_FAILED,
-    PIPELINE_STATUS_CANCELLED,
-})
-
-
-@dataclass
-class PipelineRunRecord:
-    """One row of the pipeline_runs table.
-
-    Tracks a single end-to-end pipeline invocation (one main.py call or
-    one n8n workflow trigger).
-
-    Attributes:
-        run_id:        Unique identifier for this invocation (caller-assigned).
-        media_hash:    SHA-256 hex digest of the input media file.
-        status:        One of PIPELINE_STATUSES.
-        config:        Snapshot of the effective config at run time.
-        started_at:    ISO-8601 timestamp -- set by the database on INSERT.
-        finished_at:   ISO-8601 timestamp when the run ended, or None.
-        error_message: Error description if status == 'failed', else None.
-        id:            Auto-assigned surrogate key (None before INSERT).
-    """
-    run_id: str
-    media_hash: str
-    status: str = PIPELINE_STATUS_RUNNING
-    config: Dict[str, Any] = field(default_factory=dict)
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
-    error_message: Optional[str] = None
-    id: Optional[int] = None
-
-
-# Allowed artifact types
-ARTIFACT_TYPE_SRT = "srt"
-ARTIFACT_TYPE_MKV_BURNED = "mkv_burned"
-ARTIFACT_TYPE_QC_JSON = "qc_json"
-ARTIFACT_TYPE_BENCHMARK_JSON = "benchmark_json"
-ARTIFACT_TYPES = frozenset({
-    ARTIFACT_TYPE_SRT,
-    ARTIFACT_TYPE_MKV_BURNED,
-    ARTIFACT_TYPE_QC_JSON,
-    ARTIFACT_TYPE_BENCHMARK_JSON,
-})
-
-
-@dataclass
-class ArtifactRecord:
-    """One row of the artifacts table.
-
-    Tracks every output file produced by the pipeline -- SRT subtitles,
-    burned-in MKV, QC JSON reports, and benchmark JSON snapshots.
-
-    Attributes:
-        media_hash:      SHA-256 hex digest of the source media file.
-        artifact_type:   One of ARTIFACT_TYPES.
-        file_path:       Absolute or relative path to the output file.
-        candidate_id:    FK to the candidate this artifact was produced from,
-                         or None for pipeline-level artifacts.
-        pipeline_run_id: FK to the pipeline run that produced this artifact,
-                         or None if not tracked.
-        file_hash:       SHA-256 hex digest of the artifact file, or None.
-        version:         Monotonically increasing version number within the
-                         same (media_hash, artifact_type) pair. Starts at 1.
-        id:              Auto-assigned surrogate key (None before INSERT).
-        created_at:      ISO-8601 timestamp string (set by the database).
-    """
-    media_hash: str
-    artifact_type: str
-    file_path: str
-    candidate_id: Optional[int] = None
-    pipeline_run_id: Optional[int] = None
-    file_hash: Optional[str] = None
-    version: int = 1
-    id: Optional[int] = None
-    created_at: Optional[str] = None
-
-
 __all__ = [
     "MediaAssetRecord",
     "StreamAssetRecord",
     "SubtitleCandidateRecord",
     "BenchmarkRunRecord",
     "ReviewTaskRecord",
-    "PipelineRunRecord",
-    "ArtifactRecord",
     "CANDIDATE_STATUS_PENDING",
     "CANDIDATE_STATUS_ACCEPTED",
     "CANDIDATE_STATUS_FAILED",
@@ -274,14 +182,4 @@ __all__ = [
     "REVIEW_STATUS_REJECTED",
     "REVIEW_STATUS_REPROCESS",
     "REVIEW_STATUSES",
-    "PIPELINE_STATUS_RUNNING",
-    "PIPELINE_STATUS_COMPLETED",
-    "PIPELINE_STATUS_FAILED",
-    "PIPELINE_STATUS_CANCELLED",
-    "PIPELINE_STATUSES",
-    "ARTIFACT_TYPE_SRT",
-    "ARTIFACT_TYPE_MKV_BURNED",
-    "ARTIFACT_TYPE_QC_JSON",
-    "ARTIFACT_TYPE_BENCHMARK_JSON",
-    "ARTIFACT_TYPES",
 ]

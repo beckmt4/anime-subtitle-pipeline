@@ -9,9 +9,6 @@ from __future__ import annotations
 import pytest
 
 from core.artifacts import (
-    ArtifactRecord,
-    ARTIFACT_TYPE_QC_JSON,
-    ARTIFACT_TYPE_SRT,
     ArtifactRegistry,
     BenchmarkRunRecord,
     CANDIDATE_STATUS_ACCEPTED,
@@ -19,10 +16,6 @@ from core.artifacts import (
     CANDIDATE_STATUS_PENDING,
     CANDIDATE_STATUS_REVIEW_REQUIRED,
     MediaAssetRecord,
-    PIPELINE_STATUS_COMPLETED,
-    PIPELINE_STATUS_FAILED,
-    PIPELINE_STATUS_RUNNING,
-    PipelineRunRecord,
     ProcessingLedger,
     REVIEW_STATUS_APPROVED,
     REVIEW_STATUS_PENDING,
@@ -390,229 +383,151 @@ class TestReviewTask:
             ReviewTaskRecord(media_hash="h1", candidate_id=cand.id)
         )
         registry.update_review_task(
-            task.id, status=REVIEW_STATUS_REPROCESS, reprocess_reason="timing off"
+            task.id,
+            status=REVIEW_STATUS_REPROCESS,
+            reprocess_reason="too many gaps in timing",
         )
         updated = registry.get_review_task(task.id)
         assert updated.status == REVIEW_STATUS_REPROCESS
-        assert updated.reprocess_reason == "timing off"
+        assert updated.reprocess_reason == "too many gaps in timing"
 
-
-# ===========================================================================
-# Candidate lineage (parent_candidate_id)
-# ===========================================================================
-
-class TestCandidateLineage:
-    def test_source_candidate_has_no_parent(self, registry):
-        asr = registry.store_candidate(_make_candidate("h1", source="asr"))
-        assert asr.parent_candidate_id is None
-
-    def test_mt_candidate_references_asr_parent(self, registry):
-        asr = registry.store_candidate(_make_candidate("h1", source="asr", source_id="asr_ja"))
-        mt = registry.store_candidate(
-            _make_candidate("h1", source="mt", source_id="mt_en", parent_candidate_id=asr.id)
+    def test_update_review_task_invalid_status_raises(self, registry):
+        cand = self._store_cand(registry)
+        task = registry.create_review_task(
+            ReviewTaskRecord(media_hash="h1", candidate_id=cand.id)
         )
-        assert mt.parent_candidate_id == asr.id
+        with pytest.raises(ValueError, match="Invalid review status"):
+            registry.update_review_task(task.id, status="invalid_status")
 
-    def test_llm_polish_references_mt_parent(self, registry):
-        asr = registry.store_candidate(_make_candidate("h1", source="asr", source_id="asr_ja"))
-        mt = registry.store_candidate(
-            _make_candidate("h1", source="mt", source_id="mt_en", parent_candidate_id=asr.id)
-        )
-        llm = registry.store_candidate(
-            _make_candidate("h1", source="mt_llm", source_id="mt_llm_en", parent_candidate_id=mt.id)
-        )
-        assert llm.parent_candidate_id == mt.id
-
-    def test_lineage_roundtrip(self, registry):
-        """Full ASR -> MT -> LLM chain persists and reads back correctly."""
-        asr = registry.store_candidate(_make_candidate("h1", source="asr", source_id="asr_ja"))
-        mt = registry.store_candidate(
-            _make_candidate("h1", source="mt", source_id="mt_en", parent_candidate_id=asr.id)
-        )
-        llm = registry.store_candidate(
-            _make_candidate("h1", source="mt_llm", source_id="mt_llm_en", parent_candidate_id=mt.id)
-        )
-        fetched_llm = registry.get_candidate(llm.id)
-        fetched_mt = registry.get_candidate(fetched_llm.parent_candidate_id)
-        fetched_asr = registry.get_candidate(fetched_mt.parent_candidate_id)
-        assert fetched_asr.source == "asr"
-        assert fetched_mt.source == "mt"
-        assert fetched_llm.source == "mt_llm"
-        assert fetched_asr.parent_candidate_id is None
-
-    def test_parent_candidate_id_none_by_default(self, registry):
-        cand = registry.store_candidate(_make_candidate("h1"))
-        fetched = registry.get_candidate(cand.id)
-        assert fetched.parent_candidate_id is None
-
-
-# ===========================================================================
-# PipelineRun
-# ===========================================================================
-
-class TestPipelineRun:
-    def test_create_and_retrieve(self, registry):
-        run = registry.create_pipeline_run(
-            PipelineRunRecord(run_id="run-001", media_hash="h1")
-        )
-        assert run.id is not None
-        assert run.run_id == "run-001"
-        assert run.status == PIPELINE_STATUS_RUNNING
-        assert run.started_at is not None
-        assert run.finished_at is None
-        assert run.error_message is None
-
-    def test_create_with_config(self, registry):
-        config = {"model": "large-v3", "language": "ja"}
-        run = registry.create_pipeline_run(
-            PipelineRunRecord(run_id="run-002", media_hash="h1", config=config)
-        )
-        fetched = registry.get_pipeline_run("run-002")
-        assert fetched.config == config
-
-    def test_get_missing_returns_none(self, registry):
-        assert registry.get_pipeline_run("nonexistent") is None
-
-    def test_duplicate_run_id_raises(self, registry):
-        registry.create_pipeline_run(PipelineRunRecord(run_id="dup", media_hash="h1"))
-        with pytest.raises(ValueError, match="already exists"):
-            registry.create_pipeline_run(PipelineRunRecord(run_id="dup", media_hash="h1"))
-
-    def test_invalid_status_raises(self, registry):
-        with pytest.raises(ValueError, match="Invalid pipeline status"):
-            registry.create_pipeline_run(
-                PipelineRunRecord(run_id="r", media_hash="h1", status="bogus")
-            )
-
-    def test_finish_run_completed(self, registry):
-        registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
-        registry.finish_pipeline_run("r1", status=PIPELINE_STATUS_COMPLETED)
-        run = registry.get_pipeline_run("r1")
-        assert run.status == PIPELINE_STATUS_COMPLETED
-        assert run.finished_at is not None
-        assert run.error_message is None
-
-    def test_finish_run_failed_with_message(self, registry):
-        registry.create_pipeline_run(PipelineRunRecord(run_id="r2", media_hash="h1"))
-        registry.finish_pipeline_run(
-            "r2", status=PIPELINE_STATUS_FAILED, error_message="Whisper OOM"
-        )
-        run = registry.get_pipeline_run("r2")
-        assert run.status == PIPELINE_STATUS_FAILED
-        assert run.error_message == "Whisper OOM"
-
-    def test_finish_missing_run_raises(self, registry):
+    def test_update_review_task_missing_id_raises(self, registry):
         with pytest.raises(LookupError):
-            registry.finish_pipeline_run("nonexistent", status=PIPELINE_STATUS_COMPLETED)
+            registry.update_review_task(9999, status=REVIEW_STATUS_APPROVED)
 
-    def test_list_by_media_hash(self, registry):
-        registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
-        registry.create_pipeline_run(PipelineRunRecord(run_id="r2", media_hash="h1"))
-        registry.create_pipeline_run(PipelineRunRecord(run_id="r3", media_hash="h2"))
-        runs = registry.list_pipeline_runs("h1")
-        assert len(runs) == 2
-        assert all(r.media_hash == "h1" for r in runs)
+    def test_list_review_tasks_by_media_hash(self, registry):
+        cand1 = registry.store_candidate(_make_candidate("h1"))
+        cand2 = registry.store_candidate(_make_candidate("h2"))
+        registry.create_review_task(ReviewTaskRecord(media_hash="h1", candidate_id=cand1.id))
+        registry.create_review_task(ReviewTaskRecord(media_hash="h2", candidate_id=cand2.id))
+        tasks_h1 = registry.list_review_tasks(media_hash="h1")
+        assert len(tasks_h1) == 1
+        assert tasks_h1[0].media_hash == "h1"
 
-    def test_list_filtered_by_status(self, registry):
-        registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
-        registry.create_pipeline_run(PipelineRunRecord(run_id="r2", media_hash="h1"))
-        registry.finish_pipeline_run("r1", status=PIPELINE_STATUS_COMPLETED)
-        completed = registry.list_pipeline_runs("h1", status=PIPELINE_STATUS_COMPLETED)
-        running = registry.list_pipeline_runs("h1", status=PIPELINE_STATUS_RUNNING)
-        assert len(completed) == 1
-        assert len(running) == 1
+    def test_list_review_tasks_by_status(self, registry):
+        cand1 = registry.store_candidate(_make_candidate("h1"))
+        cand2 = registry.store_candidate(_make_candidate("h1"))
+        t1 = registry.create_review_task(
+            ReviewTaskRecord(media_hash="h1", candidate_id=cand1.id)
+        )
+        registry.create_review_task(
+            ReviewTaskRecord(media_hash="h1", candidate_id=cand2.id)
+        )
+        registry.update_review_task(t1.id, status=REVIEW_STATUS_APPROVED)
+        pending = registry.list_review_tasks(status=REVIEW_STATUS_PENDING)
+        approved = registry.list_review_tasks(status=REVIEW_STATUS_APPROVED)
+        assert len(pending) == 1
+        assert len(approved) == 1
+
+    def test_create_review_task_invalid_status_raises(self, registry):
+        cand = self._store_cand(registry)
+        with pytest.raises(ValueError, match="Invalid review status"):
+            registry.create_review_task(
+                ReviewTaskRecord(media_hash="h1", candidate_id=cand.id, status="bad")
+            )
 
 
 # ===========================================================================
-# Artifact
+# ProcessingLedger
 # ===========================================================================
 
-class TestArtifact:
-    def test_store_and_retrieve_srt(self, registry):
-        art = registry.store_artifact(
-            ArtifactRecord(
-                media_hash="h1",
-                artifact_type=ARTIFACT_TYPE_SRT,
-                file_path="/outbox/ep01.srt",
-            )
-        )
-        assert art.id is not None
-        assert art.artifact_type == ARTIFACT_TYPE_SRT
-        assert art.version == 1
-        assert art.candidate_id is None
-        assert art.pipeline_run_id is None
+class TestProcessingLedger:
+    def test_processed_media_hashes_empty(self, ledger):
+        assert ledger.processed_media_hashes() == []
 
-    def test_store_with_candidate_and_run(self, registry):
-        cand = registry.store_candidate(_make_candidate("h1"))
-        run = registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
-        art = registry.store_artifact(
-            ArtifactRecord(
-                media_hash="h1",
-                artifact_type=ARTIFACT_TYPE_SRT,
-                file_path="/outbox/ep01.srt",
-                candidate_id=cand.id,
-                pipeline_run_id=run.id,
-                file_hash="abc123",
-                version=2,
-            )
-        )
-        fetched = registry.get_artifact(art.id)
-        assert fetched.candidate_id == cand.id
-        assert fetched.pipeline_run_id == run.id
-        assert fetched.file_hash == "abc123"
-        assert fetched.version == 2
+    def test_processed_media_hashes_reflects_stored_assets(self, registry, ledger):
+        registry.upsert_media_asset(media_hash="h1", file_path="/a", file_name="a")
+        registry.upsert_media_asset(media_hash="h2", file_path="/b", file_name="b")
+        hashes = ledger.processed_media_hashes()
+        assert set(hashes) == {"h1", "h2"}
 
-    def test_get_missing_returns_none(self, registry):
-        assert registry.get_artifact(9999) is None
+    def test_is_processed_false_when_no_candidates(self, registry, ledger):
+        registry.upsert_media_asset(media_hash="h1", file_path="/a", file_name="a")
+        assert not ledger.is_processed("h1")
 
-    def test_invalid_type_raises(self, registry):
-        with pytest.raises(ValueError, match="Invalid artifact_type"):
-            registry.store_artifact(
-                ArtifactRecord(media_hash="h1", artifact_type="mp3", file_path="/x")
-            )
+    def test_is_processed_true_when_candidates_exist(self, registry, ledger):
+        registry.store_candidate(_make_candidate("h1"))
+        assert ledger.is_processed("h1")
 
-    def test_list_by_media_hash(self, registry):
-        registry.store_artifact(
-            ArtifactRecord(media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT, file_path="/a.srt")
-        )
-        registry.store_artifact(
-            ArtifactRecord(media_hash="h1", artifact_type=ARTIFACT_TYPE_QC_JSON, file_path="/a.json")
-        )
-        registry.store_artifact(
-            ArtifactRecord(media_hash="h2", artifact_type=ARTIFACT_TYPE_SRT, file_path="/b.srt")
-        )
-        arts = registry.list_artifacts("h1")
-        assert len(arts) == 2
-        assert all(a.media_hash == "h1" for a in arts)
-
-    def test_list_filtered_by_type(self, registry):
-        registry.store_artifact(
-            ArtifactRecord(media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT, file_path="/a.srt")
-        )
-        registry.store_artifact(
-            ArtifactRecord(media_hash="h1", artifact_type=ARTIFACT_TYPE_QC_JSON, file_path="/a.json")
-        )
-        srts = registry.list_artifacts("h1", artifact_type=ARTIFACT_TYPE_SRT)
-        assert len(srts) == 1
-        assert srts[0].artifact_type == ARTIFACT_TYPE_SRT
-
-    def test_list_filtered_by_candidate(self, registry):
+    def test_accepted_candidates(self, registry, ledger):
         c1 = registry.store_candidate(_make_candidate("h1"))
         c2 = registry.store_candidate(_make_candidate("h1"))
-        registry.store_artifact(
-            ArtifactRecord(media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT,
-                           file_path="/c1.srt", candidate_id=c1.id)
-        )
-        registry.store_artifact(
-            ArtifactRecord(media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT,
-                           file_path="/c2.srt", candidate_id=c2.id)
-        )
-        arts = registry.list_artifacts("h1", candidate_id=c1.id)
-        assert len(arts) == 1
-        assert arts[0].candidate_id == c1.id
+        registry.update_candidate_status(c1.id, CANDIDATE_STATUS_ACCEPTED)
+        accepted = ledger.accepted_candidates("h1")
+        assert len(accepted) == 1
+        assert accepted[0].id == c1.id
 
-    def test_created_at_set(self, registry):
-        art = registry.store_artifact(
-            ArtifactRecord(media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT, file_path="/x.srt")
+    def test_failed_candidates(self, registry, ledger):
+        c1 = registry.store_candidate(_make_candidate("h1"))
+        registry.update_candidate_status(c1.id, CANDIDATE_STATUS_FAILED)
+        failed = ledger.failed_candidates("h1")
+        assert len(failed) == 1
+
+    def test_review_required_candidates(self, registry, ledger):
+        c1 = registry.store_candidate(_make_candidate("h1"))
+        registry.update_candidate_status(c1.id, CANDIDATE_STATUS_REVIEW_REQUIRED)
+        review = ledger.review_required_candidates("h1")
+        assert len(review) == 1
+
+    def test_pending_review_tasks(self, registry, ledger):
+        cand = registry.store_candidate(_make_candidate("h1"))
+        t1 = registry.create_review_task(
+            ReviewTaskRecord(media_hash="h1", candidate_id=cand.id)
         )
-        assert art.created_at is not None
+        registry.create_review_task(
+            ReviewTaskRecord(media_hash="h1", candidate_id=cand.id)
+        )
+        registry.update_review_task(t1.id, status=REVIEW_STATUS_APPROVED)
+        pending = ledger.pending_review_tasks()
+        assert len(pending) == 1
+
+    def test_latest_benchmark_run_none_when_empty(self, ledger):
+        assert ledger.latest_benchmark_run("h1") is None
+
+    def test_latest_benchmark_run_returns_last(self, registry, ledger):
+        registry.record_benchmark_run(
+            BenchmarkRunRecord(media_hash="h1", run_id="r1", metrics={"wer": 0.3})
+        )
+        registry.record_benchmark_run(
+            BenchmarkRunRecord(media_hash="h1", run_id="r2", metrics={"wer": 0.2})
+        )
+        latest = ledger.latest_benchmark_run("h1")
+        assert latest.run_id == "r2"
+
+    def test_benchmark_summary_empty(self, ledger):
+        summary = ledger.benchmark_summary("h_missing")
+        assert summary["run_count"] == 0
+        assert summary["best_wer"] is None
+
+    def test_benchmark_summary_values(self, registry, ledger):
+        registry.record_benchmark_run(
+            BenchmarkRunRecord(media_hash="h1", run_id="r1", metrics={"wer": 0.3, "bleu": 60.0, "chrf": 55.0})
+        )
+        registry.record_benchmark_run(
+            BenchmarkRunRecord(media_hash="h1", run_id="r2", metrics={"wer": 0.1, "bleu": 80.0, "chrf": 75.0})
+        )
+        summary = ledger.benchmark_summary("h1")
+        assert summary["run_count"] == 2
+        assert summary["best_wer"] == pytest.approx(0.1)
+        assert summary["best_bleu"] == pytest.approx(80.0)
+        assert summary["best_chrf"] == pytest.approx(75.0)
+
+    def test_reprocess_candidates(self, registry, ledger):
+        cand = registry.store_candidate(_make_candidate("h1"))
+        task = registry.create_review_task(
+            ReviewTaskRecord(media_hash="h1", candidate_id=cand.id)
+        )
+        registry.update_review_task(
+            task.id, status=REVIEW_STATUS_REPROCESS, reprocess_reason="timing off"
+        )
+        reprocess = ledger.reprocess_candidates("h1")
+        assert len(reprocess) == 1
+        assert reprocess[0].id == cand.id

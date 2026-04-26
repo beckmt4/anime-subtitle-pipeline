@@ -43,6 +43,22 @@ from srt_writer import write_candidate_srt
 from models import SubtitleCandidate
 from subtitle_qc import run_qc
 from tracing import start_span
+import uuid
+from typing import Optional
+
+from core.artifacts import (
+    ArtifactRegistry,
+    ArtifactRecord,
+    ARTIFACT_TYPE_SRT,
+    ARTIFACT_TYPE_QC_JSON,
+    CANDIDATE_STATUS_ACCEPTED,
+    PIPELINE_STATUS_COMPLETED,
+    PIPELINE_STATUS_FAILED,
+    PipelineRunRecord,
+    SubtitleCandidateRecord,
+)
+from core.artifacts.pipeline_wiring import open_registry, compute_media_hash  # noqa: F401  (re-exported)
+
 
 logger = logging.getLogger(__name__)
 
@@ -689,12 +705,173 @@ def _probe_audio_language(
         probe_path.unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------------------
+# Registry helpers — all calls are wrapped in try/except.  A registry failure
+# must never crash the pipeline; at worst we log a warning and return None.
+# ---------------------------------------------------------------------------
+
+def _reg_start_run(
+    registry: Optional[ArtifactRegistry],
+    media_hash: Optional[str],
+    cfg,
+    run_id: str,
+) -> Optional[int]:
+    """Create a PipelineRunRecord and return its DB id, or None on failure."""
+    if registry is None or not media_hash:
+        return None
+    try:
+        import json as _json
+        config_snapshot: dict = {}
+        try:
+            config_snapshot = {
+                "profile": cfg.profile,
+                "asr_model": cfg.asr_model_name,
+                "mt_model": cfg.mt_model_name,
+                "llm_model": cfg.llm_model_name,
+                "llm_enabled": cfg.llm_enabled,
+            }
+        except Exception:
+            pass
+        rec = PipelineRunRecord(
+            run_id=run_id,
+            media_hash=media_hash,
+            config=config_snapshot,
+        )
+        stored = registry.create_pipeline_run(rec)
+        return stored.id
+    except Exception as exc:
+        logger.warning("ArtifactRegistry: failed to start run — %s", exc)
+        return None
+
+
+def _reg_finish_run(
+    registry: Optional[ArtifactRegistry],
+    run_id_str: Optional[str],
+    status: str,
+    error_message: Optional[str] = None,
+) -> None:
+    """Mark a pipeline run as completed or failed.
+
+    Args:
+        run_id_str: The UUID string run_id assigned at run start (not the
+                    integer DB primary key). Matches finish_pipeline_run's
+                    contract in ArtifactRegistry.
+    """
+    if registry is None or not run_id_str:
+        return
+    try:
+        registry.finish_pipeline_run(run_id_str, status=status, error_message=error_message)
+    except Exception as exc:
+        logger.warning("ArtifactRegistry: failed to finish run %s — %s", run_id_str, exc)
+
+
+def _reg_store_candidate(
+    registry: Optional[ArtifactRegistry],
+    media_hash: Optional[str],
+    candidate,  # models.SubtitleCandidate
+    source: str,
+    model_version: str = "",
+    parent_id: Optional[int] = None,
+) -> Optional[int]:
+    """Persist a SubtitleCandidate and return its DB id, or None on failure.
+
+    Args:
+        registry:      Open ArtifactRegistry, or None (no-op).
+        media_hash:    SHA-256 hex digest of the source media file.
+        candidate:     models.SubtitleCandidate produced by the pipeline.
+        source:        One of 'asr', 'embedded', 'mt', 'mt_llm'.
+        model_version: Model identifier string (e.g. Whisper model name).
+        parent_id:     DB id of the candidate this was derived from, if any.
+
+    Returns:
+        Integer DB id of the stored record, or None if the registry is
+        unavailable or an error occurred.
+    """
+    if registry is None or not media_hash:
+        return None
+    try:
+        segments = [
+            {"start": s.start, "end": s.end, "text": s.text}
+            for s in candidate.segments
+        ]
+        rec = SubtitleCandidateRecord(
+            media_hash=media_hash,
+            source_id=candidate.id,
+            language=candidate.language,
+            source=source,
+            origin_stream=candidate.origin_stream,
+            model_version=model_version,
+            segments=segments,
+            meta=dict(candidate.meta),
+            status=CANDIDATE_STATUS_ACCEPTED,
+            parent_candidate_id=parent_id,
+        )
+        stored = registry.store_candidate(rec)
+        logger.debug(
+            "ArtifactRegistry: stored candidate %s (db_id=%s, parent=%s)",
+            candidate.id, stored.id, parent_id,
+        )
+        return stored.id
+    except Exception as exc:
+        logger.warning(
+            "ArtifactRegistry: failed to store candidate %s — %s",
+            candidate.id, exc,
+        )
+        return None
+
+
+def _reg_store_artifact(
+    registry: Optional[ArtifactRegistry],
+    media_hash: Optional[str],
+    artifact_type: str,
+    file_path,  # Path or str
+    candidate_db_id: Optional[int] = None,
+    run_db_id: Optional[int] = None,
+) -> Optional[int]:
+    """Persist an output file record and return its DB id, or None on failure."""
+    if registry is None or not media_hash:
+        return None
+    try:
+        import hashlib as _hashlib
+        from pathlib import Path as _Path
+        p = _Path(file_path)
+        file_hash: Optional[str] = None
+        if p.exists():
+            h = _hashlib.sha256()
+            with open(p, "rb") as fh:
+                while chunk := fh.read(1 << 20):
+                    h.update(chunk)
+            file_hash = h.hexdigest()
+        rec = ArtifactRecord(
+            media_hash=media_hash,
+            artifact_type=artifact_type,
+            file_path=str(file_path),
+            candidate_id=candidate_db_id,
+            pipeline_run_id=run_db_id,
+            file_hash=file_hash,
+        )
+        stored = registry.store_artifact(rec)
+        logger.debug(
+            "ArtifactRegistry: stored artifact %s -> %s (db_id=%s)",
+            artifact_type, p.name, stored.id,
+        )
+        return stored.id
+    except Exception as exc:
+        logger.warning(
+            "ArtifactRegistry: failed to store artifact %s — %s",
+            artifact_type, exc,
+        )
+        return None
+
+
 def run_generate(
     media: MediaInfo,
     cfg: Config,
     no_llm: bool = False,
     audio_track_override: int | None = None,
     skip_embedded_en: bool = False,
+    registry: Optional[ArtifactRegistry] = None,
+    media_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Production generation flow selecting best available source for EN subtitles.
 
@@ -712,6 +889,15 @@ def run_generate(
             force the pipeline through ASR → MT (→ LLM). Used with --extract-en-subs
             so the extracted embedded subs and the freshly generated subs can be
             compared or used for training.
+        registry: Optional open ArtifactRegistry.  When provided, every
+            SubtitleCandidate, PipelineRun, and output ArtifactRecord is
+            persisted with full lineage (ASR → MT → LLM parent_candidate_id
+            chain).  Pass None (the default) to run without persistence —
+            the pipeline behaviour is identical either way.
+        media_hash: SHA-256 hex digest of the input video file, used as the
+            natural key in the registry.  Required when registry is not None;
+            ignored otherwise.  Compute with
+            ``core.artifacts.pipeline_wiring.compute_media_hash(path)``.
 
     Returns a metadata dict containing strategy, candidate info, and output paths.
     """
@@ -802,209 +988,283 @@ def run_generate(
         ja_sub_idx = None
         en_audio_order = None
 
-    strategy = None
-    candidate: SubtitleCandidate | None = None
-    polish_stats: Dict[str, Any] | None = None
+    # --- Registry: start pipeline run record ---
+    _run_id = uuid.uuid4().hex
+    _run_db_id = _reg_start_run(registry, media_hash, cfg, run_id=_run_id)
 
-    # Decision tree
-    if prefer_subtitles and en_sub_idx is not None:
-        strategy = "embedded_en"
-        logger.info("Strategy: Use embedded English subtitles")
-        with start_span("extract_embedded_en"):
-            candidate = extract_subtitle_track(video_path, en_sub_idx, language="en",
-                                               output_dir=Path(cfg.get_path("temp")))
-    elif prefer_audio_language == "en" and en_audio_order is not None:
-        strategy = "en_audio_asr"
-        logger.info("Strategy: English audio ASR")
-        with start_span("extract_en_audio"):
-            audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_en_a{en_audio_order}.wav"
-            extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
-        with start_span("asr_en_audio"):
-            asr = FasterWhisperASR(cfg)
-            segments = asr.transcribe_audio_to_segments(str(audio_path), language="en")
-            candidate = build_candidate_from_segments(
-                segments,
-                cfg,
-                candidate_id=f"en_audio_asr_a{en_audio_order}",
-                language="en",
-                origin_stream=f"audio:{en_audio_order}",
+    try:
+        strategy = None
+        candidate: SubtitleCandidate | None = None
+        polish_stats: Dict[str, Any] | None = None
+
+        # Decision tree
+        if prefer_subtitles and en_sub_idx is not None:
+            strategy = "embedded_en"
+            logger.info("Strategy: Use embedded English subtitles")
+            with start_span("extract_embedded_en"):
+                candidate = extract_subtitle_track(video_path, en_sub_idx, language="en",
+                                                   output_dir=Path(cfg.get_path("temp")))
+            _final_db_id = _reg_store_candidate(
+                registry, media_hash, candidate, source="embedded",
             )
-        audio_path.unlink(missing_ok=True)
-    elif ja_sub_idx is not None:
-        strategy = "embedded_jp_mt"
-        logger.info("Strategy: Japanese subtitles → MT → EN")
-        with start_span("extract_embedded_jp"):
-            ja_candidate = extract_subtitle_track(video_path, ja_sub_idx, language="ja",
-                                                  output_dir=Path(cfg.get_path("temp")))
-        with start_span("mt_embedded_jp"):
-            mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
-        # Always write raw MT output regardless of whether LLM polish runs.
-        raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
-        write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-        logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
-        if use_llm_polish:
-            with start_span("llm_polish_embedded_jp"):
-                polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
-                # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
-                candidate = enforce_constraints_on_candidate(polished, cfg)
-            polish_stats = _compare_candidates(mt_candidate, candidate)
-            _log_polish_stats(polish_stats)
+        elif prefer_audio_language == "en" and en_audio_order is not None:
+            strategy = "en_audio_asr"
+            logger.info("Strategy: English audio ASR")
+            with start_span("extract_en_audio"):
+                audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_en_a{en_audio_order}.wav"
+                extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
+            with start_span("asr_en_audio"):
+                asr = FasterWhisperASR(cfg)
+                segments = asr.transcribe_audio_to_segments(str(audio_path), language="en")
+                candidate = build_candidate_from_segments(
+                    segments,
+                    cfg,
+                    candidate_id=f"en_audio_asr_a{en_audio_order}",
+                    language="en",
+                    origin_stream=f"audio:{en_audio_order}",
+                )
+            audio_path.unlink(missing_ok=True)
+            _final_db_id = _reg_store_candidate(
+                registry, media_hash, candidate, source="asr",
+                model_version=cfg.asr_model_name,
+            )
+        elif ja_sub_idx is not None:
+            strategy = "embedded_jp_mt"
+            logger.info("Strategy: Japanese subtitles → MT → EN")
+            with start_span("extract_embedded_jp"):
+                ja_candidate = extract_subtitle_track(video_path, ja_sub_idx, language="ja",
+                                                      output_dir=Path(cfg.get_path("temp")))
+            _ja_db_id = _reg_store_candidate(
+                registry, media_hash, ja_candidate, source="embedded",
+            )
+            with start_span("mt_embedded_jp"):
+                mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
+            _mt_db_id = _reg_store_candidate(
+                registry, media_hash, mt_candidate, source="mt",
+                model_version=cfg.mt_model_name, parent_id=_ja_db_id,
+            )
+            # Always write raw MT output regardless of whether LLM polish runs.
+            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            write_candidate_srt(mt_candidate, str(raw_srt), cfg)
+            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
+            if use_llm_polish:
+                with start_span("llm_polish_embedded_jp"):
+                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
+                    # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
+                    candidate = enforce_constraints_on_candidate(polished, cfg)
+                polish_stats = _compare_candidates(mt_candidate, candidate)
+                _log_polish_stats(polish_stats)
+                _final_db_id = _reg_store_candidate(
+                    registry, media_hash, candidate, source="mt_llm",
+                    model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                )
+            else:
+                candidate = mt_candidate
+                _final_db_id = _mt_db_id
+        elif (prefer_audio_language in ["ja", "auto"] and ja_audio_order is not None):
+            strategy = "ja_audio_asr_mt"
+            logger.info("Strategy: Japanese audio → ASR → MT → EN")
+            with start_span("extract_ja_audio"):
+                audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_ja_a{ja_audio_order}.wav"
+                extract_audio_with_ffmpeg(str(video_path), str(audio_path), ja_audio_order)
+            with start_span("asr_ja_audio"):
+                asr = FasterWhisperASR(cfg)
+                segments = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
+                ja_asr_candidate = build_candidate_from_segments(
+                    segments,
+                    cfg,
+                    candidate_id=f"ja_audio_asr_a{ja_audio_order}",
+                    language="ja",
+                    origin_stream=f"audio:{ja_audio_order}",
+                )
+            audio_path.unlink(missing_ok=True)
+            _asr_db_id = _reg_store_candidate(
+                registry, media_hash, ja_asr_candidate, source="asr",
+                model_version=cfg.asr_model_name,
+            )
+            with start_span("mt_ja_audio"):
+                mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
+            _mt_db_id = _reg_store_candidate(
+                registry, media_hash, mt_candidate, source="mt",
+                model_version=cfg.mt_model_name, parent_id=_asr_db_id,
+            )
+            # Always write raw MT output regardless of whether LLM polish runs.
+            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            write_candidate_srt(mt_candidate, str(raw_srt), cfg)
+            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
+            if use_llm_polish:
+                with start_span("llm_polish_ja_audio"):
+                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
+                    # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
+                    candidate = enforce_constraints_on_candidate(polished, cfg)
+                polish_stats = _compare_candidates(mt_candidate, candidate)
+                _log_polish_stats(polish_stats)
+                _final_db_id = _reg_store_candidate(
+                    registry, media_hash, candidate, source="mt_llm",
+                    model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                )
+            else:
+                candidate = mt_candidate
+                _final_db_id = _mt_db_id
+        elif en_audio_order is not None:  # fallback
+            strategy = "en_audio_asr"
+            logger.info("Fallback: English audio ASR")
+            with start_span("extract_en_audio"):
+                audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_en_a{en_audio_order}.wav"
+                extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
+            with start_span("asr_en_audio"):
+                asr = FasterWhisperASR(cfg)
+                segments = asr.transcribe_audio_to_segments(str(audio_path), language="en")
+                candidate = build_candidate_from_segments(
+                    segments,
+                    cfg,
+                    candidate_id=f"en_audio_asr_a{en_audio_order}",
+                    language="en",
+                    origin_stream=f"audio:{en_audio_order}",
+                )
+            audio_path.unlink(missing_ok=True)
+            _final_db_id = _reg_store_candidate(
+                registry, media_hash, candidate, source="asr",
+                model_version=cfg.asr_model_name,
+            )
+        elif media.audio_streams:
+            # Untagged audio fallback. Many WEB-DL / MP4 containers have no
+            # ISO-639 language tag on the audio stream, so none of the above
+            # branches match. Since this pipeline is built for JP→EN, treat
+            # the first audio track as Japanese. User can override with
+            # --audio-track if there are multiple tracks and track 0 is wrong.
+            fallback_order = 0
+            strategy = "untagged_audio_asr_mt"
+            logger.warning(
+                f"No language-tagged audio found; falling back to audio track "
+                f"{fallback_order} as Japanese. Pass --audio-track N to override."
+            )
+            with start_span("extract_untagged_audio"):
+                audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_ja_a{fallback_order}.wav"
+                extract_audio_with_ffmpeg(str(video_path), str(audio_path), fallback_order)
+            with start_span("asr_untagged_audio"):
+                asr = FasterWhisperASR(cfg)
+                segments = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
+                ja_asr_candidate = build_candidate_from_segments(
+                    segments,
+                    cfg,
+                    candidate_id=f"ja_audio_asr_a{fallback_order}",
+                    language="ja",
+                    origin_stream=f"audio:{fallback_order}",
+                )
+            audio_path.unlink(missing_ok=True)
+            _asr_db_id = _reg_store_candidate(
+                registry, media_hash, ja_asr_candidate, source="asr",
+                model_version=cfg.asr_model_name,
+            )
+            with start_span("mt_untagged_audio"):
+                mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
+            _mt_db_id = _reg_store_candidate(
+                registry, media_hash, mt_candidate, source="mt",
+                model_version=cfg.mt_model_name, parent_id=_asr_db_id,
+            )
+            # Always write raw MT output regardless of whether LLM polish runs.
+            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            write_candidate_srt(mt_candidate, str(raw_srt), cfg)
+            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
+            if use_llm_polish:
+                with start_span("llm_polish_untagged_audio"):
+                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
+                    # polish_candidate_with_llm already appends "_llm".
+                    candidate = enforce_constraints_on_candidate(polished, cfg)
+                polish_stats = _compare_candidates(mt_candidate, candidate)
+                _log_polish_stats(polish_stats)
+                _final_db_id = _reg_store_candidate(
+                    registry, media_hash, candidate, source="mt_llm",
+                    model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                )
+            else:
+                candidate = mt_candidate
+                _final_db_id = _mt_db_id
         else:
-            candidate = mt_candidate
-    elif (prefer_audio_language in ["ja", "auto"] and ja_audio_order is not None):
-        strategy = "ja_audio_asr_mt"
-        logger.info("Strategy: Japanese audio → ASR → MT → EN")
-        with start_span("extract_ja_audio"):
-            audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_ja_a{ja_audio_order}.wav"
-            extract_audio_with_ffmpeg(str(video_path), str(audio_path), ja_audio_order)
-        with start_span("asr_ja_audio"):
-            asr = FasterWhisperASR(cfg)
-            segments = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
-            ja_asr_candidate = build_candidate_from_segments(
-                segments,
-                cfg,
-                candidate_id=f"ja_audio_asr_a{ja_audio_order}",
-                language="ja",
-                origin_stream=f"audio:{ja_audio_order}",
+            raise RuntimeError(
+                "No usable source found for English subtitle generation "
+                "(file has no audio or subtitle streams)"
             )
-        audio_path.unlink(missing_ok=True)
-        with start_span("mt_ja_audio"):
-            mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
-        # Always write raw MT output regardless of whether LLM polish runs.
-        raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
-        write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-        logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
-        if use_llm_polish:
-            with start_span("llm_polish_ja_audio"):
-                polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
-                # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
-                candidate = enforce_constraints_on_candidate(polished, cfg)
-            polish_stats = _compare_candidates(mt_candidate, candidate)
-            _log_polish_stats(polish_stats)
-        else:
-            candidate = mt_candidate
-    elif en_audio_order is not None:  # fallback
-        strategy = "en_audio_asr"
-        logger.info("Fallback: English audio ASR")
-        with start_span("extract_en_audio"):
-            audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_en_a{en_audio_order}.wav"
-            extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
-        with start_span("asr_en_audio"):
-            asr = FasterWhisperASR(cfg)
-            segments = asr.transcribe_audio_to_segments(str(audio_path), language="en")
-            candidate = build_candidate_from_segments(
-                segments,
-                cfg,
-                candidate_id=f"en_audio_asr_a{en_audio_order}",
-                language="en",
-                origin_stream=f"audio:{en_audio_order}",
+
+        assert candidate is not None, "Generation strategy produced no candidate"
+
+        # Ensure _final_db_id is always defined (branches without explicit lineage
+        # tracking set it to None; non-registry runs never set it at all).
+        try:
+            _final_db_id  # noqa: F821
+        except NameError:
+            _final_db_id = None
+
+        # Build and log the explainable source-selection report
+        selection_report = _build_selection_report(
+            strategy=strategy,
+            orig_en_sub_idx=orig_en_sub_idx,
+            orig_ja_sub_idx=orig_ja_sub_idx,
+            orig_en_audio_order=orig_en_audio_order,
+            orig_ja_audio_order=orig_ja_audio_order,
+            prefer_subtitles=prefer_subtitles,
+            prefer_audio_language=prefer_audio_language,
+            skip_embedded_en=skip_embedded_en,
+            audio_track_override=audio_track_override,
+            probed_lang=probed_lang,
+        )
+        _log_selection_report(selection_report)
+
+        # Write SRT
+        out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
+        with start_span("write_final_srt"):
+            write_candidate_srt(candidate, str(out_srt), cfg)
+        _reg_store_artifact(registry, media_hash, ARTIFACT_TYPE_SRT, out_srt,
+                            candidate_db_id=_final_db_id, run_db_id=_run_db_id)
+
+        # Run QC on the written SRT
+        with start_span("subtitle_qc"):
+            qc_summary = run_qc(
+                out_srt,
+                min_duration=cfg.subtitle_min_duration,
+                max_duration=cfg.subtitle_max_duration,
+                max_cps=cfg.qc_max_cps,
+                max_line_chars=cfg.llm_max_chars_per_line,
+                max_lines=cfg.llm_max_lines,
             )
-        audio_path.unlink(missing_ok=True)
-    elif media.audio_streams:
-        # Untagged audio fallback. Many WEB-DL / MP4 containers have no
-        # ISO-639 language tag on the audio stream, so none of the above
-        # branches match. Since this pipeline is built for JP→EN, treat
-        # the first audio track as Japanese. User can override with
-        # --audio-track if there are multiple tracks and track 0 is wrong.
-        fallback_order = 0
-        strategy = "untagged_audio_asr_mt"
-        logger.warning(
-            f"No language-tagged audio found; falling back to audio track "
-            f"{fallback_order} as Japanese. Pass --audio-track N to override."
+
+        # Write machine-readable QC summary alongside the SRT
+        import json
+        qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
+        qc_path.write_text(json.dumps(qc_summary, indent=2), encoding="utf-8")
+        logger.info("QC summary written: %s", qc_path.name)
+        _reg_store_artifact(registry, media_hash, ARTIFACT_TYPE_QC_JSON, qc_path,
+                            candidate_db_id=_final_db_id, run_db_id=_run_db_id)
+
+        # Score the selected candidate and log an explainable breakdown
+        with start_span("score_candidate"):
+            candidate_score = score_candidate(strategy, candidate, qc_summary)
+        _log_candidate_score(candidate_score)
+
+        metadata = {
+            "video": str(video_path.name),
+            "strategy": strategy,
+            "candidate_id": candidate.id,
+            "segment_count": candidate.segment_count,
+            "output_srt": str(out_srt),
+            "qc": qc_summary,
+            "qc_json": str(qc_path),
+            "selection_report": selection_report,
+            "candidate_score": candidate_score,
+        }
+        if polish_stats is not None:
+            metadata.update(polish_stats)
+        _reg_finish_run(registry, _run_id, status=PIPELINE_STATUS_COMPLETED)
+        logger.info(f"✓ Generation complete (strategy={strategy}, segments={candidate.segment_count})")
+        metadata["registry_run_id"] = _run_id if registry is not None else None
+    except Exception as _exc:
+        _reg_finish_run(
+            registry, _run_id,
+            status=PIPELINE_STATUS_FAILED,
+            error_message=str(_exc),
         )
-        with start_span("extract_untagged_audio"):
-            audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_ja_a{fallback_order}.wav"
-            extract_audio_with_ffmpeg(str(video_path), str(audio_path), fallback_order)
-        with start_span("asr_untagged_audio"):
-            asr = FasterWhisperASR(cfg)
-            segments = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
-            ja_asr_candidate = build_candidate_from_segments(
-                segments,
-                cfg,
-                candidate_id=f"ja_audio_asr_a{fallback_order}",
-                language="ja",
-                origin_stream=f"audio:{fallback_order}",
-            )
-        audio_path.unlink(missing_ok=True)
-        with start_span("mt_untagged_audio"):
-            mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
-        # Always write raw MT output regardless of whether LLM polish runs.
-        raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
-        write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-        logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
-        if use_llm_polish:
-            with start_span("llm_polish_untagged_audio"):
-                polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
-                # polish_candidate_with_llm already appends "_llm".
-                candidate = enforce_constraints_on_candidate(polished, cfg)
-            polish_stats = _compare_candidates(mt_candidate, candidate)
-            _log_polish_stats(polish_stats)
-        else:
-            candidate = mt_candidate
-    else:
-        raise RuntimeError(
-            "No usable source found for English subtitle generation "
-            "(file has no audio or subtitle streams)"
-        )
-
-    assert candidate is not None, "Generation strategy produced no candidate"
-
-    # Build and log the explainable source-selection report
-    selection_report = _build_selection_report(
-        strategy=strategy,
-        orig_en_sub_idx=orig_en_sub_idx,
-        orig_ja_sub_idx=orig_ja_sub_idx,
-        orig_en_audio_order=orig_en_audio_order,
-        orig_ja_audio_order=orig_ja_audio_order,
-        prefer_subtitles=prefer_subtitles,
-        prefer_audio_language=prefer_audio_language,
-        skip_embedded_en=skip_embedded_en,
-        audio_track_override=audio_track_override,
-        probed_lang=probed_lang,
-    )
-    _log_selection_report(selection_report)
-
-    # Write SRT
-    out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
-    with start_span("write_final_srt"):
-        write_candidate_srt(candidate, str(out_srt), cfg)
-
-    # Run QC on the written SRT
-    with start_span("subtitle_qc"):
-        qc_summary = run_qc(
-            out_srt,
-            min_duration=cfg.subtitle_min_duration,
-            max_duration=cfg.subtitle_max_duration,
-            max_cps=cfg.qc_max_cps,
-            max_line_chars=cfg.llm_max_chars_per_line,
-            max_lines=cfg.llm_max_lines,
-        )
-
-    # Write machine-readable QC summary alongside the SRT
-    import json
-    qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
-    qc_path.write_text(json.dumps(qc_summary, indent=2), encoding="utf-8")
-    logger.info("QC summary written: %s", qc_path.name)
-
-    # Score the selected candidate and log an explainable breakdown
-    with start_span("score_candidate"):
-        candidate_score = score_candidate(strategy, candidate, qc_summary)
-    _log_candidate_score(candidate_score)
-
-    metadata = {
-        "video": str(video_path.name),
-        "strategy": strategy,
-        "candidate_id": candidate.id,
-        "segment_count": candidate.segment_count,
-        "output_srt": str(out_srt),
-        "qc": qc_summary,
-        "qc_json": str(qc_path),
-        "selection_report": selection_report,
-        "candidate_score": candidate_score,
-    }
-    if polish_stats is not None:
-        metadata.update(polish_stats)
-    logger.info(f"✓ Generation complete (strategy={strategy}, segments={candidate.segment_count})")
+        raise
     return metadata
 
 

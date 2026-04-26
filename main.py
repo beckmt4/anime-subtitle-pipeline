@@ -564,30 +564,38 @@ Examples:
             sys.exit(0)
         elif args.mode == "generate":
             from orchestrator import run_generate
+            from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
             logger.info("Running in GENERATE mode (strategy selection)")
             media = inspect_media(args.video)
+
+            # Compute media hash and open registry before generation so that
+            # the pipeline run is recorded even if generation fails mid-way.
+            video_path_for_hash = Path(args.video)
+            try:
+                media_hash = compute_media_hash(video_path_for_hash)
+                logger.debug("Media hash: %s", media_hash)
+            except Exception as exc:
+                logger.warning("Could not compute media hash -- registry disabled: %s", exc)
+                media_hash = None
+
+            registry = open_registry(config)
+
             meta = run_generate(
                 media,
                 config,
                 no_llm=args.no_llm,
                 audio_track_override=args.audio_track,
                 skip_embedded_en=args.extract_en_subs,
+                registry=registry,
+                media_hash=media_hash,
             )
             logger.info("\nGeneration Result:")
             logger.info(f"  Strategy: {meta['strategy']}")
             logger.info(f"  Candidate: {meta['candidate_id']}")
             logger.info(f"  Segments: {meta['segment_count']}")
             logger.info(f"  Output SRT: {meta['output_srt']}")
-            if "selection_report" in meta:
-                rpt = meta["selection_report"]
-                logger.info(f"  Confidence tier: {rpt['confidence_tier']}")
-                if rpt.get("review_recommended"):
-                    logger.warning(f"  ⚠ Review recommended: {rpt.get('review_reason', '')}")
-            if "candidate_score" in meta:
-                cs = meta["candidate_score"]
-                logger.info(
-                    f"  Candidate score: {cs['total_score']:.1f} / 100  (grade {cs['grade']})"
-                )
+            if meta.get("registry_run_id"):
+                logger.info(f"  Registry run: {meta['registry_run_id']}")
             sys.exit(0)
         else:  # legacy subtitle mode
             logger.info("Running in legacy SUBTITLE mode (JP audio → ASR → MT → LLM)")

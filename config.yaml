@@ -143,16 +143,4 @@ generate:
 # Applied automatically after generate mode writes the output SRT.
 # All thresholds are used as arguments to subtitle_qc.run_qc().
 #
-# Threshold        Default  Attribute              Rationale
-# -----------      -------  --------------------   ----------------------------
-# max_cps          20       cfg.qc_max_cps         Comfortable reading speed
-#                                                   for anime (chars/second)
-#
-# The remaining thresholds are shared with the subtitles / llm sections:
-#   cfg.subtitle_min_duration  → subtitles.min_duration_sec  (default 0.5 s)
-#   cfg.subtitle_max_duration  → subtitles.max_duration_sec  (default 7.0 s)
-#   cfg.llm_max_chars_per_line → llm.max_chars_per_line      (default 42)
-#   cfg.llm_max_lines          → llm.max_lines               (default 2)
-qc:
-  max_cps: 20                     # Maximum reading speed (characters per second)
-
+# Threshold        Default  Attribute              Ration

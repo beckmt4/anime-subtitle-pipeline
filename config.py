@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+
 # Environment variable overrides — set these in docker-compose or shell to
 # avoid editing config.yaml per deployment.
 #   LLM_BASE_URL  — Ollama endpoint (e.g. http://192.168.1.147:11434 for Unraid)
@@ -214,6 +215,19 @@ class Config:
     @property
     def log_level(self) -> str:
         return self.get("logging", "level", default="INFO")
+
+    @property
+    def artifacts_db_path(self) -> str:
+        """Path to the SQLite artifact registry database.
+
+        Resolution order:
+        1. artifacts.db_path in config.yaml (if non-empty)
+        2. <outbox>/pipeline.db (auto-derived from paths.outbox)
+        """
+        configured = self.get("artifacts", "db_path", default="")
+        if configured:
+            return configured
+        return str(Path(self.get_path("outbox")) / "pipeline.db")
     
     def get_llm_prompt(self, style: Optional[str] = None) -> str:
         """
@@ -230,4 +244,31 @@ class Config:
         
         # Fill in formatting placeholders
         return prompt_template.format(
-            max_lines=self.llm_max_li
+            max_lines=self.llm_max_lines,
+            max_chars_per_line=self.llm_max_chars_per_line
+        )
+    
+    def __repr__(self) -> str:
+        return f"Config(profile={self.profile}, config_path={self.config_path})"
+
+
+# Global config instance (initialized in main.py)
+_global_config: Optional[Config] = None
+
+
+def get_config() -> Config:
+    """Get the global configuration instance."""
+    if _global_config is None:
+        raise RuntimeError("Configuration not initialized. Call set_config() first.")
+    return _global_config
+
+
+def set_config(config: Config) -> None:
+    """
+    Set the global configuration instance.
+    
+    Args:
+        config: Configuration object to set as global
+    """
+    global _global_config
+    _global_config = config
