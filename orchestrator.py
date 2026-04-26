@@ -58,6 +58,7 @@ from core.artifacts import (
     SubtitleCandidateRecord,
 )
 from core.artifacts.pipeline_wiring import open_registry, compute_media_hash  # noqa: F401  (re-exported)
+from core.policy import PolicyEngine
 
 
 logger = logging.getLogger(__name__)
@@ -1257,6 +1258,23 @@ def run_generate(
             candidate_score = score_candidate(strategy, candidate, qc_summary)
         _log_candidate_score(candidate_score)
 
+        # Determine routing decision (PASS / REVIEW / REJECT) based on score
+        # and strategy-level review flags from the selection report.
+        _policy = PolicyEngine(cfg)
+        routing_decision = _policy.route(candidate_score, selection_report)
+        if routing_decision["decision"] == "reject":
+            logger.error(
+                "✗ Routing decision: REJECT — %s",
+                "; ".join(routing_decision["reasons"]) or "score too low",
+            )
+        elif routing_decision["decision"] == "review":
+            logger.warning(
+                "⚠ Routing decision: REVIEW — %s",
+                "; ".join(routing_decision["reasons"]),
+            )
+        else:
+            logger.info("✓ Routing decision: PASS")
+
         metadata = {
             "video": str(video_path.name),
             "strategy": strategy,
@@ -1267,6 +1285,7 @@ def run_generate(
             "qc_json": str(qc_path),
             "selection_report": selection_report,
             "candidate_score": candidate_score,
+            "routing_decision": routing_decision,
         }
         if polish_stats is not None:
             metadata.update(polish_stats)

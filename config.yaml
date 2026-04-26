@@ -139,6 +139,17 @@ generate:
   prefer_audio_language: "auto"   # "en" | "ja" | "auto" (auto chooses EN if available else JA)
   use_llm_polish: true            # Apply LLM polishing when path involves MT
 
+# Quality routing policy
+# Used by core.policy.PolicyEngine to route generate-mode outputs.
+# Candidates with a total_score below review_score_threshold are routed to
+# the review state; those below reject_score_threshold are rejected outright.
+# Strategies that involve machine translation (embedded_jp_mt, ja_audio_asr_mt,
+# untagged_audio_asr_mt) are always routed to review regardless of score.
+policy:
+  routing:
+    review_score_threshold: 60   # Route to review when score < this value
+    reject_score_threshold: 20   # Route to reject when score < this value
+
 # Subtitle QC validation
 # Applied automatically after generate mode writes the output SRT.
 # All thresholds are used as arguments to subtitle_qc.run_qc().
