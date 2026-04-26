@@ -30,13 +30,11 @@ Then manually delete the files from disk (Windows Explorer or PowerShell `Remove
 
 **Why:** `error_log.txt` contains local paths and internal run output. `comparison*.json` and `benchmark_results.json` are run artifacts that churn on every run. `.backup` files in git are an anti-pattern.
 
-### P0-2: `ConcurrentPolisher` is missing CJK guard and drift check
+### ~~P0-2: `ConcurrentPolisher` is missing CJK guard and drift check~~ ✅ RESOLVED (commit 675bd7b)
 
-`llm_polish.py` lines 696–752: `ConcurrentPolisher.polish_segments_concurrent` calls `polish_text()` but does **not** run the drift check (`check_drift`) or stock-phrase collapse guard that `LLMPolisher.polish_segments()` runs. If this class is ever used, it will pass through hallucinated or drifted translations without any safety net.
-
-Fix: Either delete `ConcurrentPolisher` (it's marked "optional enhancement" and has no callers) or move the guard logic into `polish_text()` so all callers benefit.
-
-Recommended: **Delete it.** It's dead code, and its concurrent nature would violate the per-batch stock-phrase collapse check which is inherently sequential.
+`ConcurrentPolisher` and its `polish_segments_concurrent` method were deleted from `llm_polish.py`.
+The class had zero callers, skipped the drift check and stock-phrase collapse guard, and its concurrent
+design conflicted with the inherently sequential per-batch collapse check.
 
 ---
 
