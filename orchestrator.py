@@ -174,6 +174,53 @@ def _first_audio_order(media: MediaInfo, lang: str) -> int | None:
     return None
 
 
+# Title-tag keywords that suggest a track contains Japanese audio.  Matched
+# case-insensitively against the track's "title" metadata tag.
+_JA_TITLE_KEYWORDS: frozenset[str] = frozenset({
+    "japanese", "japan", "jpn", "ja", "日本語",
+})
+
+
+def _select_untagged_audio_fallback(media: MediaInfo) -> tuple[int, str]:
+    """Pick the most likely primary audio track when no ja/en language tags exist.
+
+    Applies heuristics in priority order:
+    1. A track whose ``title`` metadata tag contains a Japanese language keyword
+       (e.g. "Japanese Audio", "JPN", "日本語").
+    2. The first stereo (2-channel) track — the primary audio in anime releases
+       is almost always stereo, while commentary or secondary tracks are often
+       mono or 5.1.
+    3. Track 0 as the final catch-all (preserves previous default behaviour).
+
+    Args:
+        media: Inspected media information.  ``media.audio_streams`` must not
+            be empty.
+
+    Returns:
+        A ``(audio_order, reason)`` tuple where *audio_order* is the 0-based
+        index into ``media.audio_streams`` and *reason* is a short human-
+        readable explanation of the heuristic that was applied.
+    """
+    # --- Heuristic 1: title tag keyword match ---
+    for order, stream in enumerate(media.audio_streams):
+        title = (stream.tags.get("title", "")).strip().lower()
+        if any(kw in title for kw in _JA_TITLE_KEYWORDS):
+            return order, (
+                f"title tag contains Japanese keyword "
+                f"({stream.tags.get('title')!r})"
+            )
+
+    # --- Heuristic 2: first stereo (2-channel) track ---
+    for order, stream in enumerate(media.audio_streams):
+        if stream.channels == 2:
+            return order, (
+                f"first stereo (2-channel) track at audio order {order}"
+            )
+
+    # --- Heuristic 3: default to track 0 ---
+    return 0, "no heuristic match; defaulting to first audio track"
+
+
 def _log_polish_stats(stats: Dict[str, Any]) -> None:
     """Emit log messages summarising the outcome of a single LLM polish run."""
     status = stats["polish_status"]
@@ -388,6 +435,7 @@ def _build_selection_report(
     skip_embedded_en: bool,
     audio_track_override: int | None,
     probed_lang: str | None,
+    untagged_audio_order: int | None = None,
 ) -> Dict[str, Any]:
     """Build a structured explanation of why *strategy* was selected.
 
@@ -471,7 +519,19 @@ def _build_selection_report(
         })
 
         # --- en_audio_asr ---
-        en_audio_detected = orig_en_audio_order is not None
+        # An untagged track promoted to English by the language probe is treated
+        # as an effective EN audio source even though orig_en_audio_order is None.
+        _untagged_probed_as_en = (
+            probed_lang == "en"
+            and orig_en_audio_order is None
+            and untagged_audio_order is not None
+        )
+        _effective_en_audio = (
+            orig_en_audio_order
+            if orig_en_audio_order is not None
+            else (untagged_audio_order if _untagged_probed_as_en else None)
+        )
+        en_audio_detected = _effective_en_audio is not None
         # Compute probe_rerouted once — reused for both the en_audio and ja_audio entries.
         probe_rerouted = probed_lang == "ja" and orig_ja_audio_order is None
         if not en_audio_detected:
@@ -484,16 +544,23 @@ def _build_selection_report(
                 f"{orig_en_audio_order} (confidence ≥ {_PROBE_JA_THRESHOLD:.0%}); "
                 "rerouted to ja_audio_asr_mt path"
             )
+        elif strategy == "en_audio_asr" and _untagged_probed_as_en:
+            en_audio_status = "selected"
+            en_audio_reason = (
+                f"Untagged audio track {_effective_en_audio} confirmed English by "
+                f"language probe (confidence ≥ {_PROBE_JA_THRESHOLD:.0%}); "
+                "routed through EN ASR path"
+            )
         elif strategy == "en_audio_asr" and prefer_audio_language == "en":
             en_audio_status = "selected"
             en_audio_reason = (
-                f"English audio track {orig_en_audio_order} selected; "
+                f"English audio track {_effective_en_audio} selected; "
                 "prefer_audio_language=en in config"
             )
         elif strategy == "en_audio_asr":
             en_audio_status = "selected"
             en_audio_reason = (
-                f"Fallback: English audio track {orig_en_audio_order} selected "
+                f"Fallback: English audio track {_effective_en_audio} selected "
                 "(no Japanese sources available)"
             )
         elif prefer_audio_language == "en":
@@ -504,7 +571,7 @@ def _build_selection_report(
             en_audio_reason = f"Lower priority than selected source ({strategy})"
         sources_evaluated.append({
             "source": "en_audio_asr",
-            "stream": f"audio:{orig_en_audio_order}" if en_audio_detected else None,
+            "stream": f"audio:{_effective_en_audio}" if en_audio_detected else None,
             "detected": en_audio_detected,
             "status": en_audio_status,
             "reason": en_audio_reason,
@@ -533,25 +600,45 @@ def _build_selection_report(
         })
 
         # --- ja_audio_asr_mt ---
-        # The effective JA audio order may have been promoted from the
-        # EN-tagged track if the language probe detected Japanese content.
-        if probe_rerouted:
+        # The effective JA audio order may have been promoted from:
+        #   (a) an EN-tagged track where the probe detected Japanese, or
+        #   (b) an untagged track where the probe detected Japanese.
+        probe_rerouted_from_en = (
+            probed_lang == "ja"
+            and orig_ja_audio_order is None
+            and orig_en_audio_order is not None
+        )
+        probe_rerouted_from_untagged = (
+            probed_lang == "ja"
+            and orig_ja_audio_order is None
+            and orig_en_audio_order is None
+            and untagged_audio_order is not None
+        )
+        if probe_rerouted_from_en:
             effective_ja_audio = orig_en_audio_order
-            probe_rerouted = True
+        elif probe_rerouted_from_untagged:
+            effective_ja_audio = untagged_audio_order
         else:
             effective_ja_audio = orig_ja_audio_order
-            probe_rerouted = False
+        # Backward-compat alias: probe_rerouted tracks the EN-mislabeled case only.
+        probe_rerouted = probe_rerouted_from_en
         ja_audio_detected = effective_ja_audio is not None
         if not ja_audio_detected:
             ja_audio_status = "not_available"
             ja_audio_reason = "No Japanese audio stream detected in container"
         elif strategy == "ja_audio_asr_mt":
             ja_audio_status = "selected"
-            if probe_rerouted:
+            if probe_rerouted_from_en:
                 ja_audio_reason = (
                     f"EN-tagged audio track {effective_ja_audio} rerouted by "
                     f"language probe (detected Japanese, confidence ≥ "
                     f"{_PROBE_JA_THRESHOLD:.0%}); processed via ASR → MT → English"
+                )
+            elif probe_rerouted_from_untagged:
+                ja_audio_reason = (
+                    f"Untagged audio track {effective_ja_audio} confirmed Japanese by "
+                    f"language probe (confidence ≥ {_PROBE_JA_THRESHOLD:.0%}); "
+                    "processed via ASR → MT → English"
                 )
             else:
                 ja_audio_reason = (
@@ -577,14 +664,16 @@ def _build_selection_report(
 
         # --- untagged_audio_asr_mt (only shown when it was selected) ---
         if strategy == "untagged_audio_asr_mt":
+            _untagged_order_val = untagged_audio_order if untagged_audio_order is not None else 0
             sources_evaluated.append({
                 "source": "untagged_audio_asr_mt",
-                "stream": "audio:0",
+                "stream": f"audio:{_untagged_order_val}",
                 "detected": True,
                 "status": "selected",
                 "reason": (
                     "Last-resort fallback: no language-tagged streams found; "
-                    "first audio track treated as Japanese and routed via ASR → MT"
+                    f"track {_untagged_order_val} "
+                    "treated as Japanese and routed via ASR → MT"
                 ),
             })
 
@@ -602,7 +691,12 @@ def _build_selection_report(
         rationale = selected_entry["reason"]
 
         # Prepend a probe context note when the probe drove the decision
-        if probe_rerouted:
+        if probe_rerouted_from_untagged:
+            rationale = (
+                f"Language probe confirmed Japanese in untagged audio:{untagged_audio_order}: "
+                + rationale
+            )
+        elif probe_rerouted:
             rationale = (
                 f"Language probe overrode container tag on audio:{orig_en_audio_order}: "
                 + rationale
@@ -933,6 +1027,9 @@ def run_generate(
     orig_en_audio_order = en_audio_order
     orig_ja_audio_order = ja_audio_order
     probed_lang: str | None = None
+    # Audio order of the track chosen as the untagged fallback candidate; set
+    # whenever the untagged branch is entered (including via probe).
+    selected_untagged_audio_order: int | None = None
 
     logger.info(
         f"Sources detected: en_sub={en_sub_idx} ja_sub={ja_sub_idx} en_audio={en_audio_order} ja_audio={ja_audio_order}"
@@ -961,6 +1058,59 @@ def run_generate(
             logger.info(
                 "Language probe confirmed English in track %d — keeping EN ASR path.",
                 en_audio_order,
+            )
+
+    elif (
+        audio_track_override is None
+        and prefer_audio_language == "auto"
+        and ja_audio_order is None
+        and en_audio_order is None
+        and media.audio_streams
+    ):
+        # No language-tagged audio found at all.  Select the best untagged
+        # candidate using heuristics, then probe its language so the pipeline
+        # can take the appropriate named path (ja_audio_asr_mt or en_audio_asr)
+        # rather than the low-confidence untagged_audio_asr_mt fallback.
+        _fallback_order, _fallback_reason = _select_untagged_audio_fallback(media)
+        selected_untagged_audio_order = _fallback_order
+        _track_count = len(media.audio_streams)
+        if _track_count > 1:
+            logger.warning(
+                "Tagging ambiguous: %d audio tracks found with no recognized "
+                "language tag. Selected track %d for language probe (%s). "
+                "Use --audio-track N to override.",
+                _track_count, _fallback_order, _fallback_reason,
+            )
+        else:
+            logger.info(
+                "No language-tagged audio found; probing track %d (%s) to "
+                "determine language.",
+                _fallback_order, _fallback_reason,
+            )
+        _probed_untagged_lang = _probe_audio_language(video_path, _fallback_order, cfg)
+        if _probed_untagged_lang == "ja":
+            logger.warning(
+                "Language probe confirmed Japanese in untagged audio track %d "
+                "(container tag: %r) — upgrading to ja_audio_asr_mt path.",
+                _fallback_order,
+                (media.audio_streams[_fallback_order].raw_language or "none"),
+            )
+            ja_audio_order = _fallback_order
+            probed_lang = "ja"
+        elif _probed_untagged_lang == "en":
+            logger.info(
+                "Language probe detected English in untagged audio track %d "
+                "(container tag: %r) — routing through en_audio_asr path.",
+                _fallback_order,
+                (media.audio_streams[_fallback_order].raw_language or "none"),
+            )
+            en_audio_order = _fallback_order
+            probed_lang = "en"
+        else:
+            logger.warning(
+                "Language probe inconclusive for untagged audio track %d — "
+                "will fall back to untagged_audio_asr_mt (treating as Japanese).",
+                _fallback_order,
             )
 
     # --extract-en-subs: embedded EN subs were already written to outbox by the
@@ -1144,14 +1294,32 @@ def run_generate(
             # Untagged audio fallback. Many WEB-DL / MP4 containers have no
             # ISO-639 language tag on the audio stream, so none of the above
             # branches match. Since this pipeline is built for JP→EN, treat
-            # the first audio track as Japanese. User can override with
-            # --audio-track if there are multiple tracks and track 0 is wrong.
-            fallback_order = 0
+            # the selected track as Japanese. User can override with
+            # --audio-track if there are multiple tracks and the chosen track
+            # is wrong.
+            if selected_untagged_audio_order is not None:
+                # Heuristic was already computed during the language probe step
+                # (probe ran but was inconclusive).
+                fallback_order = selected_untagged_audio_order
+                _fallback_reason = "selected by prior heuristic (language probe inconclusive)"
+            else:
+                fallback_order, _fallback_reason = _select_untagged_audio_fallback(media)
+                selected_untagged_audio_order = fallback_order
             strategy = "untagged_audio_asr_mt"
-            logger.warning(
-                f"No language-tagged audio found; falling back to audio track "
-                f"{fallback_order} as Japanese. Pass --audio-track N to override."
-            )
+            _track_count = len(media.audio_streams)
+            if _track_count > 1:
+                logger.warning(
+                    "Ambiguous audio tagging: %d tracks found with no recognized "
+                    "language tag. Selected track %d as primary Japanese (%s). "
+                    "Use --audio-track N to override.",
+                    _track_count, fallback_order, _fallback_reason,
+                )
+            else:
+                logger.warning(
+                    "No language-tagged audio found; treating track %d as "
+                    "Japanese (%s). Pass --audio-track N to override.",
+                    fallback_order, _fallback_reason,
+                )
             with start_span("extract_untagged_audio"):
                 audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_ja_a{fallback_order}.wav"
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), fallback_order)
@@ -1224,6 +1392,7 @@ def run_generate(
             skip_embedded_en=skip_embedded_en,
             audio_track_override=audio_track_override,
             probed_lang=probed_lang,
+            untagged_audio_order=selected_untagged_audio_order,
         )
         _log_selection_report(selection_report)
 
