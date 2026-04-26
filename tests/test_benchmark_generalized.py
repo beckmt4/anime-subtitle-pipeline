@@ -9,6 +9,12 @@ import os
 from pathlib import Path
 from typing import List
 
+import pytest
+
+# Skip the entire module if optional metric libraries are not installed
+pytest.importorskip("jiwer")
+pytest.importorskip("sacrebleu")
+
 from config import Config
 from models import Segment, SubtitleCandidate
 from media_inspect import MediaInfo, AudioStream, SubtitleStream
