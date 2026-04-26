@@ -87,6 +87,33 @@ CREATE TABLE IF NOT EXISTS review_tasks (
 );
 """
 
+_CREATE_PIPELINE_RUNS = """
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id        TEXT    NOT NULL UNIQUE,
+    media_hash    TEXT    NOT NULL,
+    status        TEXT    NOT NULL DEFAULT 'running',
+        -- 'running' | 'completed' | 'failed'
+    config_json   TEXT    NOT NULL DEFAULT '{}',
+    finished_at   TEXT,
+    error_message TEXT,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+_CREATE_ARTIFACTS = """
+CREATE TABLE IF NOT EXISTS artifacts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_hash      TEXT    NOT NULL,
+    artifact_type   TEXT    NOT NULL,
+    file_path       TEXT    NOT NULL,
+    candidate_id    INTEGER REFERENCES subtitle_candidates(id),
+    pipeline_run_id INTEGER REFERENCES pipeline_runs(id),
+    file_hash       TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 # Performance indexes
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_media_assets_hash ON media_assets(media_hash);",
@@ -97,6 +124,15 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_benchmark_media ON benchmark_runs(media_hash);",
     "CREATE INDEX IF NOT EXISTS idx_review_tasks_candidate ON review_tasks(candidate_id);",
     "CREATE INDEX IF NOT EXISTS idx_review_tasks_status ON review_tasks(status);",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_runs_media ON pipeline_runs(media_hash);",
+    "CREATE INDEX IF NOT EXISTS idx_artifacts_media ON artifacts(media_hash);",
+    "CREATE INDEX IF NOT EXISTS idx_artifacts_candidate ON artifacts(candidate_id);",
+]
+
+# Migrations applied to existing databases (ALTER TABLE … ADD COLUMN IF NOT EXISTS
+# is not supported in SQLite < 3.37, so we use a try/except approach).
+_MIGRATIONS = [
+    "ALTER TABLE subtitle_candidates ADD COLUMN parent_candidate_id INTEGER REFERENCES subtitle_candidates(id);",
 ]
 
 _ALL_DDL = [
@@ -105,6 +141,8 @@ _ALL_DDL = [
     _CREATE_SUBTITLE_CANDIDATES,
     _CREATE_BENCHMARK_RUNS,
     _CREATE_REVIEW_TASKS,
+    _CREATE_PIPELINE_RUNS,
+    _CREATE_ARTIFACTS,
     *_INDEXES,
 ]
 
@@ -127,4 +165,10 @@ def init_db(db_path: Union[str, Path]) -> sqlite3.Connection:
     with conn:
         for ddl in _ALL_DDL:
             conn.execute(ddl)
+        # Apply forward-compatible migrations (ignore if column already exists).
+        for migration in _MIGRATIONS:
+            try:
+                conn.execute(migration)
+            except sqlite3.OperationalError:
+                pass  # Column already exists in an existing database.
     return conn
