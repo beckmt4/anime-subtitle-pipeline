@@ -253,18 +253,6 @@ asr:
   prod:
     compute_type: "float16"       # FP16 for 24GB GPU
     batch_size: 16
-
-mt:
-  model_name: "Helsinki-NLP/opus-mt-ja-en"
-  device: "cpu"
-  batch_size: 16
- 
-generate:
-  prefer_subtitles: true          # Prefer existing EN subs
-  prefer_audio_language: "auto"   # "en" | "ja" | "auto"
-  use_llm_polish: true            # Polish MT outputs
-
-asr:
   quality:
     warn_no_speech_prob_above: 0.60
     warn_avg_logprob_below: -1.00
@@ -276,7 +264,24 @@ asr:
     warn_japanese_char_ratio_below: 0.20
     fail_low_confidence_ratio: 0.50
 
+mt:
+  model_name: "Helsinki-NLP/opus-mt-ja-en"
+  device: "cpu"
+  batch_size: 16
+
+translation:
+  engine: "marian"                # marian | llm_direct | hybrid
+  fallback_engine: "marian"
+  context_window_segments: 4
+  mode: "accuracy_first"          # literal | natural_subtitle | accuracy_first
+
+generate:
+  prefer_subtitles: true          # Prefer existing EN subs
+  prefer_audio_language: "auto"   # "en" | "ja" | "auto"
+  use_llm_polish: true            # Polish MT outputs
+
 benchmark:
+  translation_engines: ["marian"] # compare e.g. ["marian", "llm_direct"]
   sources:
     use_embedded_en: true
     use_embedded_jp: true
@@ -307,6 +312,12 @@ status, low-confidence segment counts, threshold values, and per-segment
 `meta.asr.warnings`. The metadata is preserved through MT and LLM polish so QC
 can report `asr_low_confidence` findings for translated lines that started from
 weak transcription.
+
+Japanese-source translation is selected by `translation.engine`. `marian` is the
+offline baseline, `llm_direct` sends each source cue plus nearby context to the
+local Ollama-compatible LLM endpoint, and `hybrid` runs MarianMT first, then asks
+the LLM to translate with the Marian baseline available as context. Candidate
+metadata records engine, model, mode, fallback status, and baseline details.
 
 Benchmark metrics:
 - **WER** – Word Error Rate (lower better)

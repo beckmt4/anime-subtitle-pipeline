@@ -27,6 +27,17 @@ from tracing import start_span
 logger = logging.getLogger(__name__)
 
 
+def _benchmark_translation_engines(config: Config) -> List[str]:
+    configured = config.get("benchmark", "translation_engines", default=None)
+    if configured is None:
+        configured = config.get("translation", "benchmark_engines", default=None)
+    if configured is None:
+        configured = [config.get("translation", "engine", default="marian")]
+    if isinstance(configured, str):
+        configured = [configured]
+    return [str(engine).strip().lower() for engine in configured]
+
+
 def find_all_tracks_by_language(
     media: MediaInfo,
     track_type: str,
@@ -131,6 +142,7 @@ def run_benchmark(
     use_ja_audio = config.get("benchmark", "sources", "use_ja_audio", default=True)
     compare_all_pairs = config.get("benchmark", "compare_all_pairs", default=False)
     max_diffs = config.get("benchmark", "max_diffs_per_comparison", default=20)
+    translation_engines = _benchmark_translation_engines(config)
 
     logger.info("\n[Discovery Phase] Finding all JP/EN audio and subtitle tracks...")
 
@@ -180,9 +192,9 @@ def run_benchmark(
         })
         logger.info("  → %s: %d segments", cand.id, cand.segment_count)
 
-    # 2. Embedded JP subtitles → MT → EN
+    # 2. Embedded JP subtitles → translation engine(s) → EN
     for idx, (order, global_idx, lang) in enumerate(ja_sub_tracks):
-        logger.info("\n[JP-sub %d] Extracting embedded JP subtitle → MT (order=%d, global=%d)...", idx + 1, order, global_idx)
+        logger.info("\n[JP-sub %d] Extracting embedded JP subtitle (order=%d, global=%d)...", idx + 1, order, global_idx)
         with start_span("extract_embedded_jp"):
             ja_cand = extract_subtitle_track(
                 str(video_path_obj),
@@ -190,25 +202,31 @@ def run_benchmark(
                 language="ja",
                 output_dir=temp_dir,
             )
-        with start_span("mt_embedded_jp"):
-            mt_cand = translate_candidate_jp_to_en(ja_cand, config)
-        if use_llm and config.llm_enabled:
-            with start_span("llm_polish_embedded_jp"):
-                polished = polish_candidate_with_llm(mt_cand, config)
-                final_cand = enforce_constraints_on_candidate(polished, config)
-            source_desc = "embedded_mt_llm"
-        else:
-            final_cand = mt_cand
-            source_desc = "embedded_mt"
-        candidates.append(final_cand)
-        candidate_metadata.append({
-            "id": final_cand.id,
-            "source": source_desc,
-            "language": "en",
-            "origin_stream": final_cand.origin_stream,
-            "segment_count": final_cand.segment_count,
-        })
-        logger.info("  → %s: %d segments", final_cand.id, final_cand.segment_count)
+        for engine in translation_engines:
+            logger.info("  Translating JP subtitle candidate with engine=%s", engine)
+            with start_span("mt_embedded_jp", engine=engine):
+                mt_cand = translate_candidate_jp_to_en(ja_cand, config, engine=engine)
+            if use_llm and config.llm_enabled:
+                with start_span("llm_polish_embedded_jp"):
+                    polished = polish_candidate_with_llm(mt_cand, config)
+                    final_cand = enforce_constraints_on_candidate(polished, config)
+                source_desc = f"embedded_mt_{engine}_llm"
+            else:
+                final_cand = mt_cand
+                source_desc = f"embedded_mt_{engine}"
+            candidates.append(final_cand)
+            candidate_metadata.append({
+                "id": final_cand.id,
+                "source": source_desc,
+                "language": "en",
+                "origin_stream": final_cand.origin_stream,
+                "segment_count": final_cand.segment_count,
+                "translation_engine": final_cand.meta.get("translation_engine", engine),
+                "translation_model": final_cand.meta.get("translation_model") or final_cand.meta.get("model"),
+                "translation_mode": final_cand.meta.get("translation_mode"),
+                "translation_fallback": final_cand.meta.get("translation_fallback", False),
+            })
+            logger.info("  → %s: %d segments", final_cand.id, final_cand.segment_count)
 
     # 3. EN audio → ASR
     for idx, (order, global_idx, lang) in enumerate(en_audio_tracks):
@@ -238,7 +256,7 @@ def run_benchmark(
         if en_audio_path.exists():
             en_audio_path.unlink()
 
-    # 4. JP audio → ASR → MT → EN
+    # 4. JP audio → ASR → translation engine(s) → EN
     for idx, (order, global_idx, lang) in enumerate(ja_audio_tracks):
         logger.info("\n[JP-audio %d] Generating EN candidate from JP audio ASR → MT (order=%d)...", idx + 1, order)
         ja_audio_path = temp_dir / f"{video_stem}_ja_a{order}.wav"
@@ -254,25 +272,31 @@ def run_benchmark(
                 language="ja",
                 origin_stream=f"audio:{order}",
             )
-        with start_span("mt_ja_audio"):
-            mt_cand = translate_candidate_jp_to_en(ja_asr_candidate, config)
-        if use_llm and config.llm_enabled:
-            with start_span("llm_polish_ja_audio"):
-                polished = polish_candidate_with_llm(mt_cand, config)
-                final_cand = enforce_constraints_on_candidate(polished, config)
-            source_desc = "asr_mt_llm"
-        else:
-            final_cand = mt_cand
-            source_desc = "asr_mt"
-        candidates.append(final_cand)
-        candidate_metadata.append({
-            "id": final_cand.id,
-            "source": source_desc,
-            "language": "en",
-            "origin_stream": final_cand.origin_stream,
-            "segment_count": final_cand.segment_count,
-        })
-        logger.info("  → %s: %d segments", final_cand.id, final_cand.segment_count)
+        for engine in translation_engines:
+            logger.info("  Translating JP audio candidate with engine=%s", engine)
+            with start_span("mt_ja_audio", engine=engine):
+                mt_cand = translate_candidate_jp_to_en(ja_asr_candidate, config, engine=engine)
+            if use_llm and config.llm_enabled:
+                with start_span("llm_polish_ja_audio"):
+                    polished = polish_candidate_with_llm(mt_cand, config)
+                    final_cand = enforce_constraints_on_candidate(polished, config)
+                source_desc = f"asr_mt_{engine}_llm"
+            else:
+                final_cand = mt_cand
+                source_desc = f"asr_mt_{engine}"
+            candidates.append(final_cand)
+            candidate_metadata.append({
+                "id": final_cand.id,
+                "source": source_desc,
+                "language": "en",
+                "origin_stream": final_cand.origin_stream,
+                "segment_count": final_cand.segment_count,
+                "translation_engine": final_cand.meta.get("translation_engine", engine),
+                "translation_model": final_cand.meta.get("translation_model") or final_cand.meta.get("model"),
+                "translation_mode": final_cand.meta.get("translation_mode"),
+                "translation_fallback": final_cand.meta.get("translation_fallback", False),
+            })
+            logger.info("  → %s: %d segments", final_cand.id, final_cand.segment_count)
         if ja_audio_path.exists():
             ja_audio_path.unlink()
 

@@ -11,7 +11,8 @@ Public API
 ----------
 MTBackend                     Abstract base class.
 MarianTranslator              Concrete MarianMT implementation
-                              (lives in root ``mt.py`` during migration).
+LLMDirectTranslator           Ollama-compatible direct translation backend
+                              (both live in root ``mt.py`` during migration).
 translate_candidate(…)        Direction-agnostic translation helper.
 """
 
@@ -64,9 +65,11 @@ class MTBackend(ABC):
 
 
 # Forward-import concrete implementation during migration period.
-from mt import MarianTranslator  # noqa: F401, E402
+from mt import LLMDirectTranslator, MarianTranslator, translate_candidate  # noqa: F401, E402
 
 __all__ = [
+    "LLMDirectTranslator",
     "MTBackend",
     "MarianTranslator",
+    "translate_candidate",
 ]

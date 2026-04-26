@@ -798,6 +798,14 @@ def _asr_quality_summary(candidate: SubtitleCandidate) -> Dict[str, Any]:
     }
 
 
+def _translation_model_version(candidate: SubtitleCandidate, cfg: Config) -> str:
+    return (
+        candidate.meta.get("translation_model")
+        or candidate.meta.get("model")
+        or cfg.mt_model_name
+    )
+
+
 def _probe_audio_language(
     video_path: Path,
     audio_order: int,
@@ -1294,12 +1302,12 @@ def run_generate(
                 mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
-                model_version=cfg.mt_model_name, parent_id=_ja_db_id,
+                model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
+            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
             if use_llm_polish:
                 with start_span("llm_polish_embedded_jp"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
@@ -1360,12 +1368,12 @@ def run_generate(
                 mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
-                model_version=cfg.mt_model_name, parent_id=_asr_db_id,
+                model_version=_translation_model_version(mt_candidate, cfg), parent_id=_asr_db_id,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
+            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
             if use_llm_polish:
                 with start_span("llm_polish_ja_audio"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
@@ -1467,12 +1475,12 @@ def run_generate(
                 mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
-                model_version=cfg.mt_model_name, parent_id=_asr_db_id,
+                model_version=_translation_model_version(mt_candidate, cfg), parent_id=_asr_db_id,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish raw MT: {raw_srt.name}")
+            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
             if use_llm_polish:
                 with start_span("llm_polish_untagged_audio"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
@@ -1589,6 +1597,10 @@ def run_generate(
             "routing_decision": routing_decision,
             "asr_quality": asr_quality,
             "asr_low_confidence_segment_count": low_confidence_count,
+            "translation_engine": candidate.meta.get("translation_engine"),
+            "translation_model": candidate.meta.get("translation_model") or candidate.meta.get("model"),
+            "translation_mode": candidate.meta.get("translation_mode"),
+            "translation_fallback": candidate.meta.get("translation_fallback", False),
         }
         if polish_stats is not None:
             metadata.update(polish_stats)

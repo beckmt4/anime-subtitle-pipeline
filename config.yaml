@@ -69,6 +69,15 @@ mt:
   batch_size: 16                  # Process multiple segments at once
   max_length: 512                 # Maximum token length per segment
 
+# Translation engine selector. MarianMT remains the offline-safe baseline;
+# llm_direct and hybrid use the Ollama-compatible LLM settings below.
+translation:
+  engine: "marian"                # marian | llm_direct | hybrid
+  fallback_engine: "marian"       # used when llm_direct/hybrid fails
+  context_window_segments: 4      # previous/next source segments in LLM prompt
+  mode: "accuracy_first"          # literal | natural_subtitle | accuracy_first
+  timeout: 60                     # seconds for LLM direct translation calls
+
 # LLM Polishing (Optional)
 llm:
   enabled: true                   # Set to false to skip LLM polishing
@@ -151,6 +160,22 @@ generate:
   prefer_subtitles: true          # If true, prefer existing English subtitles over audio
   prefer_audio_language: "auto"   # "en" | "ja" | "auto" (auto chooses EN if available else JA)
   use_llm_polish: true            # Apply LLM polishing when path involves MT
+
+# Benchmark mode candidate generation.
+benchmark:
+  translation_engines: ["marian"] # compare e.g. ["marian", "llm_direct", "hybrid"]
+  sources:
+    use_embedded_en: true
+    use_embedded_jp: true
+    use_en_audio: true
+    use_ja_audio: true
+  reference_priority:
+    - embedded_en
+    - en_audio_asr
+    - ja_audio_asr_mt
+    - embedded_jp_mt
+  compare_all_pairs: false
+  max_diffs_per_comparison: 20
 
 # Quality routing policy
 # Used by core.policy.PolicyEngine to route generate-mode outputs.

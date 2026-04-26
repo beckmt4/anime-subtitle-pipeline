@@ -22,6 +22,12 @@ generate:
   prefer_subtitles: true          # prefer English subtitle streams
   prefer_audio_language: "auto"   # "en" | "ja" | "auto"
   use_llm_polish: true            # apply LLM to MT outputs
+
+translation:
+  engine: "marian"                # marian | llm_direct | hybrid
+  fallback_engine: "marian"
+  context_window_segments: 4
+  mode: "accuracy_first"          # literal | natural_subtitle | accuracy_first
 ```
 
 Run:
@@ -48,6 +54,16 @@ The same ASR metadata is propagated through MT and LLM outputs. QC summaries can
 include `asr_low_confidence` warning findings so weak translated lines can be
 traced back to uncertain transcription instead of being blamed only on MT.
 
+Japanese-source paths use `translation.engine`:
+- `marian`: current MarianMT baseline.
+- `llm_direct`: direct local LLM translation with nearby source context.
+- `hybrid`: MarianMT baseline plus LLM direct translation with the baseline
+  available as context.
+
+If `llm_direct` or `hybrid` fails, the configured fallback engine is used and
+candidate metadata records `translation_fallback`, `fallback_engine`, and
+`fallback_reason`.
+
 Inspect the planned generate strategy without running ASR, MT, LLM, QC, muxing,
 registry writes, or output writes:
 
@@ -65,6 +81,10 @@ Generates candidates from all enabled sources (see benchmark.sources in config) 
 Config excerpt:
 ```yaml
 benchmark:
+  translation_engines:
+    - marian
+    # - llm_direct
+    # - hybrid
   sources:
     use_embedded_en: true
     use_embedded_jp: true
@@ -85,6 +105,10 @@ python main.py video.mkv --mode benchmark
 ```
 
 Output: `outbox/benchmark_results.json`
+
+When `benchmark.translation_engines` contains multiple engines, each Japanese
+subtitle or Japanese ASR source produces one candidate per engine so benchmark
+comparisons can measure engine behavior side by side.
 
 ## Legacy Subtitle Mode
 
@@ -134,6 +158,21 @@ Disable LLM polish (faster):
 ```yaml
 generate:
   use_llm_polish: false
+```
+
+Use direct LLM translation:
+```yaml
+translation:
+  engine: "llm_direct"
+  fallback_engine: "marian"
+  mode: "accuracy_first"
+  context_window_segments: 4
+```
+
+Compare translation engines in benchmark mode:
+```yaml
+benchmark:
+  translation_engines: ["marian", "llm_direct", "hybrid"]
 ```
 
 Tune ASR warning thresholds:

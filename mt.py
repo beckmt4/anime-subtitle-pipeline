@@ -12,8 +12,9 @@ Key features:
 """
 
 import logging
-from typing import List
+from typing import Any, Dict, List, Optional
 
+import requests
 import torch
 from transformers import MarianMTModel, MarianTokenizer
 
@@ -22,6 +23,9 @@ from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+
+VALID_TRANSLATION_ENGINES = {"marian", "llm_direct", "hybrid"}
 
 
 _PROPAGATED_ASR_META_KEYS = (
@@ -38,6 +42,62 @@ def _copy_asr_candidate_meta(candidate: SubtitleCandidate) -> dict:
         for key in _PROPAGATED_ASR_META_KEYS
         if key in candidate.meta
     }
+
+
+class InvalidTranslationEngineError(ValueError):
+    """Raised when config selects an unsupported translation engine."""
+
+
+def _translation_config(config: Config) -> Dict[str, Any]:
+    def _get(*keys: str, default: Any = None) -> Any:
+        getter = getattr(config, "get", None)
+        if getter is None:
+            return default
+        return getter(*keys, default=default)
+
+    return {
+        "engine": _get("translation", "engine", default="marian"),
+        "fallback_engine": _get("translation", "fallback_engine", default="marian"),
+        "context_window_segments": _get("translation", "context_window_segments", default=4),
+        "mode": _get("translation", "mode", default="accuracy_first"),
+        "timeout": _get("translation", "timeout", default=getattr(config, "llm_timeout", 30)),
+    }
+
+
+def _validate_engine(engine: str) -> str:
+    normalized = (engine or "").strip().lower()
+    if normalized not in VALID_TRANSLATION_ENGINES:
+        valid = ", ".join(sorted(VALID_TRANSLATION_ENGINES))
+        raise InvalidTranslationEngineError(
+            f"Invalid translation engine {engine!r}; expected one of: {valid}"
+        )
+    return normalized
+
+
+def _with_translation_meta(
+    candidate: SubtitleCandidate,
+    *,
+    engine: str,
+    model: str,
+    mode: str,
+    fallback: bool = False,
+    fallback_engine: Optional[str] = None,
+    fallback_reason: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    meta = {
+        "translation_engine": engine,
+        "translation_model": model,
+        "translation_mode": mode,
+        "translation_fallback": fallback,
+        "fallback_engine": fallback_engine,
+        "fallback_reason": fallback_reason,
+        "source_candidate_id": candidate.id,
+        **_copy_asr_candidate_meta(candidate),
+    }
+    if extra:
+        meta.update(extra)
+    return meta
 
 
 class MarianTranslator:
@@ -280,8 +340,12 @@ class MarianTranslator:
                 segments=[],
                 meta={
                     "model": self.config.mt_model_name,
-                    "source_candidate_id": candidate.id,
-                    **_copy_asr_candidate_meta(candidate),
+                    **_with_translation_meta(
+                        candidate,
+                        engine="marian",
+                        model=self.config.mt_model_name,
+                        mode=_translation_config(self.config)["mode"],
+                    ),
                 },
             )
         # Iterate in mt_batch_size chunks. Previously this passed the entire
@@ -314,8 +378,12 @@ class MarianTranslator:
             segments=new_segments,
             meta={
                 "model": self.config.mt_model_name,
-                "source_candidate_id": candidate.id,
-                **_copy_asr_candidate_meta(candidate),
+                **_with_translation_meta(
+                    candidate,
+                    engine="marian",
+                    model=self.config.mt_model_name,
+                    mode=_translation_config(self.config)["mode"],
+                ),
             },
         )
     
@@ -331,6 +399,231 @@ class MarianTranslator:
             self.model = None
             self.tokenizer = None
             torch.cuda.empty_cache()
+
+
+class LLMDirectTranslator:
+    """Direct Japanese-to-English subtitle translator using local Ollama API."""
+
+    def __init__(self, config: Config):
+        self.config = config
+        tcfg = _translation_config(config)
+        self.model_name = config.llm_model_name
+        self.base_url = config.llm_base_url.rstrip("/")
+        self.mode = tcfg["mode"]
+        self.context_window_segments = int(tcfg["context_window_segments"])
+        self.timeout = int(tcfg["timeout"])
+
+        logger.info("Initializing LLM direct translator")
+        logger.info("  Model: %s", self.model_name)
+        logger.info("  Mode: %s", self.mode)
+        logger.info("  Context window: %d segment(s)", self.context_window_segments)
+
+    def _mode_instruction(self) -> str:
+        if self.mode == "literal":
+            return "Translate literally and preserve all meaning, names, register, and implied subjects."
+        if self.mode == "natural_subtitle":
+            return "Translate into concise, natural English subtitle lines while preserving meaning."
+        return (
+            "Translate for maximum accuracy first, then make the English subtitle natural. "
+            "Do not omit, soften, sanitize, or add meaning."
+        )
+
+    def _context_for_index(self, candidate: SubtitleCandidate, index: int) -> str:
+        radius = max(self.context_window_segments, 0)
+        start = max(0, index - radius)
+        end = min(len(candidate.segments), index + radius + 1)
+        lines = []
+        for i in range(start, end):
+            marker = ">>" if i == index else "  "
+            lines.append(f"{marker} {i + 1}: {candidate.segments[i].text}")
+        return "\n".join(lines)
+
+    def _build_prompt(
+        self,
+        candidate: SubtitleCandidate,
+        index: int,
+        baseline_text: Optional[str] = None,
+    ) -> str:
+        source_text = candidate.segments[index].text
+        baseline_block = (
+            f"\nBaseline MarianMT translation:\n{baseline_text}\n"
+            if baseline_text is not None
+            else ""
+        )
+        return (
+            "You are translating Japanese dialogue into English subtitles.\n"
+            f"Mode: {self.mode}\n"
+            f"Instruction: {self._mode_instruction()}\n\n"
+            "Context segments. Translate only the line marked with >>.\n"
+            f"{self._context_for_index(candidate, index)}\n"
+            f"{baseline_block}\n"
+            "Return only the English translation for this one subtitle cue.\n"
+            f"Japanese cue:\n{source_text}"
+        )
+
+    def _generate_text(self, prompt: str) -> str:
+        response = requests.post(
+            f"{self.base_url}/api/generate",
+            json={
+                "model": self.model_name,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": self.config.llm_temperature,
+                    "top_p": self.config.get("llm", "top_p", default=0.9),
+                },
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = str(data.get("response", "")).strip()
+        if not text:
+            raise RuntimeError("LLM direct translation returned empty response")
+        return text
+
+    def translate_candidate(
+        self,
+        candidate: SubtitleCandidate,
+        target_language: str = "en",
+        baseline_candidate: Optional[SubtitleCandidate] = None,
+        engine_name: str = "llm_direct",
+    ) -> SubtitleCandidate:
+        translations: List[str] = []
+        for i, segment in enumerate(candidate.segments):
+            if not segment.text.strip():
+                translations.append("")
+                continue
+            baseline_text = None
+            if baseline_candidate is not None and i < len(baseline_candidate.segments):
+                baseline_text = baseline_candidate.segments[i].text
+            prompt = self._build_prompt(candidate, i, baseline_text=baseline_text)
+            translations.append(self._generate_text(prompt))
+
+        new_segments = [
+            GenericSegment(start=s.start, end=s.end, text=t, meta=dict(s.meta))
+            for s, t in zip(candidate.segments, translations)
+        ]
+        extra = {
+            "context_window_segments": self.context_window_segments,
+            "llm_base_url": self.base_url,
+        }
+        if baseline_candidate is not None:
+            extra.update({
+                "baseline_candidate_id": baseline_candidate.id,
+                "baseline_engine": baseline_candidate.meta.get("translation_engine", "marian"),
+                "baseline_model": baseline_candidate.meta.get("translation_model", baseline_candidate.meta.get("model")),
+            })
+        return SubtitleCandidate(
+            id=f"{candidate.id}_{engine_name}",
+            language=target_language,
+            source="mt",
+            origin_stream=candidate.origin_stream,
+            segments=new_segments,
+            meta={
+                "model": self.model_name,
+                **_with_translation_meta(
+                    candidate,
+                    engine=engine_name,
+                    model=self.model_name,
+                    mode=self.mode,
+                    extra=extra,
+                ),
+            },
+        )
+
+
+def _translate_with_marian(
+    candidate: SubtitleCandidate,
+    config: Config,
+    target_language: str,
+) -> SubtitleCandidate:
+    translator = MarianTranslator(config)
+    try:
+        return translator.translate_candidate(candidate, target_language=target_language)
+    finally:
+        translator.unload_model()
+
+
+def _fallback_to_marian(
+    candidate: SubtitleCandidate,
+    config: Config,
+    *,
+    failed_engine: str,
+    reason: Exception,
+    target_language: str,
+) -> SubtitleCandidate:
+    logger.warning(
+        "Translation engine %s failed; falling back to MarianMT: %s",
+        failed_engine,
+        reason,
+    )
+    fallback = _translate_with_marian(candidate, config, target_language)
+    fallback.meta.update({
+        "translation_fallback": True,
+        "failed_translation_engine": failed_engine,
+        "fallback_engine": "marian",
+        "fallback_reason": str(reason),
+    })
+    return fallback
+
+
+def translate_candidate(
+    candidate: SubtitleCandidate,
+    config: Config,
+    *,
+    engine: Optional[str] = None,
+    target_language: str = "en",
+) -> SubtitleCandidate:
+    """Translate a candidate using the configured translation engine selector."""
+    tcfg = _translation_config(config)
+    selected_engine = _validate_engine(engine or tcfg["engine"])
+    fallback_engine = _validate_engine(tcfg["fallback_engine"])
+
+    if selected_engine == "marian":
+        return _translate_with_marian(candidate, config, target_language)
+
+    if selected_engine == "llm_direct":
+        try:
+            return LLMDirectTranslator(config).translate_candidate(
+                candidate,
+                target_language=target_language,
+            )
+        except Exception as exc:
+            if fallback_engine != "marian":
+                raise
+            return _fallback_to_marian(
+                candidate,
+                config,
+                failed_engine="llm_direct",
+                reason=exc,
+                target_language=target_language,
+            )
+
+    if selected_engine == "hybrid":
+        baseline = _translate_with_marian(candidate, config, target_language)
+        try:
+            return LLMDirectTranslator(config).translate_candidate(
+                candidate,
+                target_language=target_language,
+                baseline_candidate=baseline,
+                engine_name="hybrid",
+            )
+        except Exception as exc:
+            logger.warning("Hybrid LLM refinement failed; returning Marian baseline: %s", exc)
+            baseline.meta.update({
+                "translation_engine": "hybrid",
+                "translation_model": config.llm_model_name,
+                "translation_fallback": True,
+                "fallback_engine": "marian",
+                "fallback_reason": str(exc),
+                "baseline_engine": "marian",
+                "baseline_model": config.mt_model_name,
+            })
+            baseline.id = f"{candidate.id}_hybrid_fallback_marian"
+            return baseline
+
+    raise AssertionError(f"Unhandled translation engine: {selected_engine}")
 
 
 def translate_segments_ja_to_en(segments: List[Segment], config: Config) -> List[Segment]:
@@ -352,12 +645,17 @@ def translate_segments_ja_to_en(segments: List[Segment], config: Config) -> List
     return segments
 
 
-def translate_candidate_jp_to_en(candidate: SubtitleCandidate, config: Config) -> SubtitleCandidate:
-    """Convenience function translating a Japanese candidate to English."""
-    translator = MarianTranslator(config)
-    result = translator.translate_candidate(candidate, target_language="en")
-    translator.unload_model()
-    return result
+def translate_candidate_jp_to_en(
+    candidate: SubtitleCandidate,
+    config: Config,
+    engine: Optional[str] = None,
+) -> SubtitleCandidate:
+    """Convenience function translating a Japanese candidate to English.
+
+    Uses ``translation.engine`` by default while preserving the legacy function
+    name used by existing generate/benchmark call sites.
+    """
+    return translate_candidate(candidate, config, engine=engine, target_language="en")
 
 
 # Alternative: Keep model loaded for batch processing
@@ -390,7 +688,11 @@ class BatchTranslator:
         return self.translator.translate_candidate(candidate, target_language="en")
 
 __all__ = [
+    "InvalidTranslationEngineError",
+    "LLMDirectTranslator",
     "MarianTranslator",
+    "VALID_TRANSLATION_ENGINES",
+    "translate_candidate",
     "translate_segments_ja_to_en",
     "translate_candidate_jp_to_en",
     "BatchTranslator",

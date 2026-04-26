@@ -71,15 +71,22 @@ def dummy_extract_subtitle_track(video, sub_index, language, output_dir=None):
     )
 
 
-def dummy_translate_candidate_jp_to_en(cand: SubtitleCandidate, config: Config):
+def dummy_translate_candidate_jp_to_en(cand: SubtitleCandidate, config: Config, engine=None):
     # Produce a shallow copy with language changed and id updated
+    engine = engine or config.get("translation", "engine", default="marian")
     return SubtitleCandidate(
-        id=cand.id.replace("embedded_ja", "embedded_jp_mt").replace("_ja_", "_en_"),
+        id=cand.id.replace("embedded_ja", "embedded_jp_mt").replace("_ja_", "_en_") + f"_{engine}",
         language="en",
         source="embedded_mt" if cand.source == "embedded" else "asr_mt",
         origin_stream=cand.origin_stream,
         segments=[Segment(start=s.start, end=s.end, text=s.text + " (mt)") for s in cand.segments],
-        meta=cand.meta.copy(),
+        meta={
+            **cand.meta.copy(),
+            "translation_engine": engine,
+            "translation_model": f"model-{engine}",
+            "translation_mode": "accuracy_first",
+            "translation_fallback": False,
+        },
     )
 
 
@@ -230,6 +237,37 @@ def test_reference_selection_without_embedded_en():
     _SYNTH_MEDIA.subtitle_streams.append(
         SubtitleStream(index=10, codec="subrip", language="en", raw_language="eng")
     )
+
+
+def test_benchmark_can_compare_translation_engines():
+    """Benchmark mode should emit separate JP-source candidates per configured engine."""
+    _install_monkeypatches()
+    cfg = Config()
+    cfg._config.setdefault("benchmark", {})
+    cfg._config["benchmark"].update({
+        "sources": {
+            "use_embedded_en": True,
+            "use_embedded_jp": True,
+            "use_en_audio": False,
+            "use_ja_audio": True,
+        },
+        "translation_engines": ["marian", "llm_direct"],
+        "reference_priority": ["embedded_en", "embedded_jp_mt", "ja_audio_asr_mt"],
+        "compare_all_pairs": False,
+    })
+
+    dummy_video = Path("temp/test_video_translation_engines.mkv")
+    dummy_video.parent.mkdir(parents=True, exist_ok=True)
+    dummy_video.write_bytes(b"00")
+
+    results = bm.run_benchmark(str(dummy_video), cfg, use_llm=False)
+
+    engine_candidates = [
+        c for c in results["candidates"]
+        if c.get("translation_engine") in {"marian", "llm_direct"}
+    ]
+    assert len(engine_candidates) == 4, engine_candidates
+    assert {c["translation_engine"] for c in engine_candidates} == {"marian", "llm_direct"}
 
 
 def run_all_generalized_tests():

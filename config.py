@@ -167,6 +167,22 @@ class Config:
     @property
     def mt_batch_size(self) -> int:
         return self.get("mt", "batch_size", default=16)
+
+    @property
+    def translation_engine(self) -> str:
+        return self.get("translation", "engine", default="marian")
+
+    @property
+    def translation_fallback_engine(self) -> str:
+        return self.get("translation", "fallback_engine", default="marian")
+
+    @property
+    def translation_context_window_segments(self) -> int:
+        return self.get("translation", "context_window_segments", default=4)
+
+    @property
+    def translation_mode(self) -> str:
+        return self.get("translation", "mode", default="accuracy_first")
     
     @property
     def llm_enabled(self) -> bool:

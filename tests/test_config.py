@@ -304,3 +304,21 @@ class TestDefaultConfigGeneratePlacement:
 
     def test_use_llm_polish_is_not_none(self, default_cfg):
         assert default_cfg.get("generate", "use_llm_polish") is not None
+
+
+class TestDefaultConfigTranslationPlacement:
+    """Guard the top-level translation engine selector config."""
+
+    @pytest.fixture
+    def default_cfg(self):
+        default_config = Path(__file__).parent.parent / "config.yaml"
+        return Config(str(default_config))
+
+    def test_translation_engine_defaults_to_marian(self, default_cfg):
+        assert default_cfg.translation_engine == "marian"
+
+    def test_translation_fallback_engine_is_present(self, default_cfg):
+        assert default_cfg.translation_fallback_engine == "marian"
+
+    def test_translation_mode_is_present(self, default_cfg):
+        assert default_cfg.translation_mode == "accuracy_first"
