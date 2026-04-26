@@ -895,6 +895,155 @@ def test_generate_no_usable_source_error_case():
 
 
 # ---------------------------------------------------------------------------
+# Generate inspect-only tests (issue #53)
+# ---------------------------------------------------------------------------
+
+def test_inspect_only_embedded_en_skips_execution_calls():
+    """Inspect-only should plan embedded EN without extracting or writing subtitles."""
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=True, jp_sub=True, jp_audio=True)
+    original_extract = orch.extract_subtitle_track
+    original_write = orch.write_candidate_srt
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("inspect_only must not execute source extraction or writes")
+
+    orch.extract_subtitle_track = forbidden
+    orch.write_candidate_srt = forbidden
+    try:
+        meta = orch.run_generate(media, cfg, inspect_only=True)
+    finally:
+        orch.extract_subtitle_track = original_extract
+        orch.write_candidate_srt = original_write
+
+    assert meta["inspect_only"] is True
+    assert meta["executed"] is False
+    assert meta["strategy"] == "embedded_en"
+    assert meta["registry_run_id"] is None
+    assert meta["selection_report"]["selected_source"] == "embedded_en"
+    assert "planned_output_srt" in meta
+
+
+def test_inspect_only_embedded_jp_mt_skips_mt_llm_and_writes():
+    """Inspect-only should choose the JA subtitle MT plan without running MT/LLM/write steps."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=False)
+    originals = (
+        orch.extract_subtitle_track,
+        orch.translate_candidate_jp_to_en,
+        orch.polish_candidate_with_llm,
+        orch.write_candidate_srt,
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("inspect_only must not execute subtitle extraction, MT, LLM, or writes")
+
+    (
+        orch.extract_subtitle_track,
+        orch.translate_candidate_jp_to_en,
+        orch.polish_candidate_with_llm,
+        orch.write_candidate_srt,
+    ) = (forbidden, forbidden, forbidden, forbidden)
+    try:
+        meta = orch.run_generate(media, cfg, inspect_only=True)
+    finally:
+        (
+            orch.extract_subtitle_track,
+            orch.translate_candidate_jp_to_en,
+            orch.polish_candidate_with_llm,
+            orch.write_candidate_srt,
+        ) = originals
+
+    assert meta["strategy"] == "embedded_jp_mt"
+    assert meta["inspect_only"] is True
+    assert meta["selection_report"]["review_recommended"] is True
+
+
+def test_inspect_only_ja_audio_skips_asr_mt_llm_and_writes():
+    """Inspect-only should choose the JA audio plan without touching audio or models."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=False, jp_audio=True)
+    originals = (
+        orch.extract_audio_with_ffmpeg,
+        orch.FasterWhisperASR,
+        orch.translate_candidate_jp_to_en,
+        orch.polish_candidate_with_llm,
+        orch.write_candidate_srt,
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("inspect_only must not execute audio extraction, ASR, MT, LLM, or writes")
+
+    (
+        orch.extract_audio_with_ffmpeg,
+        orch.FasterWhisperASR,
+        orch.translate_candidate_jp_to_en,
+        orch.polish_candidate_with_llm,
+        orch.write_candidate_srt,
+    ) = (forbidden, forbidden, forbidden, forbidden, forbidden)
+    try:
+        meta = orch.run_generate(media, cfg, inspect_only=True)
+    finally:
+        (
+            orch.extract_audio_with_ffmpeg,
+            orch.FasterWhisperASR,
+            orch.translate_candidate_jp_to_en,
+            orch.polish_candidate_with_llm,
+            orch.write_candidate_srt,
+        ) = originals
+
+    assert meta["strategy"] == "ja_audio_asr_mt"
+    assert meta["inspect_only"] is True
+
+
+def test_inspect_only_untagged_audio_uses_heuristic_without_probe():
+    """Untagged inspect-only should expose the low-confidence fallback without ASR probing."""
+    from media_inspect import AudioStream
+
+    cfg = Config()
+    media = MediaInfo(
+        path=Path("untagged.mkv"),
+        format_name="matroska",
+        duration=120.0,
+        audio_streams=[AudioStream(index=0, codec="aac", language=None)],
+        subtitle_streams=[],
+    )
+    original_asr = orch.FasterWhisperASR
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("inspect_only must not instantiate ASR for language probing")
+
+    orch.FasterWhisperASR = forbidden
+    try:
+        meta = orch.run_generate(media, cfg, inspect_only=True)
+    finally:
+        orch.FasterWhisperASR = original_asr
+
+    assert meta["strategy"] == "untagged_audio_asr_mt"
+    report = meta["selection_report"]
+    assert report["confidence_tier"] == "very_low"
+    assert report["review_recommended"] is True
+    assert any(
+        source["source"] == "untagged_audio_asr_mt"
+        and source["status"] == "selected"
+        for source in report["sources_evaluated"]
+    )
+
+
+def test_inspect_only_no_usable_source_error_case():
+    """Inspect-only should fail clearly when no source can be planned."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=False, jp_audio=False)
+
+    try:
+        orch.run_generate(media, cfg, inspect_only=True)
+    except RuntimeError as exc:
+        assert "No usable source found" in str(exc)
+    else:
+        raise AssertionError("Expected inspect-only mode to reject media with no usable sources")
+
+
+# ---------------------------------------------------------------------------
 # PolicyEngine unit tests (core.policy)
 # ---------------------------------------------------------------------------
 

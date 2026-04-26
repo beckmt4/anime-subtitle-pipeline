@@ -35,6 +35,13 @@ Metadata: the CLI prints `registry_run_id=<id>` when the run is recorded in the
 artifact registry. The registry defaults to `outbox/pipeline.db` unless
 `artifacts.db_path` is configured.
 
+Inspect the planned generate strategy without running ASR, MT, LLM, QC, muxing,
+registry writes, or output writes:
+
+```powershell
+python main.py video.mkv --mode generate --inspect-only
+```
+
 ## Benchmark Mode
 
 Generates candidates from all enabled sources (see benchmark.sources in config) and computes metrics:

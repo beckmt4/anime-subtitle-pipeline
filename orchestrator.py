@@ -1,7 +1,8 @@
 """High-level orchestration for the generation flow.
 
 Provides the primary entry point:
-- run_generate(media: MediaInfo, cfg: Config, no_llm: bool = False) -> dict
+- run_generate(media: MediaInfo, cfg: Config, no_llm: bool = False,
+               inspect_only: bool = False) -> dict
 
 Generation strategy decision tree (default priorities):
 1. If prefer_subtitles and English text subtitles exist → use embedded EN
@@ -23,7 +24,9 @@ Config overrides (config.yaml generate section):
     prefer_audio_language: "auto"  # "en" | "ja" | "auto"
     use_llm_polish: true
 
-Returned metadata includes chosen strategy and output SRT path.
+Executed metadata includes chosen strategy and output SRT path. Inspect-only
+metadata includes chosen strategy, planned output paths, and the same
+selection_report without running heavy processing steps.
 """
 from __future__ import annotations
 
@@ -970,6 +973,7 @@ def run_generate(
     skip_embedded_en: bool = False,
     registry: Optional[ArtifactRegistry] = None,
     media_hash: Optional[str] = None,
+    inspect_only: bool = False,
 ) -> Dict[str, Any]:
     """Production generation flow selecting best available source for EN subtitles.
 
@@ -987,6 +991,9 @@ def run_generate(
             force the pipeline through ASR → MT (→ LLM). Used with --extract-en-subs
             so the extracted embedded subs and the freshly generated subs can be
             compared or used for training.
+        inspect_only: When True, perform source discovery and strategy planning
+            only. No ASR, MT, LLM, subtitle extraction, QC, artifact registry,
+            or output-file writes are executed.
         registry: Optional open ArtifactRegistry.  When provided, every
             SubtitleCandidate, PipelineRun, and output ArtifactRecord is
             persisted with full lineage (ASR → MT → LLM parent_candidate_id
@@ -1009,6 +1016,8 @@ def run_generate(
     )
     if no_llm:
         logger.info("LLM polish disabled via --no-llm (CLI override)")
+    if inspect_only:
+        logger.info("Inspect-only mode enabled: planning generate flow without execution")
 
     logger.info("=" * 70)
     logger.info(f"GENERATE MODE: {video_path.name}")
@@ -1040,6 +1049,8 @@ def run_generate(
     # through the JA ASR → MT path instead of being silently transcribed as
     # English gibberish.
     if (
+        not inspect_only
+        and
         audio_track_override is None
         and prefer_audio_language == "auto"
         and ja_audio_order is None
@@ -1061,6 +1072,8 @@ def run_generate(
             )
 
     elif (
+        not inspect_only
+        and
         audio_track_override is None
         and prefer_audio_language == "auto"
         and ja_audio_order is None
@@ -1141,6 +1154,55 @@ def run_generate(
         en_sub_idx = None
         ja_sub_idx = None
         en_audio_order = None
+
+    if inspect_only:
+        if prefer_subtitles and en_sub_idx is not None:
+            strategy = "embedded_en"
+        elif prefer_audio_language == "en" and en_audio_order is not None:
+            strategy = "en_audio_asr"
+        elif ja_sub_idx is not None:
+            strategy = "embedded_jp_mt"
+        elif prefer_audio_language in ["ja", "auto"] and ja_audio_order is not None:
+            strategy = "ja_audio_asr_mt"
+        elif en_audio_order is not None:
+            strategy = "en_audio_asr"
+        elif media.audio_streams:
+            strategy = "untagged_audio_asr_mt"
+            if selected_untagged_audio_order is None:
+                selected_untagged_audio_order, _ = _select_untagged_audio_fallback(media)
+        else:
+            raise RuntimeError(
+                "No usable source found for English subtitle generation "
+                "(file has no audio or subtitle streams)"
+            )
+
+        selection_report = _build_selection_report(
+            strategy=strategy,
+            orig_en_sub_idx=orig_en_sub_idx,
+            orig_ja_sub_idx=orig_ja_sub_idx,
+            orig_en_audio_order=orig_en_audio_order,
+            orig_ja_audio_order=orig_ja_audio_order,
+            prefer_subtitles=prefer_subtitles,
+            prefer_audio_language=prefer_audio_language,
+            skip_embedded_en=skip_embedded_en,
+            audio_track_override=audio_track_override,
+            probed_lang=probed_lang,
+            untagged_audio_order=selected_untagged_audio_order,
+        )
+        _log_selection_report(selection_report)
+
+        out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
+        qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
+        return {
+            "video": str(video_path.name),
+            "strategy": strategy,
+            "inspect_only": True,
+            "executed": False,
+            "planned_output_srt": str(out_srt),
+            "planned_qc_json": str(qc_path),
+            "selection_report": selection_report,
+            "registry_run_id": None,
+        }
 
     # --- Registry: start pipeline run record ---
     _run_id = uuid.uuid4().hex

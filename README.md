@@ -201,6 +201,9 @@ runtime:
 # Generate (strategy selection)
 python main.py video.mkv --mode generate
 
+# Inspect planned generate strategy without running models or writing outputs
+python main.py video.mkv --mode generate --inspect-only
+
 # Legacy subtitle pipeline (JP audio → ASR → MT → LLM)
 python main.py video.mkv --mode subtitle
 

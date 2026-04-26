@@ -534,6 +534,15 @@ Examples:
             "reference/training data from files that already have good EN subs."
         )
     )
+
+    parser.add_argument(
+        "--inspect-only",
+        action="store_true",
+        help=(
+            "In generate mode, inspect sources and report the planned strategy "
+            "without running ASR, MT, LLM, QC, muxing, registry writes, or output writes"
+        )
+    )
     
     parser.add_argument(
         "--mode",
@@ -628,7 +637,7 @@ Examples:
     # --extract-en-subs: pull all embedded English text subtitle tracks to outbox,
     # then continue into the normal generation pipeline so you get both the
     # reference/embedded subs and the freshly-generated output for comparison.
-    if args.extract_en_subs:
+    if args.extract_en_subs and not args.inspect_only:
         try:
             from subtitle_utils import extract_subtitle_track as _extract_sub
             _media_for_extract = inspect_media(args.video)
@@ -688,17 +697,22 @@ Examples:
             logger.info("Running in GENERATE mode (strategy selection)")
             media = inspect_media(args.video)
 
-            # Compute media hash and open registry before generation so that
-            # the pipeline run is recorded even if generation fails mid-way.
-            video_path_for_hash = Path(args.video)
-            try:
-                media_hash = compute_media_hash(video_path_for_hash)
-                logger.debug("Media hash: %s", media_hash)
-            except Exception as exc:
-                logger.warning("Could not compute media hash -- registry disabled: %s", exc)
+            if args.inspect_only:
+                logger.info("Inspect-only requested: registry and output writes disabled")
+                registry = None
                 media_hash = None
+            else:
+                # Compute media hash and open registry before generation so that
+                # the pipeline run is recorded even if generation fails mid-way.
+                video_path_for_hash = Path(args.video)
+                try:
+                    media_hash = compute_media_hash(video_path_for_hash)
+                    logger.debug("Media hash: %s", media_hash)
+                except Exception as exc:
+                    logger.warning("Could not compute media hash -- registry disabled: %s", exc)
+                    media_hash = None
 
-            registry = open_registry(config)
+                registry = open_registry(config)
 
             meta = run_generate(
                 media,
@@ -708,12 +722,19 @@ Examples:
                 skip_embedded_en=args.extract_en_subs,
                 registry=registry,
                 media_hash=media_hash,
+                inspect_only=args.inspect_only,
             )
-            logger.info("\nGeneration Result:")
-            logger.info(f"  Strategy: {meta['strategy']}")
-            logger.info(f"  Candidate: {meta['candidate_id']}")
-            logger.info(f"  Segments: {meta['segment_count']}")
-            logger.info(f"  Output SRT: {meta['output_srt']}")
+            if args.inspect_only:
+                logger.info("\nGenerate Inspect Result:")
+                logger.info(f"  Planned strategy: {meta['strategy']}")
+                logger.info(f"  Planned SRT: {meta['planned_output_srt']}")
+                logger.info("  Execution: skipped")
+            else:
+                logger.info("\nGeneration Result:")
+                logger.info(f"  Strategy: {meta['strategy']}")
+                logger.info(f"  Candidate: {meta['candidate_id']}")
+                logger.info(f"  Segments: {meta['segment_count']}")
+                logger.info(f"  Output SRT: {meta['output_srt']}")
             routing = meta.get("routing_decision", {})
             decision = routing.get("decision", "")
             if decision:
