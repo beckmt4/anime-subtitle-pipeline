@@ -81,9 +81,13 @@ def _e(text: str) -> str:
 
 def _source_pill(source: str) -> str:
     s = source.lower()
-    if "embedded" in s and "mt" not in s and "llm" not in s:
+    # Check composite sources before single-label sources to avoid mis-classification.
+    # e.g. "ja_audio_asr_mt" contains both "asr" and "mt" → should be mt/pipeline pill.
+    if "asr" in s and ("mt" in s or "llm" in s):
+        cls = "pill-mt"
+    elif "embedded" in s and "mt" not in s and "llm" not in s:
         cls = "pill-embedded"
-    elif "asr" in s and "mt" not in s:
+    elif "asr" in s:
         cls = "pill-asr"
     elif "mt" in s or "llm" in s:
         cls = "pill-mt"
@@ -177,13 +181,13 @@ def build_scorecards(results: Dict[str, Any]) -> List[Dict[str, Any]]:
         scorecards.append(scorecard)
 
     # Sort: reference first, then by composite score descending (best → worst), nulls last
-    def _sort_key(sc):
+    def _scorecard_sort_key(sc):
         if sc["is_reference"]:
             return (2, 0.0)   # highest group → always first with reverse=True
         c = sc["composite_score"]
         return (1, c) if c is not None else (0, 0.0)  # nulls in group 0 → last
 
-    scorecards.sort(key=_sort_key, reverse=True)
+    scorecards.sort(key=_scorecard_sort_key, reverse=True)
     # Assign rank (1-based, reference excluded from ranking)
     rank = 1
     for sc in scorecards:
