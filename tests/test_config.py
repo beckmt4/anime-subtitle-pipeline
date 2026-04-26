@@ -245,3 +245,30 @@ class TestGetPathResolution:
         Config(str(config_file))
         for name in ("inbox", "outbox", "logs", "temp"):
             assert (nested / name).is_dir(), f"{name} was not created under config dir"
+
+
+# ---------------------------------------------------------------------------
+# Default config — generate key placement regression guard
+# ---------------------------------------------------------------------------
+
+class TestDefaultConfigGeneratePlacement:
+    """Guard against the regression where generate: was nested under benchmark:.
+
+    When generate: is mis-placed, cfg.get('generate', ...) silently returns
+    None (the default) instead of the configured value.  Loading the real
+    config.yaml ensures the key stays at the top level.
+    """
+
+    @pytest.fixture
+    def default_cfg(self):
+        default_config = Path(__file__).parent.parent / "config.yaml"
+        return Config(str(default_config))
+
+    def test_prefer_subtitles_is_not_none(self, default_cfg):
+        assert default_cfg.get("generate", "prefer_subtitles") is not None
+
+    def test_prefer_audio_language_is_not_none(self, default_cfg):
+        assert default_cfg.get("generate", "prefer_audio_language") is not None
+
+    def test_use_llm_polish_is_not_none(self, default_cfg):
+        assert default_cfg.get("generate", "use_llm_polish") is not None
