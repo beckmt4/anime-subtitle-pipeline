@@ -84,7 +84,6 @@ def test_candidate_builder() -> bool:
     assert candidate.segments[0].meta["asr"]["low_confidence"] is False
 
     logger.info("✓ ASR candidate builder tests passed")
-    return True
 
 
 def test_candidate_builder_flags_weak_asr_segments():
@@ -120,7 +119,11 @@ def test_candidate_builder_empty_asr_is_fail_status():
 
 
 if __name__ == "__main__":
-    ok = test_candidate_builder()
-    logger.info("Result: %s", "PASS" if ok else "FAIL")
     import sys
-    sys.exit(0 if ok else 1)
+    try:
+        test_candidate_builder()
+        logger.info("Result: PASS")
+        sys.exit(0)
+    except AssertionError as e:
+        logger.error("Result: FAIL — %s", e)
+        sys.exit(1)

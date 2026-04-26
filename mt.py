@@ -12,6 +12,7 @@ Key features:
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -461,26 +462,35 @@ class LLMDirectTranslator:
             f"Japanese cue:\n{source_text}"
         )
 
-    def _generate_text(self, prompt: str) -> str:
-        response = requests.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": self.model_name,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": self.config.llm_temperature,
-                    "top_p": self.config.get("llm", "top_p", default=0.9),
-                },
+    def _generate_text(self, prompt: str, retry_count: int = 2) -> str:
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": self.config.llm_temperature,
+                "top_p": self.config.get("llm", "top_p", default=0.9),
             },
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        data = response.json()
-        text = str(data.get("response", "")).strip()
-        if not text:
-            raise RuntimeError("LLM direct translation returned empty response")
-        return text
+        }
+        for attempt in range(retry_count + 1):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                text = str(response.json().get("response", "")).strip()
+                if not text:
+                    raise RuntimeError("LLM direct translation returned empty response")
+                return text
+            except requests.Timeout:
+                logger.warning("LLM direct request timeout (attempt %d/%d)", attempt + 1, retry_count + 1)
+            except Exception as e:
+                logger.warning("LLM direct request failed (attempt %d/%d): %s", attempt + 1, retry_count + 1, e)
+            if attempt < retry_count:
+                time.sleep(1)
+        raise RuntimeError(f"LLM direct translation failed after {retry_count + 1} attempts")
 
     def translate_candidate(
         self,

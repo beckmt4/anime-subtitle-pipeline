@@ -1253,6 +1253,7 @@ def run_generate(
     try:
         strategy = None
         candidate: SubtitleCandidate | None = None
+        _final_db_id: Optional[int] = None
         polish_stats: Dict[str, Any] | None = None
 
         # Decision tree
@@ -1502,13 +1503,6 @@ def run_generate(
             )
 
         assert candidate is not None, "Generation strategy produced no candidate"
-
-        # Ensure _final_db_id is always defined (branches without explicit lineage
-        # tracking set it to None; non-registry runs never set it at all).
-        try:
-            _final_db_id  # noqa: F821
-        except NameError:
-            _final_db_id = None
 
         # Build and log the explainable source-selection report
         selection_report = _build_selection_report(

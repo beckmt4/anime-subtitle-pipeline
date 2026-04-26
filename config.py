@@ -63,19 +63,12 @@ class Config:
         Profile sub-dicts are removed after merging so that subsequent calls to
         ``get()`` never accidentally return a nested dict.
         """
-        # ASR profile settings
-        if "asr" in self._config:
-            asr_profile = self._config["asr"].get(self.profile, {})
-            self._config["asr"].update(asr_profile)
-            for key in self._PROFILE_KEYS:
-                self._config["asr"].pop(key, None)
-        
-        # LLM profile settings
-        if "llm" in self._config:
-            llm_profile = self._config["llm"].get(self.profile, {})
-            self._config["llm"].update(llm_profile)
-            for key in self._PROFILE_KEYS:
-                self._config["llm"].pop(key, None)
+        for section in ("asr", "llm", "mt", "mux", "generate", "qc"):
+            if section in self._config:
+                profile_overrides = self._config[section].get(self.profile, {})
+                self._config[section].update(profile_overrides)
+                for key in self._PROFILE_KEYS:
+                    self._config[section].pop(key, None)
     
     def _ensure_directories(self) -> None:
         """
@@ -267,11 +260,16 @@ class Config:
         style = style or self.llm_style
         prompt_template = self.get("llm", "prompts", style, default="")
         
-        # Fill in formatting placeholders
-        return prompt_template.format(
-            max_lines=self.llm_max_lines,
-            max_chars_per_line=self.llm_max_chars_per_line
-        )
+        try:
+            return prompt_template.format(
+                max_lines=self.llm_max_lines,
+                max_chars_per_line=self.llm_max_chars_per_line,
+            )
+        except (KeyError, IndexError, ValueError) as exc:
+            raise ValueError(
+                f"LLM prompt template for style '{style}' has an unexpected placeholder: {exc}. "
+                f"Only {{max_lines}} and {{max_chars_per_line}} are supported."
+            ) from exc
     
     def __repr__(self) -> str:
         return f"Config(profile={self.profile}, config_path={self.config_path})"

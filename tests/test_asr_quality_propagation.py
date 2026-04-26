@@ -22,6 +22,9 @@ class StubConfig:
     def mt_device(self):
         return "cpu"
 
+    def get(self, *keys, default=None):
+        return default
+
 
 def test_mt_candidate_preserves_asr_segment_and_summary_metadata():
     asr_warning = {

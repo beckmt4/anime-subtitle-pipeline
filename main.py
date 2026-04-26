@@ -23,7 +23,7 @@ import logging
 import sys
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from config import Config, set_config
 from audio_utils import (
@@ -41,13 +41,13 @@ from core.artifacts.models import (
 from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
 from media_inspect import inspect_media, choose_audio_track
 from models import SubtitleCandidate
-from asr import FasterWhisperASR, Segment, build_candidate_from_segments
-from mt import MarianTranslator, translate_candidate_jp_to_en
+from asr import FasterWhisperASR, build_candidate_from_segments
+from mt import translate_candidate_jp_to_en
 from llm_polish import (
     polish_candidate_with_llm,
     enforce_constraints_on_candidate,
 )
-from srt_writer import write_srt_file, write_candidate_srt
+from srt_writer import write_candidate_srt
 from tracing import setup_tracing, start_span
 
 
@@ -76,25 +76,6 @@ def _emit_registry_run_id(registry_run_id: Optional[str]) -> None:
         return
     logger.info("  Registry run: %s", registry_run_id)
     print(f"registry_run_id={registry_run_id}")
-
-
-def save_segment_log(segments: List[Segment], output_path: str):
-    """Legacy segment JSON writer (retained for backward compatibility)."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    data = []
-    for seg in segments:
-        data.append({
-            "start": seg.start,
-            "end": seg.end,
-            "duration": seg.duration,
-            "text_ja": seg.text_ja,
-            "text_en_raw": seg.text_en_raw,
-            "text_en_final": seg.text_en_final,
-        })
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    logger.info(f"Saved legacy segment log to {output_path.name}")
 
 
 def save_candidate_chain_log(asr_candidate: SubtitleCandidate, mt_candidate: SubtitleCandidate, final_candidate: SubtitleCandidate, output_path: str):
@@ -281,7 +262,7 @@ def process_video(
             result["asr_candidate_language"] = asr_candidate.language
             result["asr_candidate_origin_stream"] = asr_candidate.origin_stream
             result["asr_candidate_segment_count"] = asr_candidate.segment_count
-            # TEMP: skip unloading ASR model due to crash after destructor
+            # TODO: restore asr.unload_model() — disabled due to crash after destructor in legacy path
             # asr.unload_model()
         _asr_db_id = _reg_store_candidate(
             registry,
@@ -714,16 +695,20 @@ Examples:
 
                 registry = open_registry(config)
 
-            meta = run_generate(
-                media,
-                config,
-                no_llm=args.no_llm,
-                audio_track_override=args.audio_track,
-                skip_embedded_en=args.extract_en_subs,
-                registry=registry,
-                media_hash=media_hash,
-                inspect_only=args.inspect_only,
-            )
+            try:
+                meta = run_generate(
+                    media,
+                    config,
+                    no_llm=args.no_llm,
+                    audio_track_override=args.audio_track,
+                    skip_embedded_en=args.extract_en_subs,
+                    registry=registry,
+                    media_hash=media_hash,
+                    inspect_only=args.inspect_only,
+                )
+            finally:
+                if registry is not None:
+                    registry.close()
             if args.inspect_only:
                 logger.info("\nGenerate Inspect Result:")
                 logger.info(f"  Planned strategy: {meta['strategy']}")
