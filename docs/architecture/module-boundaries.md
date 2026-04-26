@@ -570,6 +570,6 @@ This section maps directly to the acceptance criteria stated in Issue #28 and th
 
 **Open questions to resolve before Phase 3:**
 - Should language pack aliases live in `config.yaml` or in Python pack files? Decision: Python pack files (as implemented in `packs/language/ja_en/aliases.py`); runtime config can reference pack ID.
-- Is `ConcurrentPolisher` in `llm_polish.py` used in production? If not, remove it before migrating the module.
+- Is `ConcurrentPolisher` in `llm_polish.py` used in production? **Resolved: deleted** (commit 675bd7b) — it was dead code with no callers and skipped safety guards.
 - The benchmark HTML renderer referenced in Issue #20 — does it live in `core/benchmark` or as a separate reporting layer?
 - `build_dataset.py` and `extract_training_data.py` — are these platform tooling or external scripts? Clarify before Phase 3.
