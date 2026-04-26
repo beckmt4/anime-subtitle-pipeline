@@ -49,7 +49,17 @@ class DummyASR:
         pass
 
     def transcribe_audio_to_segments(self, path: str, language: str = "en"):
-        return make_segments(f"asr-{language}")
+        segs = make_segments(f"asr-{language}")
+        from models import SubtitleCandidate
+        cand = SubtitleCandidate(
+            id=f"asr_{language}",
+            language=language,
+            source="asr",
+            origin_stream="audio:0",
+            segments=segs,
+            meta={},
+        )
+        return segs, cand
 
 
 def stub_build_candidate_from_segments(segments, cfg, candidate_id, language, origin_stream):

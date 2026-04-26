@@ -15,7 +15,7 @@ Key features:
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from faster_whisper import WhisperModel
 
@@ -110,17 +110,19 @@ class FasterWhisperASR:
         self,
         audio_path: str,
         language: Optional[str] = None
-    ) -> List[Segment]:
+    ) -> Tuple[List[Segment], SubtitleCandidate]:
         """
         Transcribe an audio file to Japanese text segments with timestamps.
-        
+
         Args:
             audio_path: Path to audio file (WAV format recommended)
             language: Language code (default: from config, typically "ja")
-            
+
         Returns:
-            List of Segment objects with Japanese transcriptions and timing
-            
+            A tuple of (segments, candidate) where segments is a list of Segment
+            objects with Japanese transcriptions and timing, and candidate is the
+            corresponding SubtitleCandidate built from those segments.
+
         Raises:
             FileNotFoundError: If audio file doesn't exist
             RuntimeError: If transcription fails
@@ -181,13 +183,12 @@ class FasterWhisperASR:
             if not segments:
                 logger.warning("No speech detected in audio file")
             
-            # Build and store a generic SubtitleCandidate for new pipeline usage
-            self.last_candidate = self._build_candidate_from_segments(
+            candidate = self._build_candidate_from_segments(
                 segments,
                 language=language or "ja",
                 origin_stream="audio:0",
             )
-            return segments
+            return segments, candidate
             
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
@@ -245,7 +246,7 @@ def transcribe_audio_to_segments(audio_path: str, config: Config) -> List[Segmen
         List of Segment objects with Japanese transcriptions
     """
     asr = FasterWhisperASR(config)
-    segments = asr.transcribe_audio_to_segments(audio_path)
+    segments, _ = asr.transcribe_audio_to_segments(audio_path)
     asr.unload_model()
     return segments
 
@@ -264,6 +265,7 @@ class BatchASR:
     
     def __init__(self, config: Config):
         self.asr = FasterWhisperASR(config)
+        self._last_candidate: Optional[SubtitleCandidate] = None
     
     def __enter__(self):
         self.asr.load_model()
@@ -275,11 +277,13 @@ class BatchASR:
     
     def transcribe(self, audio_path: str) -> List[Segment]:
         """Transcribe an audio file."""
-        return self.asr.transcribe_audio_to_segments(audio_path)
+        segments, cand = self.asr.transcribe_audio_to_segments(audio_path)
+        self._last_candidate = cand
+        return segments
 
     def candidate(self) -> Optional[SubtitleCandidate]:
         """Return the last built SubtitleCandidate (if available)."""
-        return getattr(self.asr, "last_candidate", None)
+        return self._last_candidate
 
 
 # ---------------------------------------------------------------------------
@@ -324,19 +328,11 @@ def transcribe_audio_to_candidate(
 ) -> SubtitleCandidate:
     """One-shot convenience returning a SubtitleCandidate instead of segments."""
     asr = FasterWhisperASR(config)
-    segments = asr.transcribe_audio_to_segments(audio_path, language=language)
-    # last_candidate already built inside transcribe; just ensure origin_stream override if provided
-    cand = getattr(asr, "last_candidate", None)
-    if cand and cand.origin_stream != origin_stream:
+    _, cand = asr.transcribe_audio_to_segments(audio_path, language=language)
+    if cand.origin_stream != origin_stream:
         cand.origin_stream = origin_stream
     asr.unload_model()
-    return cand if cand else build_candidate_from_segments(
-        segments,
-        config,
-        candidate_id="asr_ja",
-        language=language or "ja",
-        origin_stream=origin_stream,
-    )
+    return cand
 
 
 __all__ = [

@@ -206,7 +206,7 @@ def process_video(
         logger.info("\n[2/6] Running Japanese ASR (Faster-Whisper)...")
         with start_span("asr_transcription", model=config.asr_model_name, profile=config.profile):
             asr = FasterWhisperASR(config)
-            segments = asr.transcribe_audio_to_segments(str(audio_path))
+            segments, _ = asr.transcribe_audio_to_segments(str(audio_path))
             # Build generic candidate reflecting selected audio track & detected language
             try:
                 media_for_lang = inspect_media(str(video_path))

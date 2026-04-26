@@ -1018,7 +1018,7 @@ def run_generate(
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
             with start_span("asr_en_audio"):
                 asr = FasterWhisperASR(cfg)
-                segments = asr.transcribe_audio_to_segments(str(audio_path), language="en")
+                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language="en")
                 candidate = build_candidate_from_segments(
                     segments,
                     cfg,
@@ -1075,7 +1075,7 @@ def run_generate(
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), ja_audio_order)
             with start_span("asr_ja_audio"):
                 asr = FasterWhisperASR(cfg)
-                segments = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
+                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
                 ja_asr_candidate = build_candidate_from_segments(
                     segments,
                     cfg,
@@ -1123,7 +1123,7 @@ def run_generate(
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
             with start_span("asr_en_audio"):
                 asr = FasterWhisperASR(cfg)
-                segments = asr.transcribe_audio_to_segments(str(audio_path), language="en")
+                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language="en")
                 candidate = build_candidate_from_segments(
                     segments,
                     cfg,
@@ -1156,7 +1156,7 @@ def run_generate(
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), fallback_order)
             with start_span("asr_untagged_audio"):
                 asr = FasterWhisperASR(cfg)
-                segments = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
+                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
                 ja_asr_candidate = build_candidate_from_segments(
                     segments,
                     cfg,
