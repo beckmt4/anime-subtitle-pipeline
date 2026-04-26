@@ -70,6 +70,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from models import SubtitleCandidate
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -194,6 +196,7 @@ def _build_summary(
 def run_qc(
     srt_path: str | Path,
     *,
+    candidate: SubtitleCandidate | None = None,
     min_duration: float = 0.5,
     max_duration: float = 7.0,
     max_cps: float = 20.0,
@@ -205,6 +208,9 @@ def run_qc(
 
     Args:
         srt_path: Path to the SRT file to validate.
+        candidate: Optional candidate that produced the SRT. When supplied,
+            ASR-origin warning metadata on each segment is copied into QC
+            findings so translated lines can be traced back to weak ASR input.
         min_duration: Minimum allowed cue duration in seconds (default 0.5).
         max_duration: Maximum allowed cue duration in seconds (default 7.0).
         max_cps: Maximum reading speed in characters per second (default 20).
@@ -383,6 +389,35 @@ def run_qc(
                         f"{preview!r}",
                     )
                 )
+
+    # 9. ASR-origin warning passthrough
+    if candidate is not None:
+        for idx, seg in enumerate(candidate.segments[:cue_count], start=1):
+            asr_meta = seg.meta.get("asr") if isinstance(seg.meta, dict) else None
+            if not asr_meta:
+                continue
+            for warning in asr_meta.get("warnings", []):
+                violations.append(
+                    _make_violation(
+                        "asr_low_confidence",
+                        _SEVERITY_WARNING,
+                        idx,
+                        (
+                            f"ASR warning {warning.get('type', 'unknown')}: "
+                            f"{warning.get('detail', 'low confidence source segment')}"
+                        ),
+                    )
+                )
+
+        for warning in candidate.meta.get("asr_source_warnings", []):
+            violations.append(
+                _make_violation(
+                    "asr_source_warning",
+                    _SEVERITY_WARNING,
+                    -1,
+                    warning.get("detail", "ASR source selection warning"),
+                )
+            )
 
     summary = _build_summary(
         parsed_ok=parsed_ok, cue_count=cue_count, violations=violations

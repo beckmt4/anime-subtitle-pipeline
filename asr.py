@@ -13,9 +13,10 @@ Key features:
 """
 
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from faster_whisper import WhisperModel
 
@@ -23,6 +24,105 @@ from config import Config
 from models import Segment as GenericSegment, SubtitleCandidate
 
 logger = logging.getLogger(__name__)
+
+
+_JAPANESE_CHAR_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
+
+
+def _quality_thresholds(config: Config) -> Dict[str, Any]:
+    """Return ASR quality thresholds with conservative defaults."""
+    raw = config.get("asr", "quality", default={}) or {}
+    return {
+        "warn_no_speech_prob_above": raw.get("warn_no_speech_prob_above", 0.60),
+        "warn_avg_logprob_below": raw.get("warn_avg_logprob_below", -1.00),
+        "warn_compression_ratio_above": raw.get("warn_compression_ratio_above", 2.40),
+        "warn_min_duration_sec": raw.get("warn_min_duration_sec", 0.25),
+        "warn_max_duration_sec": raw.get("warn_max_duration_sec", 12.0),
+        "warn_gap_sec": raw.get("warn_gap_sec", 6.0),
+        "warn_repeated_text_count": raw.get("warn_repeated_text_count", 3),
+        "warn_japanese_char_ratio_below": raw.get("warn_japanese_char_ratio_below", 0.20),
+        "fail_low_confidence_ratio": raw.get("fail_low_confidence_ratio", 0.50),
+    }
+
+
+def _warning(type_: str, detail: str, severity: str = "warning") -> Dict[str, Any]:
+    return {"type": type_, "severity": severity, "detail": detail}
+
+
+def _japanese_char_ratio(text: str) -> float:
+    chars = [ch for ch in text if not ch.isspace()]
+    if not chars:
+        return 0.0
+    return sum(1 for ch in chars if _JAPANESE_CHAR_RE.match(ch)) / len(chars)
+
+
+def _segment_quality_warnings(
+    segment: "Segment",
+    *,
+    previous: Optional["Segment"],
+    repeated_count: int,
+    language: str,
+    thresholds: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    warnings: List[Dict[str, Any]] = []
+    duration = segment.duration
+    text = segment.text_ja.strip()
+
+    no_speech = segment.no_speech_prob
+    if no_speech is not None and no_speech > thresholds["warn_no_speech_prob_above"]:
+        warnings.append(_warning(
+            "high_no_speech_probability",
+            f"no_speech_prob {no_speech:.2f} > {thresholds['warn_no_speech_prob_above']:.2f}",
+        ))
+
+    avg_logprob = segment.avg_logprob
+    if avg_logprob is not None and avg_logprob < thresholds["warn_avg_logprob_below"]:
+        warnings.append(_warning(
+            "low_average_log_probability",
+            f"avg_logprob {avg_logprob:.2f} < {thresholds['warn_avg_logprob_below']:.2f}",
+        ))
+
+    compression = segment.compression_ratio
+    if compression is not None and compression > thresholds["warn_compression_ratio_above"]:
+        warnings.append(_warning(
+            "high_compression_ratio",
+            f"compression_ratio {compression:.2f} > {thresholds['warn_compression_ratio_above']:.2f}",
+        ))
+
+    if duration < thresholds["warn_min_duration_sec"]:
+        warnings.append(_warning(
+            "very_short_segment",
+            f"duration {duration:.2f}s < {thresholds['warn_min_duration_sec']:.2f}s",
+        ))
+    elif duration > thresholds["warn_max_duration_sec"]:
+        warnings.append(_warning(
+            "very_long_segment",
+            f"duration {duration:.2f}s > {thresholds['warn_max_duration_sec']:.2f}s",
+        ))
+
+    if previous is not None:
+        gap = segment.start - previous.end
+        if gap > thresholds["warn_gap_sec"]:
+            warnings.append(_warning(
+                "long_gap_before_segment",
+                f"gap before segment {gap:.2f}s > {thresholds['warn_gap_sec']:.2f}s",
+            ))
+
+    if repeated_count >= thresholds["warn_repeated_text_count"]:
+        warnings.append(_warning(
+            "repeated_text",
+            f"text repeats {repeated_count} times in ASR output",
+        ))
+
+    if language.startswith("ja") and len(text) >= 3:
+        ratio = _japanese_char_ratio(text)
+        if ratio < thresholds["warn_japanese_char_ratio_below"]:
+            warnings.append(_warning(
+                "low_japanese_character_ratio",
+                f"Japanese character ratio {ratio:.2f} < {thresholds['warn_japanese_char_ratio_below']:.2f}",
+            ))
+
+    return warnings
 
 
 @dataclass
@@ -38,6 +138,10 @@ class Segment:
     text_ja: str           # Japanese transcription
     text_en_raw: str = ""  # Raw English translation (from MT)
     text_en_final: str = "" # Polished English (from LLM or same as raw)
+    avg_logprob: Optional[float] = None
+    no_speech_prob: Optional[float] = None
+    compression_ratio: Optional[float] = None
+    meta: Dict[str, Any] = field(default_factory=dict)
     
     _REPR_TEXT_MAX_LEN = 30  # Maximum text length in repr
     
@@ -174,7 +278,10 @@ class FasterWhisperASR:
                 segment = Segment(
                     start=seg.start,
                     end=seg.end,
-                    text_ja=text
+                    text_ja=text,
+                    avg_logprob=getattr(seg, "avg_logprob", None),
+                    no_speech_prob=getattr(seg, "no_speech_prob", None),
+                    compression_ratio=getattr(seg, "compression_ratio", None),
                 )
                 segments.append(segment)
             
@@ -301,14 +408,80 @@ def build_candidate_from_segments(
     This preserves backwards compatibility while enabling downstream
     multi-track logic to operate on a unified structure.
     """
-    generic_segments = [
-        GenericSegment(s.start, s.end, s.text_ja) for s in segments
-    ]
+    thresholds = _quality_thresholds(config)
+    text_counts: Dict[str, int] = {}
+    for s in segments:
+        key = " ".join(s.text_ja.casefold().split())
+        if key:
+            text_counts[key] = text_counts.get(key, 0) + 1
+
+    generic_segments: List[GenericSegment] = []
+    warning_count = 0
+    low_confidence_count = 0
+    previous: Optional[Segment] = None
+    for s in segments:
+        key = " ".join(s.text_ja.casefold().split())
+        warnings = _segment_quality_warnings(
+            s,
+            previous=previous,
+            repeated_count=text_counts.get(key, 0),
+            language=language,
+            thresholds=thresholds,
+        )
+        previous = s
+        warning_count += len(warnings)
+        low_confidence = bool(warnings)
+        if low_confidence:
+            low_confidence_count += 1
+
+        asr_meta = {
+            "avg_logprob": s.avg_logprob,
+            "no_speech_prob": s.no_speech_prob,
+            "compression_ratio": s.compression_ratio,
+            "low_confidence": low_confidence,
+            "warnings": warnings,
+        }
+        segment_meta = {**getattr(s, "meta", {}), "asr": asr_meta}
+        generic_segments.append(GenericSegment(s.start, s.end, s.text_ja, meta=segment_meta))
+
+    if not segments:
+        summary_status = "fail"
+        summary_warnings = [_warning("no_speech_segments", "ASR produced no non-empty speech segments", "error")]
+    else:
+        low_confidence_ratio = low_confidence_count / len(segments)
+        summary_status = "fail" if low_confidence_ratio >= thresholds["fail_low_confidence_ratio"] else (
+            "warn" if low_confidence_count else "clean"
+        )
+        summary_warnings = []
+
+    if summary_status != "clean":
+        logger.warning(
+            "ASR quality %s: %d/%d low-confidence segment(s), %d warning(s)",
+            summary_status,
+            low_confidence_count,
+            len(segments),
+            warning_count,
+        )
+
+    asr_quality = {
+        "status": summary_status,
+        "segment_count": len(segments),
+        "low_confidence_segment_count": low_confidence_count,
+        "low_confidence_ratio": (
+            round(low_confidence_count / len(segments), 4) if segments else 1.0
+        ),
+        "warning_count": warning_count + len(summary_warnings),
+        "summary_warnings": summary_warnings,
+        "thresholds": thresholds,
+    }
     meta = {
         "asr_model": config.asr_model_name,
         "compute_type": config.asr_compute_type,
         "beam_size": config.asr_beam_size,
         "vad_filter": config.asr_vad_filter,
+        "asr_quality": asr_quality,
+        "asr_quality_status": summary_status,
+        "asr_low_confidence_segment_count": low_confidence_count,
     }
     return SubtitleCandidate(
         id=candidate_id,

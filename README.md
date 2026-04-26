@@ -264,6 +264,18 @@ generate:
   prefer_audio_language: "auto"   # "en" | "ja" | "auto"
   use_llm_polish: true            # Polish MT outputs
 
+asr:
+  quality:
+    warn_no_speech_prob_above: 0.60
+    warn_avg_logprob_below: -1.00
+    warn_compression_ratio_above: 2.40
+    warn_min_duration_sec: 0.25
+    warn_max_duration_sec: 12.0
+    warn_gap_sec: 6.0
+    warn_repeated_text_count: 3
+    warn_japanese_char_ratio_below: 0.20
+    fail_low_confidence_ratio: 0.50
+
 benchmark:
   sources:
     use_embedded_en: true
@@ -289,6 +301,12 @@ Source candidate types:
 - `en_audio_asr_aN` – English audio ASR
 - `embedded_jp_mt[_llm]_sY` – Japanese subtitle translated (optional LLM)
 - `ja_audio_asr_mt[_llm]_aM` – Japanese audio → ASR → MT (optional LLM)
+
+ASR-derived candidates carry `asr_quality` metadata with a clean/warn/fail
+status, low-confidence segment counts, threshold values, and per-segment
+`meta.asr.warnings`. The metadata is preserved through MT and LLM polish so QC
+can report `asr_low_confidence` findings for translated lines that started from
+weak transcription.
 
 Benchmark metrics:
 - **WER** – Word Error Rate (lower better)

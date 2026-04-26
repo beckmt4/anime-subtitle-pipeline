@@ -24,6 +24,22 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
+_PROPAGATED_ASR_META_KEYS = (
+    "asr_quality",
+    "asr_quality_status",
+    "asr_low_confidence_segment_count",
+    "asr_source_warnings",
+)
+
+
+def _copy_asr_candidate_meta(candidate: SubtitleCandidate) -> dict:
+    return {
+        key: candidate.meta[key]
+        for key in _PROPAGATED_ASR_META_KEYS
+        if key in candidate.meta
+    }
+
+
 class MarianTranslator:
     """
     Japanese to English translator using MarianMT.
@@ -262,7 +278,11 @@ class MarianTranslator:
                 source="mt",
                 origin_stream=candidate.origin_stream,
                 segments=[],
-                meta={"model": self.config.mt_model_name},
+                meta={
+                    "model": self.config.mt_model_name,
+                    "source_candidate_id": candidate.id,
+                    **_copy_asr_candidate_meta(candidate),
+                },
             )
         # Iterate in mt_batch_size chunks. Previously this passed the entire
         # segment list to translate_batch() as a single call, which caused
@@ -283,7 +303,7 @@ class MarianTranslator:
             logger.debug(f"Translating batch {i // batch_size + 1}/{num_batches}")
             translations.extend(self.translate_batch(batch_texts))
         new_segments = [
-            GenericSegment(start=s.start, end=s.end, text=t if t else "")
+            GenericSegment(start=s.start, end=s.end, text=t if t else "", meta=dict(s.meta))
             for s, t in zip(candidate.segments, translations)
         ]
         return SubtitleCandidate(
@@ -292,7 +312,11 @@ class MarianTranslator:
             source="mt",
             origin_stream=candidate.origin_stream,
             segments=new_segments,
-            meta={"model": self.config.mt_model_name},
+            meta={
+                "model": self.config.mt_model_name,
+                "source_candidate_id": candidate.id,
+                **_copy_asr_candidate_meta(candidate),
+            },
         )
     
     def unload_model(self) -> None:

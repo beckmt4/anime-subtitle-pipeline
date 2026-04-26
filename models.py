@@ -17,6 +17,7 @@ class Segment:
     start: float
     end: float
     text: str
+    meta: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def duration(self) -> float:

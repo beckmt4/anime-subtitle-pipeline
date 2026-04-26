@@ -26,6 +26,22 @@ from subtitle_corrector import check_drift
 
 logger = logging.getLogger(__name__)
 
+
+_PROPAGATED_ASR_META_KEYS = (
+    "asr_quality",
+    "asr_quality_status",
+    "asr_low_confidence_segment_count",
+    "asr_source_warnings",
+)
+
+
+def _copy_asr_candidate_meta(candidate: SubtitleCandidate) -> dict:
+    return {
+        key: candidate.meta[key]
+        for key in _PROPAGATED_ASR_META_KEYS
+        if key in candidate.meta
+    }
+
 # qwen2.5:7b occasionally emits Chinese (rarely Korean/Japanese) characters
 # mixed into English output (~0.5% of segments on VHD Bloodlust 2026-04-20,
 # e.g. "Don't push me." → "Don't逼我！（Don't push me.)").
@@ -333,13 +349,13 @@ Improve the English subtitle:"""
                 source="mt_llm",
                 origin_stream=candidate.origin_stream,
                 segments=[],
-                meta={"polisher_model": self.model_name},
+                meta={"polisher_model": self.model_name, **_copy_asr_candidate_meta(candidate)},
             )
         # If LLM disabled or unreachable, return pass-through candidate
         if not self.config.llm_enabled or not self.check_connection():
             logger.info("LLM disabled/unreachable; returning pass-through polished candidate")
             passthrough_segments = [
-                GenericSegment(s.start, s.end, s.text) for s in candidate.segments
+                GenericSegment(s.start, s.end, s.text, meta=dict(s.meta)) for s in candidate.segments
             ]
             return SubtitleCandidate(
                 id=f"{candidate.id}_llm",
@@ -347,7 +363,11 @@ Improve the English subtitle:"""
                 source="mt_llm",
                 origin_stream=candidate.origin_stream,
                 segments=passthrough_segments,
-                meta={"polisher_model": self.model_name, "fallback": True},
+                meta={
+                    "polisher_model": self.model_name,
+                    "fallback": True,
+                    **_copy_asr_candidate_meta(candidate),
+                },
             )
 
         # Build per-segment (text_ja, text_en_raw) pairs. Use the Japanese
@@ -390,7 +410,7 @@ Improve the English subtitle:"""
             )
             n_polished, n_reverted, n_unchanged = 0, len(candidate.segments), 0
             polished_segments = [
-                GenericSegment(s.start, s.end, s.text) for s in candidate.segments
+                GenericSegment(s.start, s.end, s.text, meta=dict(s.meta)) for s in candidate.segments
             ]
             stats = PolishStats(
                 total=len(candidate.segments),
@@ -408,7 +428,11 @@ Improve the English subtitle:"""
                 source="mt_llm",
                 origin_stream=candidate.origin_stream,
                 segments=polished_segments,
-                meta={"polisher_model": self.model_name, "polish_stats": stats._asdict()},
+                meta={
+                    "polisher_model": self.model_name,
+                    "polish_stats": stats._asdict(),
+                    **_copy_asr_candidate_meta(candidate),
+                },
             )
 
         # Per-segment drift check.
@@ -423,13 +447,13 @@ Improve the English subtitle:"""
                     "LLM polish drift reverted (reason=%s detail=%s): %r → %r",
                     reason, detail, s.text, polished,
                 )
-                polished_segments.append(GenericSegment(s.start, s.end, s.text))
+                polished_segments.append(GenericSegment(s.start, s.end, s.text, meta=dict(s.meta)))
                 n_reverted += 1
             elif polished == s.text:
-                polished_segments.append(GenericSegment(s.start, s.end, polished))
+                polished_segments.append(GenericSegment(s.start, s.end, polished, meta=dict(s.meta)))
                 n_unchanged += 1
             else:
-                polished_segments.append(GenericSegment(s.start, s.end, polished))
+                polished_segments.append(GenericSegment(s.start, s.end, polished, meta=dict(s.meta)))
                 n_polished += 1
 
         stats = PolishStats(
@@ -448,7 +472,11 @@ Improve the English subtitle:"""
             source="mt_llm",
             origin_stream=candidate.origin_stream,
             segments=polished_segments,
-            meta={"polisher_model": self.model_name, "polish_stats": stats._asdict()},
+            meta={
+                "polisher_model": self.model_name,
+                "polish_stats": stats._asdict(),
+                **_copy_asr_candidate_meta(candidate),
+            },
         )
 
 
@@ -480,7 +508,7 @@ def enforce_constraints_on_candidate(candidate: SubtitleCandidate, config: Confi
         adjusted = polisher._enforce_constraints(s.text)
         if adjusted != s.text:
             changed += 1
-        new_segments.append(GenericSegment(s.start, s.end, adjusted))
+        new_segments.append(GenericSegment(s.start, s.end, adjusted, meta=dict(s.meta)))
     if changed:
         logger.info(f"Constraint enforcement adjusted {changed} segment(s) in candidate {candidate.id}")
     return SubtitleCandidate(

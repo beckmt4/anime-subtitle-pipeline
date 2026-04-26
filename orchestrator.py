@@ -764,6 +764,40 @@ def _log_selection_report(report: Dict[str, Any]) -> None:
     logger.info("-" * 50)
 
 
+def _add_asr_source_warning(
+    candidate: SubtitleCandidate,
+    *,
+    type_: str,
+    detail: str,
+) -> None:
+    """Attach a file/track-level ASR source warning to a candidate."""
+    warning = {"type": type_, "severity": "warning", "detail": detail}
+    candidate.meta.setdefault("asr_source_warnings", []).append(warning)
+    quality = candidate.meta.setdefault("asr_quality", {})
+    source_warnings = quality.setdefault("source_warnings", [])
+    source_warnings.append(warning)
+    quality["warning_count"] = quality.get("warning_count", 0) + 1
+    if quality.get("status") == "clean":
+        quality["status"] = "warn"
+    if candidate.meta.get("asr_quality_status") == "clean":
+        candidate.meta["asr_quality_status"] = "warn"
+
+
+def _asr_quality_summary(candidate: SubtitleCandidate) -> Dict[str, Any]:
+    """Return the ASR quality summary from a candidate, or a clean default."""
+    quality = candidate.meta.get("asr_quality")
+    if isinstance(quality, dict):
+        return dict(quality)
+    return {
+        "status": "not_applicable",
+        "segment_count": candidate.segment_count,
+        "low_confidence_segment_count": 0,
+        "low_confidence_ratio": 0.0,
+        "warning_count": 0,
+        "summary_warnings": [],
+    }
+
+
 def _probe_audio_language(
     video_path: Path,
     audio_order: int,
@@ -892,7 +926,7 @@ def _reg_store_candidate(
         return None
     try:
         segments = [
-            {"start": s.start, "end": s.end, "text": s.text}
+            {"start": s.start, "end": s.end, "text": s.text, "meta": dict(s.meta)}
             for s in candidate.segments
         ]
         rec = SubtitleCandidateRecord(
@@ -1296,6 +1330,24 @@ def run_generate(
                     language="ja",
                     origin_stream=f"audio:{ja_audio_order}",
                 )
+                if audio_track_override is not None:
+                    _add_asr_source_warning(
+                        ja_asr_candidate,
+                        type_="audio_track_override",
+                        detail=(
+                            f"ASR used CLI-forced audio track {audio_track_override}; "
+                            "container language metadata was bypassed"
+                        ),
+                    )
+                elif probed_lang == "ja" and orig_ja_audio_order is None:
+                    _add_asr_source_warning(
+                        ja_asr_candidate,
+                        type_="language_probe_reroute",
+                        detail=(
+                            f"ASR used audio track {ja_audio_order} after language probe "
+                            "overrode missing or conflicting container metadata"
+                        ),
+                    )
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:
@@ -1395,6 +1447,14 @@ def run_generate(
                     language="ja",
                     origin_stream=f"audio:{fallback_order}",
                 )
+                _add_asr_source_warning(
+                    ja_asr_candidate,
+                    type_="untagged_audio_fallback",
+                    detail=(
+                        f"ASR used untagged audio track {fallback_order}; "
+                        f"selection reason: {_fallback_reason}"
+                    ),
+                )
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:
@@ -1469,11 +1529,21 @@ def run_generate(
         with start_span("subtitle_qc"):
             qc_summary = run_qc(
                 out_srt,
+                candidate=candidate,
                 min_duration=cfg.subtitle_min_duration,
                 max_duration=cfg.subtitle_max_duration,
                 max_cps=cfg.qc_max_cps,
                 max_line_chars=cfg.llm_max_chars_per_line,
                 max_lines=cfg.llm_max_lines,
+            )
+
+        asr_quality = _asr_quality_summary(candidate)
+        low_confidence_count = asr_quality.get("low_confidence_segment_count", 0)
+        if low_confidence_count:
+            logger.warning(
+                "ASR uncertainty: %d low-confidence segment(s), status=%s",
+                low_confidence_count,
+                asr_quality.get("status", "unknown"),
             )
 
         # Write machine-readable QC summary alongside the SRT
@@ -1517,6 +1587,8 @@ def run_generate(
             "selection_report": selection_report,
             "candidate_score": candidate_score,
             "routing_decision": routing_decision,
+            "asr_quality": asr_quality,
+            "asr_low_confidence_segment_count": low_confidence_count,
         }
         if polish_stats is not None:
             metadata.update(polish_stats)

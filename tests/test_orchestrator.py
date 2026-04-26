@@ -129,6 +129,17 @@ def stub_write_candidate_srt(candidate: SubtitleCandidate, output_path: str, cfg
     return p
 
 
+def _clean_qc_summary(*args, **kwargs):
+    return {
+        "parsed_ok": True,
+        "cue_count": 2,
+        "violations": [],
+        "error_count": 0,
+        "warning_count": 0,
+        "pass_qc": True,
+    }
+
+
 # Install monkeypatches once
 orch.extract_subtitle_track = stub_extract_subtitle_track
 orch.extract_audio_with_ffmpeg = stub_extract_audio_with_ffmpeg
@@ -138,6 +149,7 @@ orch.translate_candidate_jp_to_en = stub_translate_candidate_jp_to_en
 orch.polish_candidate_with_llm = stub_polish_candidate_with_llm
 orch.enforce_constraints_on_candidate = stub_enforce_constraints_on_candidate
 orch.write_candidate_srt = stub_write_candidate_srt
+orch.run_qc = _clean_qc_summary
 
 # Ensure temp/outbox dirs exist
 Path("temp").mkdir(exist_ok=True)
@@ -537,6 +549,51 @@ def test_score_candidate_in_run_generate_metadata():
         f"✓ candidate_score in run_generate metadata: "
         f"score={cs['total_score']:.1f}, grade={cs['grade']}"
     )
+
+
+def test_run_generate_metadata_includes_asr_quality_summary(monkeypatch):
+    """Generate metadata must expose ASR low-confidence counts."""
+
+    def build_candidate_with_asr_warning(segments, cfg, candidate_id, language, origin_stream):
+        warning = {
+            "type": "low_average_log_probability",
+            "severity": "warning",
+            "detail": "avg_logprob -2.00 < -1.00",
+        }
+        return SubtitleCandidate(
+            id=candidate_id,
+            language=language,
+            source="asr",
+            origin_stream=origin_stream,
+            segments=[
+                Segment(s.start, s.end, s.text, meta={"asr": {"low_confidence": True, "warnings": [warning]}})
+                for s in segments
+            ],
+            meta={
+                "asr_quality": {
+                    "status": "warn",
+                    "segment_count": len(segments),
+                    "low_confidence_segment_count": len(segments),
+                    "low_confidence_ratio": 1.0,
+                    "warning_count": len(segments),
+                    "summary_warnings": [],
+                },
+                "asr_quality_status": "warn",
+                "asr_low_confidence_segment_count": len(segments),
+            },
+        )
+
+    monkeypatch.setattr(orch, "build_candidate_from_segments", build_candidate_with_asr_warning)
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "en"
+    media = _media(en_audio=True)
+
+    meta = orch.run_generate(media, cfg)
+
+    assert meta["strategy"] == "en_audio_asr"
+    assert meta["asr_low_confidence_segment_count"] == 2
+    assert meta["asr_quality"]["status"] == "warn"
 
 
 def test_score_candidate_grade_thresholds():

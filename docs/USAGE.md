@@ -35,6 +35,19 @@ Metadata: the CLI prints `registry_run_id=<id>` when the run is recorded in the
 artifact registry. The registry defaults to `outbox/pipeline.db` unless
 `artifacts.db_path` is configured.
 
+When generate mode uses ASR, candidates include `asr_quality` metadata:
+- `status`: `clean`, `warn`, or `fail`
+- `low_confidence_segment_count`: number of ASR segments with warning signals
+- `warning_count`: total ASR warning signals
+- per-segment `meta.asr.warnings`: deterministic findings such as high
+  no-speech probability, low average log probability, high compression ratio,
+  unusually short/long segments, repeated text, long gaps, or low Japanese
+  character ratio
+
+The same ASR metadata is propagated through MT and LLM outputs. QC summaries can
+include `asr_low_confidence` warning findings so weak translated lines can be
+traced back to uncertain transcription instead of being blamed only on MT.
+
 Inspect the planned generate strategy without running ASR, MT, LLM, QC, muxing,
 registry writes, or output writes:
 
@@ -121,6 +134,21 @@ Disable LLM polish (faster):
 ```yaml
 generate:
   use_llm_polish: false
+```
+
+Tune ASR warning thresholds:
+```yaml
+asr:
+  quality:
+    warn_no_speech_prob_above: 0.60
+    warn_avg_logprob_below: -1.00
+    warn_compression_ratio_above: 2.40
+    warn_min_duration_sec: 0.25
+    warn_max_duration_sec: 12.0
+    warn_gap_sec: 6.0
+    warn_repeated_text_count: 3
+    warn_japanese_char_ratio_below: 0.20
+    fail_low_confidence_ratio: 0.50
 ```
 
 ## Output Artifacts Summary
