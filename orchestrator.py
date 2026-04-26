@@ -705,7 +705,7 @@ def _probe_audio_language(
         try:
             probe_path.unlink(missing_ok=True)
         except PermissionError:
-            pass
+            logger.debug("Could not delete temp file %s (PermissionError)", probe_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1029,7 +1029,7 @@ def run_generate(
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:
-                pass
+                logger.debug("Could not delete temp file %s (PermissionError)", audio_path)
             _final_db_id = _reg_store_candidate(
                 registry, media_hash, candidate, source="asr",
                 model_version=cfg.asr_model_name,
@@ -1086,7 +1086,7 @@ def run_generate(
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:
-                pass
+                logger.debug("Could not delete temp file %s (PermissionError)", audio_path)
             _asr_db_id = _reg_store_candidate(
                 registry, media_hash, ja_asr_candidate, source="asr",
                 model_version=cfg.asr_model_name,
@@ -1134,7 +1134,7 @@ def run_generate(
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:
-                pass
+                logger.debug("Could not delete temp file %s (PermissionError)", audio_path)
             _final_db_id = _reg_store_candidate(
                 registry, media_hash, candidate, source="asr",
                 model_version=cfg.asr_model_name,
@@ -1167,7 +1167,7 @@ def run_generate(
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:
-                pass
+                logger.debug("Could not delete temp file %s (PermissionError)", audio_path)
             _asr_db_id = _reg_store_candidate(
                 registry, media_hash, ja_asr_candidate, source="asr",
                 model_version=cfg.asr_model_name,
