@@ -51,6 +51,46 @@ logger = logging.getLogger(__name__)
 _PROBE_DURATION_SEC = 30       # seconds of audio to sample
 _PROBE_JA_THRESHOLD = 0.85    # minimum Whisper confidence to reroute
 
+# Confidence tiers describe how much processing uncertainty the selected path
+# introduces.  Higher-tier sources require less lossy transformation and are
+# expected to be more accurate out of the box.
+_STRATEGY_CONFIDENCE_TIER: Dict[str, str] = {
+    "embedded_en": "high",
+    "en_audio_asr": "medium",
+    "embedded_jp_mt": "low",
+    "ja_audio_asr_mt": "low",
+    "untagged_audio_asr_mt": "very_low",
+}
+
+# Base quality scores (0–70) per strategy.  Each step in the processing chain
+# (ASR, MT) introduces potential accuracy loss, so strategies that apply more
+# transformations receive lower base scores.
+#
+#   embedded_en         — direct English subtitles; no lossy steps               → 70
+#   en_audio_asr        — English audio → ASR (one lossy step)                   → 55
+#   embedded_jp_mt      — Japanese subs → MT (one lossy step)                    → 40
+#   ja_audio_asr_mt     — Japanese audio → ASR → MT (two lossy steps)            → 30
+#   untagged_audio_asr_mt — unknown audio → ASR → MT + source uncertainty        → 15
+_STRATEGY_BASE_SCORE: Dict[str, int] = {
+    "embedded_en": 70,
+    "en_audio_asr": 55,
+    "embedded_jp_mt": 40,
+    "ja_audio_asr_mt": 30,
+    "untagged_audio_asr_mt": 15,
+}
+
+# Grade thresholds for the 0–100 total score.
+_SCORE_GRADE_THRESHOLDS = [
+    (80, "A"),
+    (60, "B"),
+    (40, "C"),
+    (20, "D"),
+]
+
+# Strategies that involve machine translation or an untagged fallback should
+# be flagged for human review because accuracy cannot be guaranteed.
+_REVIEW_RECOMMENDED_STRATEGIES = {"embedded_jp_mt", "ja_audio_asr_mt", "untagged_audio_asr_mt"}
+
 
 # ISO-639-1 → common ISO-639-2 / localized variants that should all be treated
 # as the same language for source-selection purposes. Keep this map small; it
@@ -178,6 +218,438 @@ def _compare_candidates(raw: SubtitleCandidate, polished: SubtitleCandidate) -> 
     }
 
 
+def score_candidate(
+    strategy: str,
+    candidate: SubtitleCandidate,
+    qc_summary: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Score a subtitle candidate and expose the contributing factors.
+
+    The score is a 0–100 float composed of three additive factors:
+
+    1. **strategy_base** (max 70): Reflects source-type quality.  Direct
+       English sources score highest; each additional lossy processing step
+       (ASR, MT) reduces the base score.  See ``_STRATEGY_BASE_SCORE`` for the
+       per-strategy values.
+
+    2. **qc_pass_rate** (max 20): Fraction of cues that pass QC error checks,
+       multiplied by 20.  A perfect QC run yields the full 20 points; each
+       error-level violation proportionally reduces this contribution.  When no
+       QC summary is available the factor contributes 10 points (neutral).
+
+    3. **segment_yield** (max 10): Rewards a viable segment count.  Full 10
+       points are awarded when the candidate contains ≥ 5 segments; fewer
+       segments scale linearly down to 0.
+
+    Grade thresholds (based on total_score):
+      - A: ≥ 80
+      - B: ≥ 60
+      - C: ≥ 40
+      - D: ≥ 20
+      - F: < 20
+
+    Args:
+        strategy: The selected generation strategy name
+            (e.g. ``"embedded_en"``, ``"ja_audio_asr_mt"``).
+        candidate: The ``SubtitleCandidate`` produced by the pipeline.
+        qc_summary: Optional QC summary dict returned by ``run_qc``.  When
+            provided the ``qc_pass_rate`` factor uses it; otherwise a neutral
+            half-score is applied.
+
+    Returns:
+        A JSON-serialisable dict with keys:
+          - ``total_score``: float in [0, 100]
+          - ``grade``: letter grade ("A" | "B" | "C" | "D" | "F")
+          - ``factors``: list of factor dicts, each containing:
+            - ``name``: factor identifier
+            - ``description``: human-readable explanation
+            - ``raw_value``: the measured input value
+            - ``max_contribution``: maximum points the factor can contribute
+            - ``contribution``: actual points added to the total
+    """
+    factors = []
+
+    # --- Factor 1: strategy_base ---
+    base_score = _STRATEGY_BASE_SCORE.get(strategy, 0)
+    max_base = max(_STRATEGY_BASE_SCORE.values()) if _STRATEGY_BASE_SCORE else 70
+    factors.append({
+        "name": "strategy_base",
+        "description": (
+            "Source type quality — direct English sources score highest; "
+            "each additional lossy processing step (ASR, MT) reduces the base score"
+        ),
+        "raw_value": strategy,
+        "max_contribution": max_base,
+        "contribution": base_score,
+    })
+
+    # --- Factor 2: qc_pass_rate ---
+    _MAX_QC = 20
+    if qc_summary is not None:
+        cue_count = qc_summary.get("cue_count", 0)
+        error_count = qc_summary.get("error_count", 0)
+        if cue_count > 0:
+            pass_rate = 1.0 - min(error_count / cue_count, 1.0)
+        else:
+            pass_rate = 0.0
+        qc_contribution = round(pass_rate * _MAX_QC, 2)
+        qc_raw = round(pass_rate, 4)
+    else:
+        # No QC data; award neutral half-score.
+        pass_rate = 0.5
+        qc_contribution = round(pass_rate * _MAX_QC, 2)
+        qc_raw = None
+    factors.append({
+        "name": "qc_pass_rate",
+        "description": (
+            "Fraction of cues free of QC errors "
+            "(error violations proportionally reduce this factor)"
+        ),
+        "raw_value": qc_raw,
+        "max_contribution": _MAX_QC,
+        "contribution": qc_contribution,
+    })
+
+    # --- Factor 3: segment_yield ---
+    _MAX_YIELD = 10
+    _MIN_VIABLE_SEGMENTS = 5
+    seg_count = candidate.segment_count
+    yield_ratio = min(seg_count / _MIN_VIABLE_SEGMENTS, 1.0)
+    yield_contribution = round(yield_ratio * _MAX_YIELD, 2)
+    factors.append({
+        "name": "segment_yield",
+        "description": (
+            f"Candidate has a viable segment count "
+            f"(full score at ≥ {_MIN_VIABLE_SEGMENTS} segments)"
+        ),
+        "raw_value": seg_count,
+        "max_contribution": _MAX_YIELD,
+        "contribution": yield_contribution,
+    })
+
+    total = round(sum(f["contribution"] for f in factors), 2)
+    total = min(max(total, 0.0), 100.0)
+
+    grade = "F"
+    for threshold, letter in _SCORE_GRADE_THRESHOLDS:
+        if total >= threshold:
+            grade = letter
+            break
+
+    return {
+        "total_score": total,
+        "grade": grade,
+        "factors": factors,
+    }
+
+
+def _log_candidate_score(score: Dict[str, Any]) -> None:
+    """Emit a concise candidate score summary to the logger."""
+    logger.info(
+        "Candidate score: %.1f / 100  (grade %s)",
+        score["total_score"],
+        score["grade"],
+    )
+    for f in score["factors"]:
+        logger.info(
+            "  %-20s  %5.1f / %d  — %s",
+            f["name"],
+            f["contribution"],
+            f["max_contribution"],
+            f["description"],
+        )
+
+
+def _build_selection_report(
+    strategy: str,
+    orig_en_sub_idx: int | None,
+    orig_ja_sub_idx: int | None,
+    orig_en_audio_order: int | None,
+    orig_ja_audio_order: int | None,
+    prefer_subtitles: bool,
+    prefer_audio_language: str,
+    skip_embedded_en: bool,
+    audio_track_override: int | None,
+    probed_lang: str | None,
+) -> Dict[str, Any]:
+    """Build a structured explanation of why *strategy* was selected.
+
+    Returns a dict with:
+      - selected_source: chosen strategy name
+      - confidence_tier: "high" | "medium" | "low" | "very_low"
+      - rationale: human-readable explanation of the winning choice
+      - sources_evaluated: ordered list of all candidate sources, each with
+        their detection status, stream reference, and reason for selection or
+        rejection.  Possible status values: "selected", "skipped",
+        "not_available".
+      - overrides_active: list of override flag names that affected the
+        decision (e.g. ["skip_embedded_en", "audio_track_override=2"])
+      - review_recommended: True when the strategy involves a lossy processing
+        step (MT / untagged-audio fallback) and human review is advisable
+      - review_reason: human-readable justification (None when not recommended)
+    """
+    overrides_active = []
+    sources_evaluated = []
+
+    if audio_track_override is not None:
+        overrides_active.append(f"audio_track_override={audio_track_override}")
+        for src in ("embedded_en", "en_audio_asr", "embedded_jp_mt"):
+            sources_evaluated.append({
+                "source": src,
+                "stream": None,
+                "detected": False,
+                "status": "skipped",
+                "reason": (
+                    f"CLI --audio-track {audio_track_override} override active; "
+                    "all other sources bypassed"
+                ),
+            })
+        sources_evaluated.append({
+            "source": "ja_audio_asr_mt",
+            "stream": f"audio:{audio_track_override}",
+            "detected": True,
+            "status": "selected",
+            "reason": (
+                f"Forced via --audio-track {audio_track_override}; "
+                "specified track treated as Japanese and routed through ASR → MT"
+            ),
+        })
+        rationale = (
+            f"CLI --audio-track {audio_track_override} override active. "
+            "Specified track forced through Japanese ASR → MT pipeline."
+        )
+    else:
+        if skip_embedded_en:
+            overrides_active.append("skip_embedded_en")
+
+        # --- embedded_en ---
+        en_sub_detected = orig_en_sub_idx is not None
+        if not en_sub_detected:
+            en_sub_status = "not_available"
+            en_sub_reason = "No English text subtitle stream detected in container"
+        elif skip_embedded_en:
+            en_sub_status = "skipped"
+            en_sub_reason = (
+                "skip_embedded_en override active (--extract-en-subs); "
+                "bypassed so generation pipeline produces an independent SRT"
+            )
+        elif not prefer_subtitles:
+            en_sub_status = "skipped"
+            en_sub_reason = "prefer_subtitles=False in config"
+        elif strategy == "embedded_en":
+            en_sub_status = "selected"
+            en_sub_reason = (
+                f"Highest-priority source (stream sub:{orig_en_sub_idx}); "
+                "direct English subtitles require no processing"
+            )
+        else:
+            en_sub_status = "skipped"
+            en_sub_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "embedded_en",
+            "stream": f"sub:{orig_en_sub_idx}" if en_sub_detected else None,
+            "detected": en_sub_detected,
+            "status": en_sub_status,
+            "reason": en_sub_reason,
+        })
+
+        # --- en_audio_asr ---
+        en_audio_detected = orig_en_audio_order is not None
+        # Compute probe_rerouted once — reused for both the en_audio and ja_audio entries.
+        probe_rerouted = probed_lang == "ja" and orig_ja_audio_order is None
+        if not en_audio_detected:
+            en_audio_status = "not_available"
+            en_audio_reason = "No English audio stream detected in container"
+        elif probe_rerouted:
+            en_audio_status = "skipped"
+            en_audio_reason = (
+                f"Language probe detected Japanese content in EN-tagged track "
+                f"{orig_en_audio_order} (confidence ≥ {_PROBE_JA_THRESHOLD:.0%}); "
+                "rerouted to ja_audio_asr_mt path"
+            )
+        elif strategy == "en_audio_asr" and prefer_audio_language == "en":
+            en_audio_status = "selected"
+            en_audio_reason = (
+                f"English audio track {orig_en_audio_order} selected; "
+                "prefer_audio_language=en in config"
+            )
+        elif strategy == "en_audio_asr":
+            en_audio_status = "selected"
+            en_audio_reason = (
+                f"Fallback: English audio track {orig_en_audio_order} selected "
+                "(no Japanese sources available)"
+            )
+        elif prefer_audio_language == "en":
+            en_audio_status = "skipped"
+            en_audio_reason = f"Lower priority than selected source ({strategy})"
+        else:
+            en_audio_status = "skipped"
+            en_audio_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "en_audio_asr",
+            "stream": f"audio:{orig_en_audio_order}" if en_audio_detected else None,
+            "detected": en_audio_detected,
+            "status": en_audio_status,
+            "reason": en_audio_reason,
+        })
+
+        # --- embedded_jp_mt ---
+        ja_sub_detected = orig_ja_sub_idx is not None
+        if not ja_sub_detected:
+            ja_sub_status = "not_available"
+            ja_sub_reason = "No Japanese text subtitle stream detected in container"
+        elif strategy == "embedded_jp_mt":
+            ja_sub_status = "selected"
+            ja_sub_reason = (
+                f"Japanese subtitle stream (sub:{orig_ja_sub_idx}) selected; "
+                "fed through MT pipeline → English"
+            )
+        else:
+            ja_sub_status = "skipped"
+            ja_sub_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "embedded_jp_mt",
+            "stream": f"sub:{orig_ja_sub_idx}" if ja_sub_detected else None,
+            "detected": ja_sub_detected,
+            "status": ja_sub_status,
+            "reason": ja_sub_reason,
+        })
+
+        # --- ja_audio_asr_mt ---
+        # The effective JA audio order may have been promoted from the
+        # EN-tagged track if the language probe detected Japanese content.
+        if probe_rerouted:
+            effective_ja_audio = orig_en_audio_order
+            probe_rerouted = True
+        else:
+            effective_ja_audio = orig_ja_audio_order
+            probe_rerouted = False
+        ja_audio_detected = effective_ja_audio is not None
+        if not ja_audio_detected:
+            ja_audio_status = "not_available"
+            ja_audio_reason = "No Japanese audio stream detected in container"
+        elif strategy == "ja_audio_asr_mt":
+            ja_audio_status = "selected"
+            if probe_rerouted:
+                ja_audio_reason = (
+                    f"EN-tagged audio track {effective_ja_audio} rerouted by "
+                    f"language probe (detected Japanese, confidence ≥ "
+                    f"{_PROBE_JA_THRESHOLD:.0%}); processed via ASR → MT → English"
+                )
+            else:
+                ja_audio_reason = (
+                    f"Japanese audio track {effective_ja_audio} selected; "
+                    "fed through ASR → MT pipeline → English"
+                )
+        elif prefer_audio_language == "en":
+            ja_audio_status = "skipped"
+            ja_audio_reason = (
+                "prefer_audio_language='en' in config; "
+                "Japanese audio path not preferred"
+            )
+        else:
+            ja_audio_status = "skipped"
+            ja_audio_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "ja_audio_asr_mt",
+            "stream": f"audio:{effective_ja_audio}" if ja_audio_detected else None,
+            "detected": ja_audio_detected,
+            "status": ja_audio_status,
+            "reason": ja_audio_reason,
+        })
+
+        # --- untagged_audio_asr_mt (only shown when it was selected) ---
+        if strategy == "untagged_audio_asr_mt":
+            sources_evaluated.append({
+                "source": "untagged_audio_asr_mt",
+                "stream": "audio:0",
+                "detected": True,
+                "status": "selected",
+                "reason": (
+                    "Last-resort fallback: no language-tagged streams found; "
+                    "first audio track treated as Japanese and routed via ASR → MT"
+                ),
+            })
+
+        # Derive rationale from the winning entry
+        selected_entry = next(
+            (s for s in sources_evaluated if s["status"] == "selected"), None
+        )
+        if selected_entry is None:
+            # This should never happen if the decision tree and sources list are in
+            # sync; raise here so any future logic errors surface immediately.
+            raise AssertionError(
+                f"_build_selection_report: no source marked 'selected' "
+                f"for strategy '{strategy}'"
+            )
+        rationale = selected_entry["reason"]
+
+        # Prepend a probe context note when the probe drove the decision
+        if probe_rerouted:
+            rationale = (
+                f"Language probe overrode container tag on audio:{orig_en_audio_order}: "
+                + rationale
+            )
+
+    confidence_tier = _STRATEGY_CONFIDENCE_TIER.get(strategy)
+    if confidence_tier is None:
+        logger.warning(
+            "_build_selection_report: strategy '%s' is not in _STRATEGY_CONFIDENCE_TIER; "
+            "confidence tier will be reported as 'unknown'",
+            strategy,
+        )
+        confidence_tier = "unknown"
+    review_recommended = strategy in _REVIEW_RECOMMENDED_STRATEGIES
+    review_reason = (
+        "MT pipeline output (machine translation); manual review recommended for accuracy"
+        if review_recommended
+        else None
+    )
+
+    return {
+        "selected_source": strategy,
+        "confidence_tier": confidence_tier,
+        "rationale": rationale,
+        "sources_evaluated": sources_evaluated,
+        "overrides_active": overrides_active,
+        "review_recommended": review_recommended,
+        "review_reason": review_reason,
+    }
+
+
+def _log_selection_report(report: Dict[str, Any]) -> None:
+    """Emit a human-readable source-selection report to the logger."""
+    logger.info("-" * 50)
+    logger.info("SOURCE SELECTION REPORT")
+    logger.info(
+        "  Selected : %s  (confidence: %s)",
+        report["selected_source"],
+        report["confidence_tier"],
+    )
+    logger.info("  Rationale: %s", report["rationale"])
+    if report["overrides_active"]:
+        logger.info("  Overrides: %s", ", ".join(report["overrides_active"]))
+    logger.info("  Candidates evaluated:")
+    for src in report["sources_evaluated"]:
+        if src["status"] == "selected":
+            marker = "✓"
+        elif src["status"] == "not_available":
+            marker = "✗"
+        else:
+            marker = "⊘"
+        stream_info = f" [{src['stream']}]" if src.get("stream") else ""
+        logger.info(
+            "    %s %-25s%s — %s",
+            marker,
+            src["source"],
+            stream_info,
+            src["reason"],
+        )
+    if report["review_recommended"]:
+        logger.warning("  ⚠ Review recommended: %s", report["review_reason"])
+    logger.info("-" * 50)
+
+
 def _probe_audio_language(
     video_path: Path,
     audio_order: int,
@@ -263,6 +735,14 @@ def run_generate(
     ja_sub_idx = _first_text_sub(media, "ja")
     en_audio_order = _first_audio_order(media, "en")
     ja_audio_order = _first_audio_order(media, "ja")
+
+    # Capture original detection results before any overrides or probe mutations
+    # so the selection report can explain what was originally seen in the container.
+    orig_en_sub_idx = en_sub_idx
+    orig_ja_sub_idx = ja_sub_idx
+    orig_en_audio_order = en_audio_order
+    orig_ja_audio_order = ja_audio_order
+    probed_lang: str | None = None
 
     logger.info(
         f"Sources detected: en_sub={en_sub_idx} ja_sub={ja_sub_idx} en_audio={en_audio_order} ja_audio={ja_audio_order}"
@@ -469,6 +949,21 @@ def run_generate(
 
     assert candidate is not None, "Generation strategy produced no candidate"
 
+    # Build and log the explainable source-selection report
+    selection_report = _build_selection_report(
+        strategy=strategy,
+        orig_en_sub_idx=orig_en_sub_idx,
+        orig_ja_sub_idx=orig_ja_sub_idx,
+        orig_en_audio_order=orig_en_audio_order,
+        orig_ja_audio_order=orig_ja_audio_order,
+        prefer_subtitles=prefer_subtitles,
+        prefer_audio_language=prefer_audio_language,
+        skip_embedded_en=skip_embedded_en,
+        audio_track_override=audio_track_override,
+        probed_lang=probed_lang,
+    )
+    _log_selection_report(selection_report)
+
     # Write SRT
     out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
     with start_span("write_final_srt"):
@@ -491,6 +986,11 @@ def run_generate(
     qc_path.write_text(json.dumps(qc_summary, indent=2), encoding="utf-8")
     logger.info("QC summary written: %s", qc_path.name)
 
+    # Score the selected candidate and log an explainable breakdown
+    with start_span("score_candidate"):
+        candidate_score = score_candidate(strategy, candidate, qc_summary)
+    _log_candidate_score(candidate_score)
+
     metadata = {
         "video": str(video_path.name),
         "strategy": strategy,
@@ -499,6 +999,8 @@ def run_generate(
         "output_srt": str(out_srt),
         "qc": qc_summary,
         "qc_json": str(qc_path),
+        "selection_report": selection_report,
+        "candidate_score": candidate_score,
     }
     if polish_stats is not None:
         metadata.update(polish_stats)
@@ -506,4 +1008,4 @@ def run_generate(
     return metadata
 
 
-__all__ = ["run_generate"]
+__all__ = ["run_generate", "score_candidate"]
