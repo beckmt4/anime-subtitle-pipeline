@@ -30,6 +30,9 @@ from __future__ import annotations
 
 from core.artifacts.ledger import ProcessingLedger
 from core.artifacts.models import (
+    ArtifactRecord,
+    ARTIFACT_TYPE_QC_JSON,
+    ARTIFACT_TYPE_SRT,
     BenchmarkRunRecord,
     CANDIDATE_STATUS_ACCEPTED,
     CANDIDATE_STATUS_FAILED,
@@ -37,6 +40,9 @@ from core.artifacts.models import (
     CANDIDATE_STATUS_REVIEW_REQUIRED,
     CANDIDATE_STATUSES,
     MediaAssetRecord,
+    PIPELINE_STATUS_COMPLETED,
+    PIPELINE_STATUS_FAILED,
+    PipelineRunRecord,
     REVIEW_STATUS_APPROVED,
     REVIEW_STATUS_PENDING,
     REVIEW_STATUS_REJECTED,
@@ -58,6 +64,8 @@ __all__ = [
     "SubtitleCandidateRecord",
     "BenchmarkRunRecord",
     "ReviewTaskRecord",
+    "PipelineRunRecord",
+    "ArtifactRecord",
     # Candidate status constants
     "CANDIDATE_STATUS_PENDING",
     "CANDIDATE_STATUS_ACCEPTED",
@@ -70,4 +78,10 @@ __all__ = [
     "REVIEW_STATUS_REJECTED",
     "REVIEW_STATUS_REPROCESS",
     "REVIEW_STATUSES",
+    # Pipeline status constants
+    "PIPELINE_STATUS_COMPLETED",
+    "PIPELINE_STATUS_FAILED",
+    # Artifact type constants
+    "ARTIFACT_TYPE_SRT",
+    "ARTIFACT_TYPE_QC_JSON",
 ]
