@@ -7,9 +7,10 @@ are upgraded automatically.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
-from typing import Union
+from typing import Iterable, Optional, Union
 
 # ---------------------------------------------------------------------------
 # DDL — one statement per table, order matters due to FK references
@@ -114,6 +115,15 @@ CREATE TABLE IF NOT EXISTS artifacts (
 );
 """
 
+_CREATE_SCHEMA_MIGRATIONS = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename        TEXT    NOT NULL UNIQUE,
+    checksum_sha256 TEXT    NOT NULL,
+    applied_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 # Performance indexes
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_media_assets_hash ON media_assets(media_hash);",
@@ -143,16 +153,82 @@ _ALL_DDL = [
     _CREATE_REVIEW_TASKS,
     _CREATE_PIPELINE_RUNS,
     _CREATE_ARTIFACTS,
+    _CREATE_SCHEMA_MIGRATIONS,
     *_INDEXES,
 ]
 
 
-def init_db(db_path: Union[str, Path]) -> sqlite3.Connection:
+def _default_migrations_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "docs" / "migrations"
+
+
+def _iter_sql_statements(script: str) -> Iterable[str]:
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            stripped = statement.strip()
+            if stripped:
+                yield stripped
+            statement = ""
+    if statement.strip():
+        yield statement.strip()
+
+
+def _apply_sql_migrations(
+    conn: sqlite3.Connection,
+    migrations_dir: Union[str, Path],
+) -> None:
+    """Apply unapplied numbered SQL files from *migrations_dir*.
+
+    Migration identity is the filename. If an already-applied filename changes
+    contents, startup fails instead of silently running an edited migration.
+    """
+    path = Path(migrations_dir)
+    if not path.exists():
+        return
+    if not path.is_dir():
+        raise ValueError(f"Migration path is not a directory: {path}")
+
+    migration_files = sorted(p for p in path.glob("*.sql") if p.is_file())
+    for migration_file in migration_files:
+        sql = migration_file.read_text(encoding="utf-8")
+        checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        row = conn.execute(
+            "SELECT checksum_sha256 FROM schema_migrations WHERE filename = ?",
+            (migration_file.name,),
+        ).fetchone()
+        if row is not None:
+            if row["checksum_sha256"] != checksum:
+                raise ValueError(
+                    f"Applied migration {migration_file.name!r} has changed checksum"
+                )
+            continue
+
+        with conn:
+            for statement in _iter_sql_statements(sql):
+                conn.execute(statement)
+            conn.execute(
+                """
+                INSERT INTO schema_migrations (filename, checksum_sha256)
+                VALUES (?, ?)
+                """,
+                (migration_file.name, checksum),
+            )
+
+
+def init_db(
+    db_path: Union[str, Path],
+    *,
+    migrations_dir: Optional[Union[str, Path]] = None,
+) -> sqlite3.Connection:
     """Open (or create) the artifact registry database and apply the schema.
 
     Args:
         db_path: Filesystem path to the SQLite file, or ``":memory:"`` for an
                  in-memory database (useful for tests).
+        migrations_dir: Optional directory of numbered ``*.sql`` migrations.
+                        Defaults to ``docs/migrations`` when present.
 
     Returns:
         An open :class:`sqlite3.Connection` with ``row_factory`` set to
@@ -172,4 +248,5 @@ def init_db(db_path: Union[str, Path]) -> sqlite3.Connection:
             except sqlite3.OperationalError as exc:
                 if "duplicate column name" not in str(exc).lower():
                     raise
+    _apply_sql_migrations(conn, migrations_dir or _default_migrations_dir())
     return conn

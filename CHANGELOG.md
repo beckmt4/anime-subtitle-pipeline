@@ -161,6 +161,14 @@ None (initial release)
 
 ## [Unreleased]
 
+### Added
+
+- Added automatic SQLite artifact-registry migrations with a persistent
+  `schema_migrations` table, ordered `docs/migrations/*.sql` execution, and
+  checksum protection for already-applied migration files.
+- Added `docs/migrations/README.md` to document migration naming and immutability
+  expectations.
+
 ### Planned Features
 
 #### Short Term (v1.1.0)

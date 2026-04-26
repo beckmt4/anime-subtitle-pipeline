@@ -6,6 +6,8 @@ isolated, and require no filesystem setup.
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from core.artifacts import (
@@ -30,6 +32,7 @@ from core.artifacts import (
     StreamAssetRecord,
     SubtitleCandidateRecord,
 )
+from core.artifacts.schema import init_db
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +79,113 @@ class TestSchemaInit:
         # After exit the connection should be closed; any further use raises.
         with pytest.raises(Exception):
             reg.list_media_assets()
+
+    def test_schema_migrations_table_exists(self):
+        conn = init_db(":memory:")
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("schema_migrations",),
+        ).fetchone()
+        assert row["name"] == "schema_migrations"
+        conn.close()
+
+    def test_applies_sql_migrations_from_directory(self, tmp_path):
+        migrations = tmp_path / "migrations"
+        migrations.mkdir()
+        (migrations / "001_add_probe_table.sql").write_text(
+            """
+            CREATE TABLE migration_probe (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            INSERT INTO migration_probe (name) VALUES ('applied');
+            """,
+            encoding="utf-8",
+        )
+
+        conn = init_db(tmp_path / "pipeline.db", migrations_dir=migrations)
+        probe = conn.execute("SELECT name FROM migration_probe").fetchone()
+        applied = conn.execute(
+            "SELECT filename FROM schema_migrations ORDER BY filename"
+        ).fetchall()
+
+        assert probe["name"] == "applied"
+        assert [row["filename"] for row in applied] == ["001_add_probe_table.sql"]
+        conn.close()
+
+    def test_migrations_are_idempotent_for_existing_database(self, tmp_path):
+        migrations = tmp_path / "migrations"
+        migrations.mkdir()
+        (migrations / "001_create_counter.sql").write_text(
+            """
+            CREATE TABLE migration_counter (
+                id INTEGER PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO migration_counter (value) VALUES ('once');
+            """,
+            encoding="utf-8",
+        )
+        db = tmp_path / "pipeline.db"
+
+        init_db(db, migrations_dir=migrations).close()
+        init_db(db, migrations_dir=migrations).close()
+
+        conn = sqlite3.connect(db)
+        count = conn.execute("SELECT COUNT(*) FROM migration_counter").fetchone()[0]
+        migration_count = conn.execute(
+            "SELECT COUNT(*) FROM schema_migrations"
+        ).fetchone()[0]
+        assert count == 1
+        assert migration_count == 1
+        conn.close()
+
+    def test_applies_pending_migration_to_existing_database(self, tmp_path):
+        migrations = tmp_path / "migrations"
+        migrations.mkdir()
+        db = tmp_path / "pipeline.db"
+        (migrations / "001_create_first.sql").write_text(
+            "CREATE TABLE first_migration (id INTEGER PRIMARY KEY);",
+            encoding="utf-8",
+        )
+        init_db(db, migrations_dir=migrations).close()
+
+        (migrations / "002_create_second.sql").write_text(
+            "CREATE TABLE second_migration (id INTEGER PRIMARY KEY);",
+            encoding="utf-8",
+        )
+        conn = init_db(db, migrations_dir=migrations)
+
+        rows = conn.execute(
+            "SELECT filename FROM schema_migrations ORDER BY filename"
+        ).fetchall()
+        assert [row["filename"] for row in rows] == [
+            "001_create_first.sql",
+            "002_create_second.sql",
+        ]
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("second_migration",),
+        ).fetchone()
+        conn.close()
+
+    def test_changed_applied_migration_checksum_raises(self, tmp_path):
+        migrations = tmp_path / "migrations"
+        migrations.mkdir()
+        db = tmp_path / "pipeline.db"
+        migration = migrations / "001_create_probe.sql"
+        migration.write_text(
+            "CREATE TABLE checksum_probe (id INTEGER PRIMARY KEY);",
+            encoding="utf-8",
+        )
+        init_db(db, migrations_dir=migrations).close()
+
+        migration.write_text(
+            "CREATE TABLE checksum_probe_changed (id INTEGER PRIMARY KEY);",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="changed checksum"):
+            init_db(db, migrations_dir=migrations)
 
 
 # ===========================================================================
