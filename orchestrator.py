@@ -702,7 +702,10 @@ def _probe_audio_language(
         logger.warning("Language probe failed: %s — proceeding with metadata tag", exc)
         return None
     finally:
-        probe_path.unlink(missing_ok=True)
+        try:
+            probe_path.unlink(missing_ok=True)
+        except PermissionError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -1023,7 +1026,10 @@ def run_generate(
                     language="en",
                     origin_stream=f"audio:{en_audio_order}",
                 )
-            audio_path.unlink(missing_ok=True)
+            try:
+                audio_path.unlink(missing_ok=True)
+            except PermissionError:
+                pass
             _final_db_id = _reg_store_candidate(
                 registry, media_hash, candidate, source="asr",
                 model_version=cfg.asr_model_name,
@@ -1077,7 +1083,10 @@ def run_generate(
                     language="ja",
                     origin_stream=f"audio:{ja_audio_order}",
                 )
-            audio_path.unlink(missing_ok=True)
+            try:
+                audio_path.unlink(missing_ok=True)
+            except PermissionError:
+                pass
             _asr_db_id = _reg_store_candidate(
                 registry, media_hash, ja_asr_candidate, source="asr",
                 model_version=cfg.asr_model_name,
@@ -1122,7 +1131,10 @@ def run_generate(
                     language="en",
                     origin_stream=f"audio:{en_audio_order}",
                 )
-            audio_path.unlink(missing_ok=True)
+            try:
+                audio_path.unlink(missing_ok=True)
+            except PermissionError:
+                pass
             _final_db_id = _reg_store_candidate(
                 registry, media_hash, candidate, source="asr",
                 model_version=cfg.asr_model_name,
@@ -1152,7 +1164,10 @@ def run_generate(
                     language="ja",
                     origin_stream=f"audio:{fallback_order}",
                 )
-            audio_path.unlink(missing_ok=True)
+            try:
+                audio_path.unlink(missing_ok=True)
+            except PermissionError:
+                pass
             _asr_db_id = _reg_store_candidate(
                 registry, media_hash, ja_asr_candidate, source="asr",
                 model_version=cfg.asr_model_name,
