@@ -28,12 +28,12 @@ asr:
     compute_type: "int8_float16"  # Quantized for memory efficiency
     beam_size: 5
     batch_size: 8
-    
-  # Prod profile settings (24GB GPU)
+
+  # Prod profile settings (RTX 4090 23GB — large-v3 FP16 uses ~4GB, leaves 19GB headroom)
   prod:
     compute_type: "float16"       # Full precision FP16
     beam_size: 5
-    batch_size: 16
+    batch_size: 32
   
   # Common settings
   vad_filter: true                # Enable voice activity detection
@@ -63,9 +63,9 @@ llm:
   
   # Model selection by profile
   dev:
-    model_name: "qwen2.5:7b"      # 7B model, 4-bit quantized
+    model_name: "qwen2.5:14b-instruct"  # 14B instruct, 9GB — installed locally
   prod:
-    model_name: "qwen2.5:32b"           # 32B model, fits in 4090 24GB VRAM
+    model_name: "qwen2.5:32b"           # 32B Q4, 19GB — fits 4090 23GB after ASR unloads
   
   style: "natural"                # "natural" | "literal"
   
