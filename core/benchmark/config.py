@@ -13,11 +13,19 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     from config import Config
+
+logger = logging.getLogger(__name__)
+
+# Known translation engine names.  New engines added to the pipeline should
+# be listed here.  Unknown names are warned about but not rejected so that
+# custom or future engines work without code changes.
+KNOWN_TRANSLATION_ENGINES = frozenset({"marian", "llm_direct", "hybrid"})
 
 
 # Default reference-selection priority used when the config key is absent.
@@ -93,6 +101,16 @@ class BenchmarkConfig:
             engines = [engines]
         engines = [str(e).strip().lower() for e in engines]
 
+        # Warn about unrecognised engine names so misconfigurations surface early.
+        for eng in engines:
+            if eng not in KNOWN_TRANSLATION_ENGINES:
+                logger.warning(
+                    "Unknown translation engine %r in benchmark config; "
+                    "known engines: %s",
+                    eng,
+                    ", ".join(sorted(KNOWN_TRANSLATION_ENGINES)),
+                )
+
         return cls(
             use_embedded_en=bool(sources.get("use_embedded_en", True)),
             use_embedded_jp=bool(sources.get("use_embedded_jp", True)),
@@ -118,4 +136,5 @@ __all__ = [
     "BenchmarkConfig",
     "DEFAULT_REFERENCE_PRIORITY",
     "DEFAULT_TRANSLATION_ENGINES",
+    "KNOWN_TRANSLATION_ENGINES",
 ]

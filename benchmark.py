@@ -317,9 +317,10 @@ def run_benchmark(
         try:
             from core.artifacts.models import BenchmarkRunRecord
             metrics = comp.get("metrics", {})
+            # Use "|" as delimiter — candidate IDs use ":" for stream refs (e.g. "sub:10")
             registry.record_benchmark_run(BenchmarkRunRecord(
                 media_hash=_media_hash,
-                run_id=f"{session_run_id}:{comp['ref_id']}:{comp['cand_id']}",
+                run_id=f"{session_run_id}|{comp['ref_id']}|{comp['cand_id']}",
                 metrics=metrics,
                 wer=metrics.get("wer"),
                 bleu=metrics.get("bleu"),
