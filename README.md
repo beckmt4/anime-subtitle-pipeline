@@ -581,16 +581,16 @@ Built with:
 
 Comprehensive documentation is available:
 
-- **[API Documentation](API_DOCUMENTATION.md)** - Complete API reference with examples
+- **[API Documentation](docs/API_DOCUMENTATION.md)** - Complete API reference with examples
 - **[Contributing Guide](CONTRIBUTING.md)** - Code style, best practices, and contribution guidelines
 - **[Security Policy](SECURITY.md)** - Security best practices and vulnerability reporting
-- **[Quick Start](QUICKSTART.md)** - Fast setup guide
-- **[Project Summary](PROJECT_SUMMARY.md)** - High-level project overview
+- **[Quick Start](docs/QUICKSTART.md)** - Fast setup guide
+- **[Project Summary](docs/PROJECT_SUMMARY.md)** - High-level project overview
 
 ## Support
 
 For issues or questions:
-1. Check the [API Documentation](API_DOCUMENTATION.md) for detailed usage
+1. Check the [API Documentation](docs/API_DOCUMENTATION.md) for detailed usage
 2. Review the [Troubleshooting](#troubleshooting) section
 3. Verify your configuration matches your hardware
 4. Check logs in `logs/` directory

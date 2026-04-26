@@ -481,6 +481,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print each drift-reverted cue with raw, LLM output, and reason.",
     )
     parser.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        metavar="S",
+        help="Per-request Ollama timeout in seconds (default: 120).",
+    )
+    parser.add_argument(
         "--drift-log",
         metavar="PATH",
         default=None,
@@ -520,6 +527,7 @@ def main() -> None:
         result = correct_srt(
             cues,
             model=args.model,
+            timeout=args.timeout,
             dry_run=args.dry_run,
             verbose=args.verbose,
             drift_log=args.drift_log,

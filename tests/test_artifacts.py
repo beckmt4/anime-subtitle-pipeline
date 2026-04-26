@@ -9,6 +9,9 @@ from __future__ import annotations
 import pytest
 
 from core.artifacts import (
+    ARTIFACT_TYPE_MKV,
+    ARTIFACT_TYPE_SRT,
+    ArtifactRecord,
     ArtifactRegistry,
     BenchmarkRunRecord,
     CANDIDATE_STATUS_ACCEPTED,
@@ -16,6 +19,9 @@ from core.artifacts import (
     CANDIDATE_STATUS_PENDING,
     CANDIDATE_STATUS_REVIEW_REQUIRED,
     MediaAssetRecord,
+    PIPELINE_STATUS_COMPLETED,
+    PIPELINE_STATUS_FAILED,
+    PipelineRunRecord,
     ProcessingLedger,
     REVIEW_STATUS_APPROVED,
     REVIEW_STATUS_PENDING,
@@ -531,3 +537,143 @@ class TestProcessingLedger:
         reprocess = ledger.reprocess_candidates("h1")
         assert len(reprocess) == 1
         assert reprocess[0].id == cand.id
+
+
+# ===========================================================================
+# PipelineRun — list_pipeline_runs, get_runs_for_hash, get_latest_srt
+# ===========================================================================
+
+class TestPipelineRunQueries:
+    """Tests for the new query methods added in Issue #83/#86."""
+
+    def _create_run(self, registry, run_id, media_hash="h1", status=PIPELINE_STATUS_COMPLETED):
+        rec = registry.create_pipeline_run(
+            PipelineRunRecord(run_id=run_id, media_hash=media_hash)
+        )
+        if status != "running":
+            registry.finish_pipeline_run(run_id, status=status)
+        return rec
+
+    def test_list_pipeline_runs_empty(self, registry):
+        assert registry.list_pipeline_runs() == []
+
+    def test_list_pipeline_runs_returns_all(self, registry):
+        self._create_run(registry, "r1", "h1")
+        self._create_run(registry, "r2", "h2")
+        runs = registry.list_pipeline_runs()
+        assert len(runs) == 2
+
+    def test_list_pipeline_runs_filter_by_media_hash(self, registry):
+        self._create_run(registry, "r1", "h1")
+        self._create_run(registry, "r2", "h2")
+        runs = registry.list_pipeline_runs(media_hash="h1")
+        assert len(runs) == 1
+        assert runs[0].run_id == "r1"
+
+    def test_list_pipeline_runs_filter_by_status(self, registry):
+        self._create_run(registry, "r1", "h1", status=PIPELINE_STATUS_COMPLETED)
+        self._create_run(registry, "r2", "h1", status=PIPELINE_STATUS_FAILED)
+        completed = registry.list_pipeline_runs(status=PIPELINE_STATUS_COMPLETED)
+        failed = registry.list_pipeline_runs(status=PIPELINE_STATUS_FAILED)
+        assert len(completed) == 1
+        assert len(failed) == 1
+
+    def test_list_pipeline_runs_limit(self, registry):
+        for i in range(5):
+            self._create_run(registry, f"r{i}", "h1")
+        runs = registry.list_pipeline_runs(limit=3)
+        assert len(runs) == 3
+
+    def test_get_runs_for_hash_empty(self, registry):
+        assert registry.get_runs_for_hash("unknown") == []
+
+    def test_get_runs_for_hash_returns_runs(self, registry):
+        self._create_run(registry, "r1", "h1")
+        self._create_run(registry, "r2", "h1")
+        self._create_run(registry, "r3", "h2")
+        runs = registry.get_runs_for_hash("h1")
+        assert len(runs) == 2
+        assert all(r.media_hash == "h1" for r in runs)
+
+    def test_get_latest_srt_no_artifact_returns_none(self, registry):
+        assert registry.get_latest_srt("h1") is None
+
+    def test_get_latest_srt_returns_most_recent(self, registry):
+        registry.upsert_media_asset(media_hash="h1", file_path="/v.mkv", file_name="v.mkv")
+        registry.store_artifact(ArtifactRecord(
+            media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT, file_path="/out/v1.en.srt"
+        ))
+        registry.store_artifact(ArtifactRecord(
+            media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT, file_path="/out/v2.en.srt"
+        ))
+        # Most recently stored SRT should be returned
+        latest = registry.get_latest_srt("h1")
+        assert latest == "/out/v2.en.srt"
+
+    def test_get_latest_srt_ignores_other_artifact_types(self, registry):
+        registry.upsert_media_asset(media_hash="h1", file_path="/v.mkv", file_name="v.mkv")
+        registry.store_artifact(ArtifactRecord(
+            media_hash="h1", artifact_type=ARTIFACT_TYPE_MKV, file_path="/out/v.en.mkv"
+        ))
+        assert registry.get_latest_srt("h1") is None
+
+
+class TestArtifactTypeMKV:
+    """Tests for the ARTIFACT_TYPE_MKV constant and storage."""
+
+    def test_mkv_constant_value(self):
+        assert ARTIFACT_TYPE_MKV == "mkv"
+
+    def test_store_mkv_artifact(self, registry):
+        registry.upsert_media_asset(media_hash="h1", file_path="/v.mkv", file_name="v.mkv")
+        rec = registry.store_artifact(ArtifactRecord(
+            media_hash="h1",
+            artifact_type=ARTIFACT_TYPE_MKV,
+            file_path="/out/v.en.mkv",
+        ))
+        assert rec.id is not None
+        assert rec.artifact_type == ARTIFACT_TYPE_MKV
+
+    def test_retrieve_mkv_artifact(self, registry):
+        registry.upsert_media_asset(media_hash="h1", file_path="/v.mkv", file_name="v.mkv")
+        stored = registry.store_artifact(ArtifactRecord(
+            media_hash="h1",
+            artifact_type=ARTIFACT_TYPE_MKV,
+            file_path="/out/v.en.mkv",
+        ))
+        fetched = registry.get_artifact(stored.id)
+        assert fetched.artifact_type == ARTIFACT_TYPE_MKV
+        assert fetched.file_path == "/out/v.en.mkv"
+
+
+class TestProcessingLedgerListRuns:
+    """Tests for ProcessingLedger.list_runs() — Issue #83."""
+
+    def test_list_runs_empty(self, ledger):
+        assert ledger.list_runs() == []
+
+    def test_list_runs_returns_summary_dicts(self, registry, ledger):
+        registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
+        registry.finish_pipeline_run("r1", status=PIPELINE_STATUS_COMPLETED)
+        runs = ledger.list_runs()
+        assert len(runs) == 1
+        run = runs[0]
+        assert run["run_id"] == "r1"
+        assert run["media_hash"] == "h1"
+        assert run["status"] == PIPELINE_STATUS_COMPLETED
+        assert "created_at" in run
+        assert "finished_at" in run
+        assert "error_message" in run
+
+    def test_list_runs_filter_by_media_hash(self, registry, ledger):
+        registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
+        registry.create_pipeline_run(PipelineRunRecord(run_id="r2", media_hash="h2"))
+        runs = ledger.list_runs(media_hash="h1")
+        assert len(runs) == 1
+        assert runs[0]["run_id"] == "r1"
+
+    def test_list_runs_respects_limit(self, registry, ledger):
+        for i in range(10):
+            registry.create_pipeline_run(PipelineRunRecord(run_id=f"r{i}", media_hash="h1"))
+        runs = ledger.list_runs(limit=4)
+        assert len(runs) == 4

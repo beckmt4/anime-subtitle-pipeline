@@ -31,6 +31,7 @@ from __future__ import annotations
 from core.artifacts.ledger import ProcessingLedger
 from core.artifacts.models import (
     ArtifactRecord,
+    ARTIFACT_TYPE_MKV,
     ARTIFACT_TYPE_QC_JSON,
     ARTIFACT_TYPE_SRT,
     BenchmarkRunRecord,
@@ -86,4 +87,5 @@ __all__ = [
     # Artifact type constants
     "ARTIFACT_TYPE_SRT",
     "ARTIFACT_TYPE_QC_JSON",
+    "ARTIFACT_TYPE_MKV",
 ]

@@ -171,6 +171,7 @@ class ReviewTaskRecord:
 # Artifact type constants
 ARTIFACT_TYPE_SRT = "srt"
 ARTIFACT_TYPE_QC_JSON = "qc_json"
+ARTIFACT_TYPE_MKV = "mkv"
 
 # Allowed status values for pipeline runs
 PIPELINE_STATUS_RUNNING = "running"
@@ -208,7 +209,8 @@ class ArtifactRecord:
 
     Attributes:
         media_hash:      SHA-256 hex digest of the source media file.
-        artifact_type:   One of :data:`ARTIFACT_TYPE_SRT`, :data:`ARTIFACT_TYPE_QC_JSON`.
+        artifact_type:   One of :data:`ARTIFACT_TYPE_SRT`, :data:`ARTIFACT_TYPE_QC_JSON`,
+                         :data:`ARTIFACT_TYPE_MKV`.
         file_path:       Path to the output file as stored.
         candidate_id:    FK to :class:`SubtitleCandidateRecord.id`, or ``None``.
         pipeline_run_id: FK to :class:`PipelineRunRecord.id`, or ``None``.
@@ -246,6 +248,7 @@ __all__ = [
     "REVIEW_STATUSES",
     "ARTIFACT_TYPE_SRT",
     "ARTIFACT_TYPE_QC_JSON",
+    "ARTIFACT_TYPE_MKV",
     "PIPELINE_STATUS_RUNNING",
     "PIPELINE_STATUS_COMPLETED",
     "PIPELINE_STATUS_FAILED",

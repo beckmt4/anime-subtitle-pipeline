@@ -64,6 +64,37 @@ class ProcessingLedger:
         """Return all review tasks with status ``'pending'``."""
         return self._registry.list_review_tasks(status=REVIEW_STATUS_PENDING)
 
+    def list_runs(
+        self,
+        media_hash: Optional[str] = None,
+        *,
+        limit: int = 50,
+    ) -> List[Dict[str, object]]:
+        """Return recent pipeline runs as summary dicts, most recent first.
+
+        Each dict has the keys: ``run_id``, ``media_hash``, ``status``,
+        ``created_at``, ``finished_at``, ``error_message``.
+
+        Args:
+            media_hash: When provided, only runs for this media file are returned.
+            limit:      Maximum number of runs to return (default: 50).
+
+        Returns:
+            List of run summary dicts ordered by ``created_at`` descending.
+        """
+        runs = self._registry.list_pipeline_runs(media_hash=media_hash, limit=limit)
+        return [
+            {
+                "run_id": r.run_id,
+                "media_hash": r.media_hash,
+                "status": r.status,
+                "created_at": r.created_at,
+                "finished_at": r.finished_at,
+                "error_message": r.error_message,
+            }
+            for r in runs
+        ]
+
     # ------------------------------------------------------------------
     # Benchmark summaries
     # ------------------------------------------------------------------

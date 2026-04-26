@@ -31,6 +31,8 @@ from audio_utils import (
     find_japanese_audio_track,  # retained for backward compatibility
     mux_subtitle_to_video
 )
+from core.artifacts.models import ARTIFACT_TYPE_MKV
+from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
 from media_inspect import inspect_media, choose_audio_track
 from models import SubtitleCandidate
 from asr import FasterWhisperASR, Segment, build_candidate_from_segments
@@ -284,7 +286,7 @@ def process_video(
             with start_span("mux_subtitles"):
                 suffix = config.mux_output_suffix
                 muxed_path = outbox_dir / f"{video_stem}.{suffix}{video_path.suffix}"
-                
+
                 muxed_path = mux_subtitle_to_video(
                     input_video_path=str(video_path),
                     subtitle_path=str(srt_path),
@@ -292,9 +294,25 @@ def process_video(
                     subtitle_language=config.get("mux", "subtitle_language", default="eng"),
                     subtitle_title=config.get("mux", "subtitle_title", default="English")
                 )
-                
+
                 result["muxed_video"] = str(muxed_path)
                 logger.info(f"✓ Muxed video created: {muxed_path}")
+
+                # Register the muxed artifact in the artifact registry so that
+                # library-scale tooling can track burned-in MKV outputs.
+                try:
+                    _media_hash = compute_media_hash(video_path)
+                    _registry = open_registry(config)
+                    if _registry is not None and _media_hash:
+                        from core.artifacts.models import ArtifactRecord
+                        _registry.store_artifact(ArtifactRecord(
+                            media_hash=_media_hash,
+                            artifact_type=ARTIFACT_TYPE_MKV,
+                            file_path=str(muxed_path),
+                        ))
+                        logger.debug("Registered muxed MKV artifact in registry")
+                except Exception as _reg_exc:
+                    logger.warning("Could not register muxed MKV in artifact registry: %s", _reg_exc)
         
         # ===================================================================
         # Save candidate chain log
