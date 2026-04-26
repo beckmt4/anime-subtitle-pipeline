@@ -16,12 +16,10 @@ Key features:
 import logging
 import re
 import time
-import warnings
 from typing import List, NamedTuple, Optional
 
 import requests
 
-from asr import Segment  # legacy — use models.SubtitleCandidate for new code
 from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 from subtitle_corrector import check_drift
@@ -300,111 +298,9 @@ Improve the English subtitle:"""
         # All retries failed, return original
         logger.warning("All LLM retry attempts failed, using raw translation")
         return text_en_raw
-    
-    def polish_segments(
-        self,
-        segments: List[Segment],
-        style: Optional[str] = None
-    ) -> List[Segment]:
-        """Polish all segments in the list (legacy API).
-
-        .. deprecated::
-            ``polish_segments()`` operates on the legacy ``asr.Segment`` type.
-            Use :meth:`polish_candidate` / :func:`polish_candidate_with_llm`
-            with ``models.SubtitleCandidate`` instead.
-
-        Updates each segment with text_en_final field containing polished text.
-        Applies per-segment drift detection: if the polished output drifts from
-        the raw MT text (noun change or extreme length ratio), the raw text is
-        kept instead.  Emits structured counters at the end of the run.
-
-        Args:
-            segments: List of Segment objects with text_ja and text_en_raw
-            style: Override style for this batch
-
-        Returns:
-            The same list of segments with text_en_final populated
-        """
-        warnings.warn(
-            "polish_segments() is deprecated and will be removed in a future release. "
-            "Use polish_candidate() / polish_candidate_with_llm() with "
-            "models.SubtitleCandidate instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if not segments:
-            return segments
-
-        logger.info(f"Polishing {len(segments)} segments with LLM ({self.style} style)")
-
-        # Check connection first
-        if not self.check_connection():
-            logger.warning("LLM endpoint not accessible, skipping polishing")
-            for seg in segments:
-                seg.text_en_final = seg.text_en_raw
-            return segments
-
-        n_polished = 0
-        n_reverted = 0
-        n_unchanged = 0
-
-        raw_texts: List[str] = []
-        candidate_texts: List[str] = []
-
-        for i, seg in enumerate(segments, 1):
-            if i % 10 == 0:
-                logger.debug(f"Polishing segment {i}/{len(segments)}")
-
-            polished = self.polish_text(
-                text_ja=seg.text_ja,
-                text_en_raw=seg.text_en_raw,
-                style=style
-            )
-            raw_texts.append(seg.text_en_raw)
-            candidate_texts.append(polished)
-
-        # Stock-phrase collapse guard: revert entire batch if applicable.
-        if _is_stock_phrase_collapse(raw_texts, candidate_texts):
-            logger.warning(
-                "LLM polish: stock-phrase collapse detected across %d segments "
-                "(%r); reverting all to raw MT.",
-                len(segments),
-                candidate_texts[0] if candidate_texts else "",
-            )
-            for seg in segments:
-                seg.text_en_final = seg.text_en_raw
-                n_reverted += 1
-            logger.info(
-                "[llm_polish] polish_segments: total=%d polished=%d reverted=%d unchanged=%d",
-                len(segments), n_polished, n_reverted, n_unchanged,
-            )
-            return segments
-
-        for seg, polished in zip(segments, candidate_texts):
-            is_drift, reason, detail = check_drift(seg.text_en_raw, polished)
-            if is_drift:
-                logger.debug(
-                    "LLM polish drift reverted (reason=%s detail=%s): %r → %r",
-                    reason, detail, seg.text_en_raw, polished,
-                )
-                seg.text_en_final = seg.text_en_raw
-                n_reverted += 1
-            elif polished == seg.text_en_raw:
-                seg.text_en_final = polished
-                n_unchanged += 1
-            else:
-                seg.text_en_final = polished
-                n_polished += 1
-
-        logger.info(
-            "[llm_polish] polish_segments: total=%d polished=%d reverted=%d unchanged=%d",
-            len(segments), n_polished, n_reverted, n_unchanged,
-        )
-
-        return segments
 
     # ---------------------------------------------------------------
-    # New unified candidate API
+    # Candidate API
     # ---------------------------------------------------------------
     def polish_candidate(
         self,
@@ -556,45 +452,6 @@ Improve the English subtitle:"""
         )
 
 
-def polish_english_subtitles_with_llm(
-    segments: List[Segment],
-    config: Config,
-    style: Optional[str] = None
-) -> List[Segment]:
-    """Convenience function for LLM polishing (legacy API).
-
-    .. deprecated::
-        Use :func:`polish_candidate_with_llm` with ``models.SubtitleCandidate``
-        instead.  This wrapper operates on the legacy ``asr.Segment`` type and
-        will be removed in a future release.
-
-    If LLM is disabled in config, just copies text_en_raw to text_en_final.
-
-    Args:
-        segments: List of Segment objects with Japanese and raw English text
-        config: Configuration object
-        style: Override the configured style
-
-    Returns:
-        Segments with polished English in text_en_final
-    """
-    warnings.warn(
-        "polish_english_subtitles_with_llm() is deprecated and will be removed "
-        "in a future release. Use polish_candidate_with_llm() with "
-        "models.SubtitleCandidate instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if not config.llm_enabled:
-        logger.info("LLM polishing disabled, using raw translations")
-        for seg in segments:
-            seg.text_en_final = seg.text_en_raw
-        return segments
-
-    polisher = LLMPolisher(config)
-    return polisher.polish_segments(segments, style=style)
-
-
 def polish_candidate_with_llm(
     candidate: SubtitleCandidate,
     config: Config,
@@ -613,37 +470,6 @@ def polish_candidate_with_llm(
     """
     polisher = LLMPolisher(config)
     return polisher.polish_candidate(candidate, ja_candidate=ja_candidate, style=style)
-
-
-def enforce_subtitle_constraints_on_segments(segments: List[Segment], config: Config) -> int:
-    """Re-apply line/char constraints to Segment.text_en_final (legacy API).
-
-    .. deprecated::
-        Use :func:`enforce_constraints_on_candidate` with
-        ``models.SubtitleCandidate`` instead.  This function operates on the
-        legacy ``asr.Segment`` type and will be removed in a future release.
-
-    Returns number of adjustments.
-    """
-    warnings.warn(
-        "enforce_subtitle_constraints_on_segments() is deprecated and will be "
-        "removed in a future release. Use enforce_constraints_on_candidate() "
-        "with models.SubtitleCandidate instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    polisher = LLMPolisher(config)
-    adjustments = 0
-    for seg in segments:
-        if not seg.text_en_final:
-            continue
-        adjusted = polisher._enforce_constraints(seg.text_en_final)
-        if adjusted != seg.text_en_final:
-            seg.text_en_final = adjusted
-            adjustments += 1
-    if adjustments:
-        logger.info(f"Constraint re-validation adjusted {adjustments} segment(s)")
-    return adjustments
 
 
 def enforce_constraints_on_candidate(candidate: SubtitleCandidate, config: Config) -> SubtitleCandidate:
@@ -667,75 +493,9 @@ def enforce_constraints_on_candidate(candidate: SubtitleCandidate, config: Confi
     )
 
 
-class BatchPolisher:
-    """Polisher for multiple segment lists with persistent connection (legacy API).
-
-    .. deprecated::
-        ``BatchPolisher`` operates on the legacy ``asr.Segment`` type via
-        :meth:`polish`.  Use :class:`LLMPolisher` directly (or
-        :func:`polish_candidate_with_llm`) with ``models.SubtitleCandidate``
-        instead.  This class will be removed in a future release.
-
-    Usage::
-
-        with BatchPolisher(config) as polisher:
-            for segments in segment_batches:
-                polisher.polish(segments)
-    """
-
-    def __init__(self, config: Config):
-        warnings.warn(
-            "BatchPolisher is deprecated and will be removed in a future release. "
-            "Use LLMPolisher.polish_candidate() / polish_candidate_with_llm() "
-            "with models.SubtitleCandidate instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.polisher = LLMPolisher(config)
-        self.enabled = config.llm_enabled
-    
-    def __enter__(self):
-        if self.enabled:
-            # Verify connection on enter
-            if not self.polisher.check_connection():
-                logger.warning("LLM endpoint not accessible, polishing will be skipped")
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        pass  # No cleanup needed for HTTP client
-    
-    def polish(self, segments: List[Segment], style: Optional[str] = None) -> List[Segment]:
-        """Polish segments."""
-        if not self.enabled:
-            for seg in segments:
-                seg.text_en_final = seg.text_en_raw
-            return segments
-        
-        return self.polisher.polish_segments(segments, style=style)
-
-    def polish_candidate(
-        self,
-        candidate: SubtitleCandidate,
-        ja_candidate: Optional[SubtitleCandidate] = None,
-        style: Optional[str] = None,
-    ) -> SubtitleCandidate:
-        if not self.enabled:
-            return SubtitleCandidate(
-                id=f"{candidate.id}_llm",
-                language=candidate.language,
-                source="mt_llm",
-                origin_stream=candidate.origin_stream,
-                segments=[GenericSegment(s.start, s.end, s.text) for s in candidate.segments],
-                meta={"fallback": True},
-            )
-        return self.polisher.polish_candidate(candidate, ja_candidate=ja_candidate, style=style)
-
 __all__ = [
     "LLMPolisher",
     "PolishStats",
-    "polish_english_subtitles_with_llm",
     "polish_candidate_with_llm",
-    "enforce_subtitle_constraints_on_segments",
     "enforce_constraints_on_candidate",
-    "BatchPolisher",
 ]

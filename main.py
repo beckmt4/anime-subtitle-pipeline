@@ -44,8 +44,6 @@ from models import SubtitleCandidate
 from asr import FasterWhisperASR, Segment, build_candidate_from_segments
 from mt import MarianTranslator, translate_candidate_jp_to_en
 from llm_polish import (
-    polish_english_subtitles_with_llm,  # legacy
-    enforce_subtitle_constraints_on_segments,  # legacy
     polish_candidate_with_llm,
     enforce_constraints_on_candidate,
 )

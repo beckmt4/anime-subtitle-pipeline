@@ -22,19 +22,10 @@ Generated: 2026-04-25. Based on full code review + security scan.
 
 ## P0 — Fix Before Next Run
 
-### P0-1: Remove tracked build artifacts from git history
+### ~~P0-1: Remove tracked build artifacts from git history~~ ✅ RESOLVED
 
-These files are now covered by `.gitignore` but are still **tracked** in git — `git rm --cached` won't delete the local copies but stops git from tracking future changes. The files themselves should also be deleted.
-
-```bash
-cd anime-subtitle-pipeline
-git rm --cached error_log.txt benchmark.py.backup comparison.json comparison_results.json benchmark_results.json debug_test.py
-git rm -r --cached __pycache__
-```
-
-Then manually delete the files from disk (Windows Explorer or PowerShell `Remove-Item`).
-
-**Why:** `error_log.txt` contains local paths and internal run output. `comparison*.json` and `benchmark_results.json` are run artifacts that churn on every run. `.backup` files in git are an anti-pattern.
+None of the listed artifacts (`error_log.txt`, `benchmark.py.backup`, `comparison*.json`,
+`benchmark_results.json`, `debug_test.py`, `__pycache__`) are tracked in git. Already cleaned up.
 
 ### ~~P0-2: `ConcurrentPolisher` is missing CJK guard and drift check~~ ✅ RESOLVED (commit 675bd7b)
 
@@ -58,15 +49,19 @@ to prevent `attic/debug_test.py` from being collected. No regressions introduced
 non-integer values before runtime. Tests cover parser defaults, custom values,
 invalid values, and timeout forwarding to the Ollama call.
 
-### P1-3: `llm_polish.py` legacy import of `asr.Segment` 
+### ~~P1-3: `llm_polish.py` legacy import of `asr.Segment`~~ ✅ RESOLVED
 
-Line 23: `from asr import Segment  # legacy`
+Removed `from asr import Segment`, `LLMPolisher.polish_segments()`, `polish_english_subtitles_with_llm()`,
+`enforce_subtitle_constraints_on_segments()`, and `BatchPolisher` (entire class, no callers).
+`example_usage.py` rewritten to use the candidate-based API throughout. Dead legacy imports
+(`polish_english_subtitles_with_llm`, `enforce_subtitle_constraints_on_segments`) also removed from `main.py`.
+`__all__` in `llm_polish.py` updated to only export modern symbols.
 
-This imports the ASR-specific `Segment` dataclass (with `text_ja`, `text_en_raw`, `text_en_final` fields) rather than the generic `models.Segment`. It exists because `polish_segments()` and `BatchPolisher.polish()` still operate on legacy ASR segments. These paths are superseded by the `polish_candidate()` / `polish_candidate_with_llm()` API. The legacy path should be formally deprecated and eventually removed.
+### ~~P1-4: `subtitle_pipeline.py` — status unclear~~ ✅ RESOLVED (keep)
 
-### P1-4: `subtitle_pipeline.py` — status unclear
-
-`subtitle_pipeline.py` exists at root. It was likely an earlier version of `main.py`. Check whether it has unique functionality or is fully superseded. If superseded, move to `attic/`.
+`subtitle_pipeline.py` has unique functionality distinct from `main.py`: it batch-processes existing SRT
+files through `subtitle_corrector` with skip-if-newer logic, SHA-256 change detection, and a per-file
+JSON pipeline log. `main.py` handles video → SRT generation from scratch. Both tools are valid.
 
 ### ~~P1-5: `llm.base_url` in `config.yaml` is `http://localhost:11434`~~ ✅ RESOLVED (commit b6f1a62)
 
@@ -74,53 +69,36 @@ This imports the ASR-specific `Segment` dataclass (with `text_ja`, `text_en_raw`
 for YAML fallback and environment override behavior. README documents the
 Docker/Unraid usage pattern.
 
-### P1-6: 17 orchestrator tests fail in sandbox due to `temp/` unlink permission
+### ~~P1-6: 17 orchestrator tests fail in sandbox due to `temp/` unlink permission~~ ✅ RESOLVED
 
-`tests/test_orchestrator.py` contains 17 tests that fail in the Linux sandbox with
-`PermissionError: [Errno 1] Operation not permitted` when `orchestrator.py` calls
-`audio_path.unlink(missing_ok=True)` to clean up temp WAV files. This is a Windows-
-filesystem-mount restriction (the sandbox cannot delete files on the Windows mount).
+All `audio_path.unlink(missing_ok=True)` and `probe_path.unlink(missing_ok=True)` calls in
+`orchestrator.py` are now wrapped with `except PermissionError` (option 1). 533 tests pass.
 
-The tests pass on the user's real dev machine. Fix options:
-1. Suppress unlink errors in orchestrator: `try: audio_path.unlink(missing_ok=True) except PermissionError: pass`
-2. Let the orchestrator accept a `cleanup=True` flag that tests can set to `False`
-3. Mock `Path.unlink` in the test fixtures
+### ~~P1-7: 3 benchmark tests fail due to missing `jiwer`/`sacrebleu` in CI~~ ✅ RESOLVED (commit 802a975)
 
-Option 1 is lowest risk — a missing temp cleanup is not a correctness problem.
-
-**Affected tests:** `test_strategy_en_audio_*`, `test_strategy_ja_audio_asr_mt`,
-`test_skip_embedded_en_forces_generation`, all probe tests, `test_polish_status_fallback_*`,
-and most `test_selection_report_*` tests.
-
-### P1-7: 3 benchmark tests fail due to missing `jiwer`/`sacrebleu` in CI
-
-`tests/test_benchmark.py::test_compute_metrics_*` and `test_compare_candidates_basic`
-fail with `ModuleNotFoundError: No module named 'jiwer'`. The library is in
-`requirements.txt` but not installed in CI or the sandbox environment.
-
-Two of these tests (`test_compute_metrics_perfect`, `test_compute_metrics_different`)
-call `compute_metrics()` directly. Add `pytest.importorskip("jiwer")` at the top of
-`test_benchmark.py` to skip the whole file when the library is absent, rather than
-failing with an ImportError.
-
-`test_benchmark_generalized.py` has 2 additional failures that need investigation —
-they may be a downstream effect of the missing `jiwer` import.
+`pytest.importorskip("jiwer")` and `pytest.importorskip("sacrebleu")` added at the top of both
+`tests/test_benchmark.py` and `tests/test_benchmark_generalized.py`. Files are skipped gracefully
+when optional metric libraries are absent.
 
 ---
 
 ## P2 — Improvements
 
-### P2-1: `config.py` `_apply_profile` leaves dev/prod sub-dicts in place
+### ~~P2-1: `config.py` `_apply_profile` leaves dev/prod sub-dicts in place~~ ✅ RESOLVED (commit 3a46a86)
 
-After calling `_apply_profile()`, the `_config["asr"]` dict still contains nested `"dev": {...}` and `"prod": {...}` keys alongside the merged values. This is harmless but `cfg.get("asr", "dev")` would return a dict rather than raising. Add cleanup to remove the profile sub-dicts after merging.
+`_apply_profile()` now pops both `"dev"` and `"prod"` keys from `asr` and `llm` sections after merging.
+`_PROFILE_KEYS = ("dev", "prod")` constant added to document the known keys.
 
-### P2-2: Protect against silent regression in `generate` config key placement
+### ~~P2-2: Protect against silent regression in `generate` config key placement~~ ✅ RESOLVED
 
-The comment in `config.yaml` notes that the `generate:` section was previously nested under `benchmark:` which caused a silent fallback to defaults. There is no test guarding against this regression. Add a test in `tests/test_config.py` that asserts `cfg.get("generate", "prefer_subtitles")` is not `None` when loaded from the default config.
+Three regression-guard tests added to `tests/test_config.py`: assert `prefer_subtitles`,
+`prefer_audio_language`, and `use_llm_polish` are not `None` when loaded from the default config.
 
-### P2-3: `asr.py` — `transcribe_audio_to_candidate` reads instance attribute as return value
+### ~~P2-3: `asr.py` — `transcribe_audio_to_candidate` reads instance attribute as return value~~ ✅ RESOLVED
 
-`transcribe_audio_to_candidate()` calls `transcribe_audio_to_segments()` and then reads `asr.last_candidate` — an attribute that is set as a side-effect inside `transcribe_audio_to_segments`. This is fragile: the attribute is only set after a successful run, and `getattr(asr, "last_candidate", None)` silently returns `None` on failure, triggering a fallback that rebuilds the candidate without the language info from the Whisper info object. Refactor to return the candidate directly from `transcribe_audio_to_segments`.
+`transcribe_audio_to_segments()` now returns `(List[Segment], SubtitleCandidate)` as a tuple.
+All call sites updated to unpack the tuple; no more side-effect `last_candidate` attribute reads.
+Module-level `transcribe_audio_to_candidate()` uses `_, cand = asr.transcribe_audio_to_segments(...)`.
 
 ### ~~P2-4: `subtitle_corrector.py` `check_drift` noun detection is case-sensitive~~ ✅ RESOLVED (commit b6f1a62)
 
@@ -138,10 +116,10 @@ and `CONTRIBUTING.md`. Extended guides now live under `docs/`.
 
 ## P3 — Nice to Have
 
-### P3-1: `Anime_subtiltes/japanese-subtitle-generator` repo is superseded
+### ~~P3-1: `Anime_subtiltes/japanese-subtitle-generator` repo is superseded~~ ✅ N/A
 
-This was the original prototype that used GitHub Models API. It's superseded by `anime-subtitle-pipeline` which uses local Ollama. Add a `README.md` deprecation notice pointing to `anime-subtitle-pipeline`, or archive the directory.
+Directory does not exist in this repository; already removed or never committed.
 
-### P3-2: `attic/` directory has no README
+### ~~P3-2: `attic/` directory has no README~~ ✅ RESOLVED
 
-Add `attic/README.md` explaining that this is a graveyard for retired code and scripts. Anyone reading the repo shouldn't wonder what `attic/` is for.
+`attic/README.md` created, explaining the graveyard purpose and listing retired files with reasons.
