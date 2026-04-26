@@ -39,7 +39,7 @@ def example_full_pipeline():
     
     # Transcribe (ASR)
     asr = FasterWhisperASR(config)
-    segments = asr.transcribe_audio_to_segments(audio_path)
+    segments, _ = asr.transcribe_audio_to_segments(audio_path)
     asr.unload_model()
     
     logger.info(f"Transcribed {len(segments)} segments")
@@ -92,7 +92,7 @@ def example_batch_processing():
         extract_audio_with_ffmpeg(str(video_path), audio_path)
         
         # Transcribe
-        segments = asr.transcribe_audio_to_segments(audio_path)
+        segments, _ = asr.transcribe_audio_to_segments(audio_path)
         
         # Translate
         segments = translator.translate_segments_ja_to_en(segments)
@@ -132,7 +132,7 @@ def example_custom_processing():
     
     # Transcribe with custom language
     asr = FasterWhisperASR(config)
-    segments = asr.transcribe_audio_to_segments(audio_path, language="ja")
+    segments, _ = asr.transcribe_audio_to_segments(audio_path, language="ja")
     
     # Filter out very short segments
     segments = [seg for seg in segments if seg.duration >= 0.5]

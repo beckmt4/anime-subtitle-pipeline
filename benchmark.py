@@ -218,7 +218,7 @@ def run_benchmark(
             extract_audio_with_ffmpeg(str(video_path_obj), str(en_audio_path), order)
         with start_span("asr_en_audio", language="en"):
             asr = FasterWhisperASR(config)
-            segments = asr.transcribe_audio_to_segments(str(en_audio_path), language="en")
+            segments, _ = asr.transcribe_audio_to_segments(str(en_audio_path), language="en")
             cand = build_candidate_from_segments(
                 segments,
                 config,
@@ -246,7 +246,7 @@ def run_benchmark(
             extract_audio_with_ffmpeg(str(video_path_obj), str(ja_audio_path), order)
         with start_span("asr_ja_audio", language="ja"):
             asr = FasterWhisperASR(config)
-            segments = asr.transcribe_audio_to_segments(str(ja_audio_path), language="ja")
+            segments, _ = asr.transcribe_audio_to_segments(str(ja_audio_path), language="ja")
             ja_asr_candidate = build_candidate_from_segments(
                 segments,
                 config,
