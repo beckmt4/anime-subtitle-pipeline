@@ -51,8 +51,20 @@ _SYSTEM_PROMPT = (
     "- Return ONLY the corrected subtitle text, nothing else"
 )
 
-_CAPITALIZED_RE = re.compile(r"\b[A-Z][a-zA-Z]+\b")
+_PROPER_NOUN_RE = re.compile(r"\b[A-Z][a-zA-Z]*\b")
 _QUOTED_RE = re.compile(r'["\']([^"\']+)["\']')
+_SINGLE_LETTER_EXCLUDE = {"A", "I"}
+
+
+def _positive_int(value: str) -> int:
+    """Parse a positive integer for CLI options."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -77,10 +89,19 @@ class CorrectionStats(NamedTuple):
 
 
 def _extract_nouns(text: str) -> set:
-    """Extract capitalized words (2+ chars) and quoted terms from text."""
-    nouns = set(_CAPITALIZED_RE.findall(text))
+    """Extract capitalized/all-caps words and quoted terms from text."""
+    nouns = {
+        noun
+        for noun in _PROPER_NOUN_RE.findall(text)
+        if len(noun) > 1 or noun not in _SINGLE_LETTER_EXCLUDE
+    }
     nouns.update(_QUOTED_RE.findall(text))
     return nouns
+
+
+def _contains_noun_casefold(text: str, noun: str) -> bool:
+    """Return whether *noun* appears in *text*, ignoring case."""
+    return noun.casefold() in text.casefold()
 
 
 def check_drift(raw: str, llm: str) -> Tuple[bool, str, str]:
@@ -93,7 +114,7 @@ def check_drift(raw: str, llm: str) -> Tuple[bool, str, str]:
         return (False, "", "")
 
     for noun in _extract_nouns(raw):
-        if noun not in llm:
+        if not _contains_noun_casefold(llm, noun):
             return (True, "noun_change", noun)
 
     raw_words = raw.split()
@@ -482,7 +503,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--timeout",
-        type=int,
+        type=_positive_int,
         default=120,
         metavar="S",
         help="Per-request Ollama timeout in seconds (default: 120).",

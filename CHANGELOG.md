@@ -168,6 +168,20 @@ None (initial release)
   checksum protection for already-applied migration files.
 - Added `docs/migrations/README.md` to document migration naming and immutability
   expectations.
+- Wired the legacy `process_video()` path into `ArtifactRegistry` so it records
+  media assets, pipeline run status, ASR/MT/LLM candidate lineage, SRT artifacts,
+  and linked muxed MKV artifacts when registry storage is available.
+- Added registry read helpers for media run history, latest artifact lookup, and
+  candidate lineage traversal.
+- Added explicit `ProcessingLedger` run-history helpers for UI/automation:
+  `list_pipeline_runs()` and `get_latest_run_for_media()`.
+- Added script-friendly CLI output for recorded registry runs:
+  `registry_run_id=<id>`.
+- Documented and tested `LLM_BASE_URL` so deployments can override the Ollama
+  endpoint without editing `config.yaml`.
+- Added validation and tests for `subtitle_corrector.py --timeout`.
+- Improved `subtitle_corrector.py` drift detection so all-caps proper nouns are
+  protected while case-only output changes are allowed.
 
 ### Planned Features
 

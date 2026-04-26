@@ -650,7 +650,7 @@ class TestProcessingLedger:
 
 
 # ===========================================================================
-# PipelineRun — list_pipeline_runs, get_runs_for_hash, get_latest_srt
+# PipelineRun — list_pipeline_runs, artifact queries, candidate lineage
 # ===========================================================================
 
 class TestPipelineRunQueries:
@@ -705,6 +705,37 @@ class TestPipelineRunQueries:
         assert len(runs) == 2
         assert all(r.media_hash == "h1" for r in runs)
 
+    def test_get_runs_for_media_hash_alias_returns_runs(self, registry):
+        self._create_run(registry, "r1", "h1")
+        self._create_run(registry, "r2", "h2")
+        runs = registry.get_runs_for_media_hash("h1")
+        assert len(runs) == 1
+        assert runs[0].run_id == "r1"
+
+    def test_get_latest_artifact_no_match_returns_none(self, registry):
+        assert registry.get_latest_artifact("h1", ARTIFACT_TYPE_SRT) is None
+
+    def test_get_latest_artifact_returns_record(self, registry):
+        registry.store_artifact(ArtifactRecord(
+            media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT, file_path="/out/v1.en.srt"
+        ))
+        registry.store_artifact(ArtifactRecord(
+            media_hash="h1", artifact_type=ARTIFACT_TYPE_SRT, file_path="/out/v2.en.srt"
+        ))
+        latest = registry.get_latest_artifact("h1", ARTIFACT_TYPE_SRT)
+        assert latest is not None
+        assert latest.artifact_type == ARTIFACT_TYPE_SRT
+        assert latest.file_path == "/out/v2.en.srt"
+
+    def test_get_latest_artifact_filters_type_and_media_hash(self, registry):
+        registry.store_artifact(ArtifactRecord(
+            media_hash="h1", artifact_type=ARTIFACT_TYPE_MKV, file_path="/out/v1.mkv"
+        ))
+        registry.store_artifact(ArtifactRecord(
+            media_hash="h2", artifact_type=ARTIFACT_TYPE_SRT, file_path="/out/v2.en.srt"
+        ))
+        assert registry.get_latest_artifact("h1", ARTIFACT_TYPE_SRT) is None
+
     def test_get_latest_srt_no_artifact_returns_none(self, registry):
         assert registry.get_latest_srt("h1") is None
 
@@ -726,6 +757,26 @@ class TestPipelineRunQueries:
             media_hash="h1", artifact_type=ARTIFACT_TYPE_MKV, file_path="/out/v.en.mkv"
         ))
         assert registry.get_latest_srt("h1") is None
+
+    def test_get_candidate_chain_missing_candidate_returns_empty(self, registry):
+        assert registry.get_candidate_chain(9999) == []
+
+    def test_get_candidate_chain_single_root_candidate(self, registry):
+        cand = registry.store_candidate(_make_candidate("h1", source_id="asr_ja"))
+        chain = registry.get_candidate_chain(cand.id)
+        assert [c.id for c in chain] == [cand.id]
+
+    def test_get_candidate_chain_returns_root_to_leaf(self, registry):
+        asr = registry.store_candidate(_make_candidate("h1", source_id="asr_ja"))
+        mt = registry.store_candidate(_make_candidate(
+            "h1", source_id="mt_en", source="mt", parent_candidate_id=asr.id
+        ))
+        llm = registry.store_candidate(_make_candidate(
+            "h1", source_id="llm_en", source="mt_llm", parent_candidate_id=mt.id
+        ))
+        chain = registry.get_candidate_chain(llm.id)
+        assert [c.id for c in chain] == [asr.id, mt.id, llm.id]
+        assert [c.source_id for c in chain] == ["asr_ja", "mt_en", "llm_en"]
 
 
 class TestArtifactTypeMKV:
@@ -787,3 +838,33 @@ class TestProcessingLedgerListRuns:
             registry.create_pipeline_run(PipelineRunRecord(run_id=f"r{i}", media_hash="h1"))
         runs = ledger.list_runs(limit=4)
         assert len(runs) == 4
+
+    def test_list_pipeline_runs_alias_returns_summary_dicts(self, registry, ledger):
+        registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
+        registry.finish_pipeline_run("r1", status=PIPELINE_STATUS_COMPLETED)
+        runs = ledger.list_pipeline_runs()
+        assert len(runs) == 1
+        assert runs[0]["run_id"] == "r1"
+        assert runs[0]["status"] == PIPELINE_STATUS_COMPLETED
+
+    def test_list_pipeline_runs_includes_failed_status_and_error(self, registry, ledger):
+        registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
+        registry.finish_pipeline_run(
+            "r1",
+            status=PIPELINE_STATUS_FAILED,
+            error_message="ASR failed",
+        )
+        runs = ledger.list_pipeline_runs(media_hash="h1")
+        assert len(runs) == 1
+        assert runs[0]["status"] == PIPELINE_STATUS_FAILED
+        assert runs[0]["error_message"] == "ASR failed"
+
+    def test_get_latest_run_for_media_empty(self, ledger):
+        assert ledger.get_latest_run_for_media("missing") is None
+
+    def test_get_latest_run_for_media_returns_newest(self, registry, ledger):
+        registry.create_pipeline_run(PipelineRunRecord(run_id="r1", media_hash="h1"))
+        registry.create_pipeline_run(PipelineRunRecord(run_id="r2", media_hash="h1"))
+        latest = ledger.get_latest_run_for_media("h1")
+        assert latest is not None
+        assert latest.run_id == "r2"

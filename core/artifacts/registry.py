@@ -510,7 +510,7 @@ class ArtifactRegistry:
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
         rows = self._conn.execute(
-            f"SELECT * FROM pipeline_runs {where} ORDER BY created_at DESC{limit_clause}",
+            f"SELECT * FROM pipeline_runs {where} ORDER BY created_at DESC, id DESC{limit_clause}",
             params,
         ).fetchall()
         return [_row_to_pipeline_run(r) for r in rows]
@@ -522,18 +522,64 @@ class ArtifactRegistry:
         """
         return self.list_pipeline_runs(media_hash=media_hash)
 
+    def get_runs_for_media_hash(self, media_hash: str) -> List[PipelineRunRecord]:
+        """Return all pipeline runs for *media_hash*, most recent first.
+
+        This is the explicit API name used by UI and automation callers. It is
+        equivalent to :meth:`get_runs_for_hash`.
+        """
+        return self.get_runs_for_hash(media_hash)
+
+    def get_latest_artifact(
+        self,
+        media_hash: str,
+        artifact_type: str,
+    ) -> Optional[ArtifactRecord]:
+        """Return the newest artifact of *artifact_type* for *media_hash*.
+
+        Returns ``None`` if no matching artifact has been recorded. Newest is
+        determined by ``created_at`` with ``id`` as a deterministic tie-breaker.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM artifacts"
+            " WHERE media_hash = ? AND artifact_type = ?"
+            " ORDER BY created_at DESC, id DESC LIMIT 1",
+            (media_hash, artifact_type),
+        ).fetchone()
+        return _row_to_artifact(row) if row else None
+
     def get_latest_srt(self, media_hash: str) -> Optional[str]:
         """Return the file path of the most recently stored SRT artifact for *media_hash*.
 
         Returns ``None`` if no SRT artifact has been recorded for this media.
         """
-        row = self._conn.execute(
-            "SELECT file_path FROM artifacts"
-            " WHERE media_hash = ? AND artifact_type = ?"
-            " ORDER BY created_at DESC, id DESC LIMIT 1",
-            (media_hash, "srt"),
-        ).fetchone()
-        return row["file_path"] if row else None
+        artifact = self.get_latest_artifact(media_hash, "srt")
+        return artifact.file_path if artifact else None
+
+    def get_candidate_chain(self, candidate_db_id: int) -> List[SubtitleCandidateRecord]:
+        """Return a candidate's lineage from root ancestor to requested candidate.
+
+        The chain walks ``parent_candidate_id`` links until it reaches a root
+        candidate. If *candidate_db_id* does not exist, an empty list is returned.
+
+        Raises:
+            RuntimeError: If a cycle is found in candidate lineage.
+        """
+        chain: List[SubtitleCandidateRecord] = []
+        seen: set[int] = set()
+        current_id: Optional[int] = candidate_db_id
+        while current_id is not None:
+            if current_id in seen:
+                raise RuntimeError(
+                    f"Cycle detected in candidate lineage at id={current_id}"
+                )
+            seen.add(current_id)
+            candidate = self.get_candidate(current_id)
+            if candidate is None:
+                return [] if not chain else list(reversed(chain))
+            chain.append(candidate)
+            current_id = candidate.parent_candidate_id
+        return list(reversed(chain))
 
     # ------------------------------------------------------------------
     # Lifecycle

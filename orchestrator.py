@@ -1460,7 +1460,7 @@ def run_generate(
             metadata.update(polish_stats)
         _reg_finish_run(registry, _run_id, status=PIPELINE_STATUS_COMPLETED)
         logger.info(f"✓ Generation complete (strategy={strategy}, segments={candidate.segment_count})")
-        metadata["registry_run_id"] = _run_id if registry is not None else None
+        metadata["registry_run_id"] = _run_id if _run_db_id is not None else None
     except Exception as _exc:
         _reg_finish_run(
             registry, _run_id,

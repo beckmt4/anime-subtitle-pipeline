@@ -168,6 +168,18 @@ class TestConfigProperties:
         cfg = Config(str(p))
         assert cfg.llm_enabled is False
 
+    def test_llm_base_url_uses_yaml_when_env_absent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LLM_BASE_URL", raising=False)
+        p = write_config(tmp_path)
+        cfg = Config(str(p))
+        assert cfg.llm_base_url == "http://localhost:11434"
+
+    def test_llm_base_url_env_override(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LLM_BASE_URL", "http://192.168.1.147:11434")
+        p = write_config(tmp_path)
+        cfg = Config(str(p))
+        assert cfg.llm_base_url == "http://192.168.1.147:11434"
+
     def test_asr_language_is_ja(self, tmp_path):
         p = write_config(tmp_path)
         cfg = Config(str(p))

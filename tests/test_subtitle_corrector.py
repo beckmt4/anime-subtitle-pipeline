@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from subtitle_corrector import _extract_nouns, check_drift
+from subtitle_corrector import _build_parser, _extract_nouns, check_drift, correct_srt
 
 
 # ---------------------------------------------------------------------------
@@ -34,10 +34,15 @@ class TestExtractNouns:
         assert result == set()
 
     def test_single_char_capitals_excluded(self):
-        # regex requires 2+ chars
+        # Common single-letter words are ignored.
         result = _extract_nouns("I went to A place")
         assert "I" not in result
         assert "A" not in result
+
+    def test_all_caps_words(self):
+        result = _extract_nouns("TOYO opened the NERV gate")
+        assert "TOYO" in result
+        assert "NERV" in result
 
     def test_single_quotes(self):
         result = _extract_nouns("the 'Eva Unit' activated")
@@ -108,6 +113,36 @@ class TestCheckDriftNounChange:
         )
         assert is_drift is False
 
+    def test_all_caps_noun_missing_from_corrected(self):
+        is_drift, reason, detail = check_drift(
+            "TOYO opened the gate",
+            "he opened the gate",
+        )
+        assert is_drift is True
+        assert reason == "noun_change"
+        assert detail == "TOYO"
+
+    def test_all_caps_noun_preserved_no_drift(self):
+        is_drift, reason, detail = check_drift(
+            "TOYO opened the gate",
+            "TOYO opened up the gate",
+        )
+        assert is_drift is False
+
+    def test_case_only_noun_change_is_not_drift(self):
+        is_drift, reason, detail = check_drift(
+            "TOYO opened the gate",
+            "Toyo opened the gate",
+        )
+        assert is_drift is False
+
+    def test_lowercased_noun_output_is_not_drift(self):
+        is_drift, reason, detail = check_drift(
+            "Shinji got into the Eva",
+            "shinji got into the eva",
+        )
+        assert is_drift is False
+
 
 # ---------------------------------------------------------------------------
 # check_drift — length ratio
@@ -146,3 +181,44 @@ class TestCheckDriftLengthRatio:
         # raw has no words — divide-by-zero guard; no noun, no length check possible
         is_drift, reason, detail = check_drift("", "something added")
         assert is_drift is False
+
+
+# ---------------------------------------------------------------------------
+# CLI timeout
+# ---------------------------------------------------------------------------
+
+class TestTimeoutCli:
+    def test_parser_default_timeout_is_120(self):
+        args = _build_parser().parse_args(["episode.srt"])
+        assert args.timeout == 120
+
+    def test_parser_accepts_custom_timeout(self):
+        args = _build_parser().parse_args(["episode.srt", "--timeout", "300"])
+        assert args.timeout == 300
+
+    @pytest.mark.parametrize("value", ["0", "-1", "not-an-int"])
+    def test_parser_rejects_non_positive_timeout(self, value):
+        with pytest.raises(SystemExit):
+            _build_parser().parse_args(["episode.srt", "--timeout", value])
+
+    def test_correct_srt_passes_timeout_to_ollama(self, monkeypatch):
+        seen = {}
+
+        def fake_call(system_prompt, user_message, model, timeout):
+            seen["timeout"] = timeout
+            return "1. Hello."
+
+        monkeypatch.setattr("subtitle_corrector._call_ollama", fake_call)
+        cues = [
+            {
+                "index": 1,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "text": "hello",
+            }
+        ]
+
+        result = correct_srt(cues, model="test-model", timeout=300)
+
+        assert seen["timeout"] == 300
+        assert "Hello." in result

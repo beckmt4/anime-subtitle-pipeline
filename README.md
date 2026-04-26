@@ -134,6 +134,13 @@ ollama serve
 
 The server runs on `http://localhost:11434` by default.
 
+For Docker, Unraid, or another machine running Ollama on your LAN, override the
+configured endpoint without editing `config.yaml`:
+
+```bash
+LLM_BASE_URL=http://192.168.1.147:11434 python main.py video.mkv
+```
+
 ## Quick Start
 
 ### Basic Usage (Generate Mode)

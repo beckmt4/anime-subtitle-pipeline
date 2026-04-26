@@ -21,6 +21,7 @@ import argparse
 import json
 import logging
 import sys
+import uuid
 from pathlib import Path
 from typing import List, Optional
 
@@ -31,7 +32,12 @@ from audio_utils import (
     find_japanese_audio_track,  # retained for backward compatibility
     mux_subtitle_to_video
 )
-from core.artifacts.models import ARTIFACT_TYPE_MKV
+from core.artifacts.models import (
+    ARTIFACT_TYPE_MKV,
+    ARTIFACT_TYPE_SRT,
+    PIPELINE_STATUS_COMPLETED,
+    PIPELINE_STATUS_FAILED,
+)
 from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
 from media_inspect import inspect_media, choose_audio_track
 from models import SubtitleCandidate
@@ -63,6 +69,15 @@ def setup_logging(level: str = "INFO"):
 
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_registry_run_id(registry_run_id: Optional[str]) -> None:
+    """Log and print a stable registry run id for scripts and UI wrappers."""
+    if not registry_run_id:
+        logger.info("  Registry run: <not recorded>")
+        return
+    logger.info("  Registry run: %s", registry_run_id)
+    print(f"registry_run_id={registry_run_id}")
 
 
 def save_segment_log(segments: List[Segment], output_path: str):
@@ -137,7 +152,9 @@ def process_video(
     config: Config,
     no_llm: bool = False,
     no_mux: bool = False,
-    audio_track: Optional[int] = None
+    audio_track: Optional[int] = None,
+    registry=None,
+    media_hash: Optional[str] = None,
 ) -> dict:
     """
     Process a single video file through the complete pipeline.
@@ -148,6 +165,10 @@ def process_video(
         no_llm: Skip LLM polishing step
         no_mux: Skip muxing subtitles into video
         audio_track: Specific audio track index (None = auto-detect)
+        registry: Optional ArtifactRegistry. If omitted, this function opens
+            the configured registry itself and records best-effort lineage.
+        media_hash: Optional SHA-256 of the input media. If omitted, this
+            function computes it before opening the registry.
         
     Returns:
         Dictionary with output file paths and statistics
@@ -176,8 +197,42 @@ def process_video(
         "log_file": str(log_path),
         "muxed_video": None,
         "segment_count": 0,
-        "success": False
+        "success": False,
+        "registry_run_id": None,
     }
+
+    from orchestrator import (
+        _reg_finish_run,
+        _reg_start_run,
+        _reg_store_artifact,
+        _reg_store_candidate,
+    )
+
+    _registry_owned = registry is None
+    if media_hash is None:
+        try:
+            media_hash = compute_media_hash(video_path)
+            logger.debug("Media hash: %s", media_hash)
+        except Exception as exc:
+            logger.warning("Could not compute media hash -- registry disabled: %s", exc)
+
+    if registry is None and media_hash is not None:
+        registry = open_registry(config)
+
+    if registry is not None and media_hash is not None:
+        try:
+            registry.upsert_media_asset(
+                media_hash=media_hash,
+                file_path=str(video_path),
+                file_name=video_path.name,
+            )
+        except Exception as exc:
+            logger.warning("ArtifactRegistry: failed to upsert media asset -- %s", exc)
+
+    _run_id = uuid.uuid4().hex
+    _run_db_id = _reg_start_run(registry, media_hash, config, run_id=_run_id)
+    if registry is not None and _run_db_id is not None:
+        result["registry_run_id"] = _run_id
     
     try:
         # ===================================================================
@@ -230,9 +285,22 @@ def process_video(
             result["asr_candidate_segment_count"] = asr_candidate.segment_count
             # TEMP: skip unloading ASR model due to crash after destructor
             # asr.unload_model()
+        _asr_db_id = _reg_store_candidate(
+            registry,
+            media_hash,
+            asr_candidate,
+            source="asr",
+            model_version=config.asr_model_name,
+        )
         
         if not asr_candidate.segments:
             logger.error("No speech segments detected in audio")
+            _reg_finish_run(
+                registry,
+                _run_id,
+                status=PIPELINE_STATUS_FAILED,
+                error_message="No speech segments detected in audio",
+            )
             return result
         
         logger.info(
@@ -246,6 +314,14 @@ def process_video(
         logger.info("\n[3/6] Translating Japanese to English (MarianMT, candidate model)...")
         with start_span("machine_translation", model=config.mt_model_name, device=config.mt_device):
             mt_candidate = translate_candidate_jp_to_en(asr_candidate, config)
+        _mt_db_id = _reg_store_candidate(
+            registry,
+            media_hash,
+            mt_candidate,
+            source="mt",
+            model_version=config.mt_model_name,
+            parent_id=_asr_db_id,
+        )
         
         # ===================================================================
         # Step 3.5: Write raw MT SRT (always, before optional LLM polish)
@@ -254,6 +330,14 @@ def process_video(
         with start_span("write_raw_srt", output=str(raw_srt_path)):
             write_candidate_srt(mt_candidate, str(raw_srt_path), config)
             logger.info(f"✓ Raw MT SRT written: {raw_srt_path.name}")
+        _reg_store_artifact(
+            registry,
+            media_hash,
+            ARTIFACT_TYPE_SRT,
+            raw_srt_path,
+            candidate_db_id=_mt_db_id,
+            run_db_id=_run_db_id,
+        )
 
         # ===================================================================
         # Step 4: Optional LLM polishing (candidate-based)
@@ -262,11 +346,20 @@ def process_video(
             logger.info("\n[4/6] Skipping LLM polishing (disabled)")
             with start_span("llm_polish", enabled=False):
                 final_candidate = mt_candidate  # pass-through
+            _final_db_id = _mt_db_id
         else:
             logger.info("\n[4/6] Polishing subtitles with LLM (candidate model)...")
             with start_span("llm_polish", model=config.llm_model_name, base_url=config.llm_base_url):
                 polished_candidate = polish_candidate_with_llm(mt_candidate, config)
                 final_candidate = enforce_constraints_on_candidate(polished_candidate, config)
+            _final_db_id = _reg_store_candidate(
+                registry,
+                media_hash,
+                final_candidate,
+                source="mt_llm",
+                model_version=config.llm_model_name,
+                parent_id=_mt_db_id,
+            )
         
         # ===================================================================
         # Step 5: Write SRT file (candidate-based)
@@ -275,6 +368,14 @@ def process_video(
         with start_span("write_srt", output=str(srt_path)):
             srt_path = write_candidate_srt(final_candidate, str(srt_path), config)
             logger.info(f"✓ SRT file created: {srt_path}")
+        _reg_store_artifact(
+            registry,
+            media_hash,
+            ARTIFACT_TYPE_SRT,
+            srt_path,
+            candidate_db_id=_final_db_id,
+            run_db_id=_run_db_id,
+        )
         
         # ===================================================================
         # Step 6: Optional muxing
@@ -298,21 +399,14 @@ def process_video(
                 result["muxed_video"] = str(muxed_path)
                 logger.info(f"✓ Muxed video created: {muxed_path}")
 
-                # Register the muxed artifact in the artifact registry so that
-                # library-scale tooling can track burned-in MKV outputs.
-                try:
-                    _media_hash = compute_media_hash(video_path)
-                    _registry = open_registry(config)
-                    if _registry is not None and _media_hash:
-                        from core.artifacts.models import ArtifactRecord
-                        _registry.store_artifact(ArtifactRecord(
-                            media_hash=_media_hash,
-                            artifact_type=ARTIFACT_TYPE_MKV,
-                            file_path=str(muxed_path),
-                        ))
-                        logger.debug("Registered muxed MKV artifact in registry")
-                except Exception as _reg_exc:
-                    logger.warning("Could not register muxed MKV in artifact registry: %s", _reg_exc)
+                _reg_store_artifact(
+                    registry,
+                    media_hash,
+                    ARTIFACT_TYPE_MKV,
+                    muxed_path,
+                    candidate_db_id=_final_db_id,
+                    run_db_id=_run_db_id,
+                )
         
         # ===================================================================
         # Save candidate chain log
@@ -333,6 +427,7 @@ def process_video(
             logger.debug(f"Cleaned up temp file: {audio_path.name}")
         
         result["success"] = True
+        _reg_finish_run(registry, _run_id, status=PIPELINE_STATUS_COMPLETED)
         
         logger.info("\n" + "=" * 70)
         logger.info("✓ Processing complete!")
@@ -346,7 +441,16 @@ def process_video(
     except Exception as e:
         logger.error(f"\n✗ Processing failed: {e}", exc_info=True)
         result["error"] = str(e)
+        _reg_finish_run(
+            registry,
+            _run_id,
+            status=PIPELINE_STATUS_FAILED,
+            error_message=str(e),
+        )
         return result
+    finally:
+        if _registry_owned and registry is not None:
+            registry.close()
 
 
 def main():
@@ -618,8 +722,7 @@ Examples:
                 logger.info(f"  Routing: {decision.upper()}")
                 for reason in routing.get("reasons", []):
                     logger.info(f"    • {reason}")
-            if meta.get("registry_run_id"):
-                logger.info(f"  Registry run: {meta['registry_run_id']}")
+            _emit_registry_run_id(meta.get("registry_run_id"))
             sys.exit(0)
         else:  # legacy subtitle mode
             logger.info("Running in legacy SUBTITLE mode (JP audio → ASR → MT → LLM)")
@@ -631,6 +734,7 @@ Examples:
                 audio_track=args.audio_track,
             )
             if result["success"]:
+                _emit_registry_run_id(result.get("registry_run_id"))
                 sys.exit(0)
             else:
                 logger.error("Processing failed")

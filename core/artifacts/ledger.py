@@ -15,6 +15,7 @@ from core.artifacts.models import (
     CANDIDATE_STATUS_ACCEPTED,
     CANDIDATE_STATUS_FAILED,
     CANDIDATE_STATUS_REVIEW_REQUIRED,
+    PipelineRunRecord,
     ReviewTaskRecord,
     REVIEW_STATUS_PENDING,
     REVIEW_STATUS_REPROCESS,
@@ -70,6 +71,15 @@ class ProcessingLedger:
         *,
         limit: int = 50,
     ) -> List[Dict[str, object]]:
+        """Compatibility wrapper for :meth:`list_pipeline_runs`."""
+        return self.list_pipeline_runs(media_hash=media_hash, limit=limit)
+
+    def list_pipeline_runs(
+        self,
+        media_hash: Optional[str] = None,
+        *,
+        limit: int = 50,
+    ) -> List[Dict[str, object]]:
         """Return recent pipeline runs as summary dicts, most recent first.
 
         Each dict has the keys: ``run_id``, ``media_hash``, ``status``,
@@ -94,6 +104,14 @@ class ProcessingLedger:
             }
             for r in runs
         ]
+
+    def get_latest_run_for_media(
+        self,
+        media_hash: str,
+    ) -> Optional[PipelineRunRecord]:
+        """Return the most recent pipeline run for *media_hash*, or ``None``."""
+        runs = self._registry.list_pipeline_runs(media_hash=media_hash, limit=1)
+        return runs[0] if runs else None
 
     # ------------------------------------------------------------------
     # Benchmark summaries
