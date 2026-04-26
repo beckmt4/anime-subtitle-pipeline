@@ -41,9 +41,11 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from core.artifacts.models import (
+    ArtifactRecord,
     BenchmarkRunRecord,
     CANDIDATE_STATUSES,
     MediaAssetRecord,
+    PipelineRunRecord,
     REVIEW_STATUSES,
     ReviewTaskRecord,
     StreamAssetRecord,
@@ -166,8 +168,9 @@ class ArtifactRegistry:
                 """
                 INSERT INTO subtitle_candidates
                     (media_hash, source_id, model_version, language, source,
-                     origin_stream, segments_json, meta_json, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     origin_stream, segments_json, meta_json, status,
+                     parent_candidate_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.media_hash,
@@ -179,6 +182,7 @@ class ArtifactRegistry:
                     json.dumps(record.segments, ensure_ascii=False),
                     json.dumps(record.meta, ensure_ascii=False),
                     record.status,
+                    record.parent_candidate_id,
                 ),
             )
         row = self._conn.execute(
@@ -388,6 +392,97 @@ class ArtifactRegistry:
         return [_row_to_review_task(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # PipelineRun
+    # ------------------------------------------------------------------
+
+    def create_pipeline_run(self, record: PipelineRunRecord) -> PipelineRunRecord:
+        """Persist a pipeline run; returns the record with ``id`` set."""
+        with self._conn:
+            cur = self._conn.execute(
+                """
+                INSERT INTO pipeline_runs
+                    (run_id, media_hash, status, config_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.media_hash,
+                    record.status,
+                    json.dumps(record.config, ensure_ascii=False),
+                ),
+            )
+        row = self._conn.execute(
+            "SELECT * FROM pipeline_runs WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+        return _row_to_pipeline_run(row)
+
+    def get_pipeline_run(self, run_id: str) -> Optional[PipelineRunRecord]:
+        """Return the :class:`PipelineRunRecord` with *run_id*, or ``None``."""
+        row = self._conn.execute(
+            "SELECT * FROM pipeline_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return _row_to_pipeline_run(row) if row else None
+
+    def finish_pipeline_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """Mark a pipeline run as completed or failed.
+
+        Raises:
+            LookupError: If no run with *run_id* exists.
+        """
+        with self._conn:
+            cur = self._conn.execute(
+                """
+                UPDATE pipeline_runs
+                SET status = ?, finished_at = datetime('now'), error_message = ?
+                WHERE run_id = ?
+                """,
+                (status, error_message, run_id),
+            )
+        if cur.rowcount == 0:
+            raise LookupError(f"No pipeline run with run_id={run_id!r}")
+
+    # ------------------------------------------------------------------
+    # Artifact
+    # ------------------------------------------------------------------
+
+    def store_artifact(self, record: ArtifactRecord) -> ArtifactRecord:
+        """Persist an output artifact; returns the record with ``id`` set."""
+        with self._conn:
+            cur = self._conn.execute(
+                """
+                INSERT INTO artifacts
+                    (media_hash, artifact_type, file_path,
+                     candidate_id, pipeline_run_id, file_hash)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.media_hash,
+                    record.artifact_type,
+                    record.file_path,
+                    record.candidate_id,
+                    record.pipeline_run_id,
+                    record.file_hash,
+                ),
+            )
+        row = self._conn.execute(
+            "SELECT * FROM artifacts WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+        return _row_to_artifact(row)
+
+    def get_artifact(self, artifact_id: int) -> Optional[ArtifactRecord]:
+        """Return the :class:`ArtifactRecord` with *artifact_id*, or ``None``."""
+        row = self._conn.execute(
+            "SELECT * FROM artifacts WHERE id = ?", (artifact_id,)
+        ).fetchone()
+        return _row_to_artifact(row) if row else None
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -443,6 +538,7 @@ def _row_to_candidate(row: sqlite3.Row) -> SubtitleCandidateRecord:
         segments=json.loads(row["segments_json"]),
         meta=json.loads(row["meta_json"]),
         status=row["status"],
+        parent_candidate_id=row["parent_candidate_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -473,6 +569,32 @@ def _row_to_review_task(row: sqlite3.Row) -> ReviewTaskRecord:
         reviewer_notes=row["reviewer_notes"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _row_to_pipeline_run(row: sqlite3.Row) -> PipelineRunRecord:
+    return PipelineRunRecord(
+        id=row["id"],
+        run_id=row["run_id"],
+        media_hash=row["media_hash"],
+        status=row["status"],
+        config=json.loads(row["config_json"]),
+        finished_at=row["finished_at"],
+        error_message=row["error_message"],
+        created_at=row["created_at"],
+    )
+
+
+def _row_to_artifact(row: sqlite3.Row) -> ArtifactRecord:
+    return ArtifactRecord(
+        id=row["id"],
+        media_hash=row["media_hash"],
+        artifact_type=row["artifact_type"],
+        file_path=row["file_path"],
+        candidate_id=row["candidate_id"],
+        pipeline_run_id=row["pipeline_run_id"],
+        file_hash=row["file_hash"],
+        created_at=row["created_at"],
     )
 
 

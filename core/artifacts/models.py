@@ -74,18 +74,19 @@ class SubtitleCandidateRecord:
     """One row of the ``subtitle_candidates`` table.
 
     Attributes:
-        media_hash:     SHA-256 hex digest of the source media file.
-        source_id:      ``SubtitleCandidate.id`` (e.g. ``'asr_ja'``).
-        model_version:  String identifying the model/version used.
-        language:       ISO 639-1 language code.
-        source:         Origin type: ``'asr'``, ``'embedded'``, ``'mt'``, ``'mt_llm'``.
-        origin_stream:  Stream identifier (``'audio:1'``, ``'sub:0'``, filename).
-        segments:       List of segment dicts (serialised to JSON in the DB).
-        meta:           Additional metadata dict.
-        status:         One of :data:`CANDIDATE_STATUSES`.
-        id:             Auto-assigned surrogate key (``None`` before INSERT).
-        created_at:     ISO-8601 timestamp string (set by the database).
-        updated_at:     ISO-8601 timestamp string (set by the database).
+        media_hash:          SHA-256 hex digest of the source media file.
+        source_id:           ``SubtitleCandidate.id`` (e.g. ``'asr_ja'``).
+        model_version:       String identifying the model/version used.
+        language:            ISO 639-1 language code.
+        source:              Origin type: ``'asr'``, ``'embedded'``, ``'mt'``, ``'mt_llm'``.
+        origin_stream:       Stream identifier (``'audio:1'``, ``'sub:0'``, filename).
+        segments:            List of segment dicts (serialised to JSON in the DB).
+        meta:                Additional metadata dict.
+        status:              One of :data:`CANDIDATE_STATUSES`.
+        parent_candidate_id: FK to the candidate this was derived from, or ``None``.
+        id:                  Auto-assigned surrogate key (``None`` before INSERT).
+        created_at:          ISO-8601 timestamp string (set by the database).
+        updated_at:          ISO-8601 timestamp string (set by the database).
     """
     media_hash: str
     source_id: str
@@ -96,6 +97,7 @@ class SubtitleCandidateRecord:
     segments: List[Dict[str, Any]] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=dict)
     status: str = CANDIDATE_STATUS_PENDING
+    parent_candidate_id: Optional[int] = None
     id: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -166,12 +168,72 @@ class ReviewTaskRecord:
     updated_at: Optional[str] = None
 
 
+# Artifact type constants
+ARTIFACT_TYPE_SRT = "srt"
+ARTIFACT_TYPE_QC_JSON = "qc_json"
+
+# Allowed status values for pipeline runs
+PIPELINE_STATUS_RUNNING = "running"
+PIPELINE_STATUS_COMPLETED = "completed"
+PIPELINE_STATUS_FAILED = "failed"
+
+
+@dataclass
+class PipelineRunRecord:
+    """One row of the ``pipeline_runs`` table.
+
+    Attributes:
+        run_id:        Unique identifier for this pipeline run (UUID string).
+        media_hash:    SHA-256 hex digest of the source media file.
+        config:        Config snapshot dict (serialised to JSON in the DB).
+        status:        One of ``'running'``, ``'completed'``, ``'failed'``.
+        finished_at:   ISO-8601 timestamp when the run ended, or ``None``.
+        error_message: Error description if status is ``'failed'``, else ``None``.
+        id:            Auto-assigned surrogate key (``None`` before INSERT).
+        created_at:    ISO-8601 timestamp string (set by the database).
+    """
+    run_id: str
+    media_hash: str
+    config: Dict[str, Any] = field(default_factory=dict)
+    status: str = PIPELINE_STATUS_RUNNING
+    finished_at: Optional[str] = None
+    error_message: Optional[str] = None
+    id: Optional[int] = None
+    created_at: Optional[str] = None
+
+
+@dataclass
+class ArtifactRecord:
+    """One row of the ``artifacts`` table.
+
+    Attributes:
+        media_hash:      SHA-256 hex digest of the source media file.
+        artifact_type:   One of :data:`ARTIFACT_TYPE_SRT`, :data:`ARTIFACT_TYPE_QC_JSON`.
+        file_path:       Path to the output file as stored.
+        candidate_id:    FK to :class:`SubtitleCandidateRecord.id`, or ``None``.
+        pipeline_run_id: FK to :class:`PipelineRunRecord.id`, or ``None``.
+        file_hash:       SHA-256 hex digest of the output file, or ``None``.
+        id:              Auto-assigned surrogate key (``None`` before INSERT).
+        created_at:      ISO-8601 timestamp string (set by the database).
+    """
+    media_hash: str
+    artifact_type: str
+    file_path: str
+    candidate_id: Optional[int] = None
+    pipeline_run_id: Optional[int] = None
+    file_hash: Optional[str] = None
+    id: Optional[int] = None
+    created_at: Optional[str] = None
+
+
 __all__ = [
     "MediaAssetRecord",
     "StreamAssetRecord",
     "SubtitleCandidateRecord",
     "BenchmarkRunRecord",
     "ReviewTaskRecord",
+    "PipelineRunRecord",
+    "ArtifactRecord",
     "CANDIDATE_STATUS_PENDING",
     "CANDIDATE_STATUS_ACCEPTED",
     "CANDIDATE_STATUS_FAILED",
@@ -182,4 +244,9 @@ __all__ = [
     "REVIEW_STATUS_REJECTED",
     "REVIEW_STATUS_REPROCESS",
     "REVIEW_STATUSES",
+    "ARTIFACT_TYPE_SRT",
+    "ARTIFACT_TYPE_QC_JSON",
+    "PIPELINE_STATUS_RUNNING",
+    "PIPELINE_STATUS_COMPLETED",
+    "PIPELINE_STATUS_FAILED",
 ]

@@ -42,6 +42,7 @@ from core.artifacts.models import (
     MediaAssetRecord,
     PIPELINE_STATUS_COMPLETED,
     PIPELINE_STATUS_FAILED,
+    PIPELINE_STATUS_RUNNING,
     PipelineRunRecord,
     REVIEW_STATUS_APPROVED,
     REVIEW_STATUS_PENDING,
@@ -79,6 +80,7 @@ __all__ = [
     "REVIEW_STATUS_REPROCESS",
     "REVIEW_STATUSES",
     # Pipeline status constants
+    "PIPELINE_STATUS_RUNNING",
     "PIPELINE_STATUS_COMPLETED",
     "PIPELINE_STATUS_FAILED",
     # Artifact type constants
