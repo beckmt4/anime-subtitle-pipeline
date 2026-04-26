@@ -33,6 +33,42 @@ Output: `outbox/video.en.srt`
 
 Metadata (log): strategy, candidate id, segment count.
 
+### Dry-run / Inspect-only
+
+Use `--dry-run` to preview source discovery and the planned generation path
+**without running ASR, MT, LLM polish, mux, or writing any output files**:
+
+```powershell
+python main.py video.mkv --mode generate --dry-run
+```
+
+The inspect result is printed to the log and includes:
+
+- Detected audio and subtitle streams
+- Selected (planned) strategy and confidence tier
+- Source candidates and rejection reasons (same schema as a real run)
+- Expected output artifact paths (final SRT, QC JSON, raw SRT if applicable)
+- Quality risk: confidence tier, review likelihood, heuristic fallback flag
+- Whether source selection depends on ambiguous or heuristic fallback behavior
+- Whether embedded subtitle streams use a codec that may contain formatting tags
+- Whether a Whisper language probe would be required to finalise the strategy
+
+The `--audio-track`, `--extract-en-subs`, and `--no-llm` flags are all
+honoured in dry-run mode and affect the planning result.
+
+Programmatic access (no CLI):
+
+```python
+from orchestrator import run_generate_inspect
+from media_inspect import inspect_media
+from config import Config
+
+media = inspect_media("video.mkv")
+result = run_generate_inspect(media, Config())
+# result["inspect_only"] is always True
+# result["planned_strategy"], result["quality_risk"], result["artifact_plan"], ...
+```
+
 ## Benchmark Mode
 
 Generates candidates from all enabled sources (see benchmark.sources in config) and computes metrics:

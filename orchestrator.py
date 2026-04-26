@@ -1471,4 +1471,261 @@ def run_generate(
     return metadata
 
 
-__all__ = ["run_generate", "score_candidate"]
+def run_generate_inspect(
+    media: MediaInfo,
+    cfg: Config,
+    audio_track_override: int | None = None,
+    skip_embedded_en: bool = False,
+    no_llm: bool = False,
+) -> Dict[str, Any]:
+    """Inspect-only flow for generate mode.
+
+    Performs source discovery and strategy evaluation without invoking ASR,
+    MT, LLM polish, mux, or any output writes.  The language probe (Whisper
+    language detection) is also skipped; when it would be required the result
+    flags the ambiguity.
+
+    Args:
+        media: Inspected media info for the input video.
+        cfg: Loaded Config.
+        audio_track_override: When not None, same override semantics as
+            ``run_generate``.
+        skip_embedded_en: When True, embedded English subtitles are ignored,
+            mirroring the CLI ``--extract-en-subs`` flag.
+        no_llm: When True, force-skip LLM polish (affects artifact_plan
+            reporting only — no LLM is invoked in inspect mode regardless).
+
+    Returns a metadata dict with:
+      - ``inspect_only``: always ``True`` — sentinel that no execution occurred
+      - ``video``: filename of the input
+      - ``planned_strategy``: chosen strategy name, or ``None`` when no source
+        is found
+      - ``no_source``: ``True`` when no usable audio/subtitle source exists
+      - ``sources_detected``: raw stream detection results
+      - ``audio_streams``: list of detected audio stream descriptors
+      - ``subtitle_streams``: list of detected subtitle stream descriptors
+      - ``selection_report``: same structured report as a real run, or ``None``
+        when no source exists
+      - ``artifact_plan``: expected output file paths for a real run
+      - ``quality_risk``: confidence tier, review likelihood, probe requirement
+      - ``probe_required``: ``True`` when a Whisper language probe would be
+        needed to resolve the final strategy; strategy may differ in a real run
+      - ``probe_note``: human-readable explanation when probe_required is True
+    """
+    video_path = media.path
+    prefer_subtitles = cfg.get("generate", "prefer_subtitles", default=True)
+    prefer_audio_language = cfg.get("generate", "prefer_audio_language", default="auto")
+    use_llm_polish = (
+        cfg.get("generate", "use_llm_polish", default=True)
+        and cfg.llm_enabled
+        and not no_llm
+    )
+
+    logger.info("=" * 70)
+    logger.info(f"GENERATE MODE (INSPECT-ONLY): {video_path.name}")
+    logger.info("=" * 70)
+
+    # --- Source discovery (same logic as run_generate, no I/O) ---
+    en_sub_idx = _first_text_sub(media, "en")
+    ja_sub_idx = _first_text_sub(media, "ja")
+    en_audio_order = _first_audio_order(media, "en")
+    ja_audio_order = _first_audio_order(media, "ja")
+
+    orig_en_sub_idx = en_sub_idx
+    orig_ja_sub_idx = ja_sub_idx
+    orig_en_audio_order = en_audio_order
+    orig_ja_audio_order = ja_audio_order
+    selected_untagged_audio_order: int | None = None
+    untagged_fallback_reason: str | None = None
+
+    # Detect whether a language probe would be required in a real run.
+    probe_required = False
+    probe_note: str | None = None
+
+    needs_probe_en_tagged = (
+        audio_track_override is None
+        and prefer_audio_language == "auto"
+        and ja_audio_order is None
+        and en_audio_order is not None
+    )
+    needs_probe_untagged = (
+        audio_track_override is None
+        and prefer_audio_language == "auto"
+        and ja_audio_order is None
+        and en_audio_order is None
+        and bool(media.audio_streams)
+    )
+
+    if needs_probe_en_tagged:
+        probe_required = True
+        probe_note = (
+            f"EN-tagged audio track {en_audio_order} is the only audio source and "
+            "prefer_audio_language='auto' is set.  A real run would probe the audio "
+            "language with Whisper before routing.  The planned strategy below "
+            "assumes the container tag is correct (English); the real strategy may "
+            "differ if the probe detects Japanese."
+        )
+    elif needs_probe_untagged:
+        _fallback_order, _fb_reason = _select_untagged_audio_fallback(media)
+        selected_untagged_audio_order = _fallback_order
+        untagged_fallback_reason = _fb_reason
+        probe_required = True
+        probe_note = (
+            f"No language-tagged audio found; track {_fallback_order} selected "
+            f"by heuristic ({_fb_reason}).  A real run would probe the audio "
+            "language with Whisper.  The planned strategy below assumes the probe "
+            "would be inconclusive (untagged_audio_asr_mt fallback)."
+        )
+
+    # --- Apply overrides (same as run_generate) ---
+    if skip_embedded_en and en_sub_idx is not None:
+        en_sub_idx = None
+
+    if audio_track_override is not None:
+        if audio_track_override < 0 or audio_track_override >= len(media.audio_streams):
+            raise RuntimeError(
+                f"--audio-track {audio_track_override} out of range "
+                f"(file has {len(media.audio_streams)} audio stream(s))"
+            )
+        ja_audio_order = audio_track_override
+        en_sub_idx = None
+        ja_sub_idx = None
+        en_audio_order = None
+
+    # --- Decision tree (mirrors run_generate exactly; no I/O) ---
+    strategy: str | None = None
+    if prefer_subtitles and en_sub_idx is not None:
+        strategy = "embedded_en"
+    elif prefer_audio_language == "en" and en_audio_order is not None:
+        strategy = "en_audio_asr"
+    elif ja_sub_idx is not None:
+        strategy = "embedded_jp_mt"
+    elif prefer_audio_language in ["ja", "auto"] and ja_audio_order is not None:
+        strategy = "ja_audio_asr_mt"
+    elif en_audio_order is not None:
+        strategy = "en_audio_asr"
+    elif media.audio_streams:
+        strategy = "untagged_audio_asr_mt"
+        if selected_untagged_audio_order is None:
+            _fb_order, _fb_reason = _select_untagged_audio_fallback(media)
+            selected_untagged_audio_order = _fb_order
+            untagged_fallback_reason = _fb_reason
+
+    # --- Selection report ---
+    selection_report: Dict[str, Any] | None = None
+    if strategy is not None:
+        selection_report = _build_selection_report(
+            strategy=strategy,
+            orig_en_sub_idx=orig_en_sub_idx,
+            orig_ja_sub_idx=orig_ja_sub_idx,
+            orig_en_audio_order=orig_en_audio_order,
+            orig_ja_audio_order=orig_ja_audio_order,
+            prefer_subtitles=prefer_subtitles,
+            prefer_audio_language=prefer_audio_language,
+            skip_embedded_en=skip_embedded_en,
+            audio_track_override=audio_track_override,
+            probed_lang=None,   # inspect mode never runs the probe
+            untagged_audio_order=selected_untagged_audio_order,
+        )
+
+    # --- Artifact plan ---
+    stem = video_path.stem
+    outbox = Path(cfg.get_path("outbox"))
+    artifact_plan: Dict[str, str] = {}
+    if strategy is not None:
+        artifact_plan["final_srt"] = str(outbox / f"{stem}.en.srt")
+        artifact_plan["qc_json"] = str(outbox / f"{stem}.en.qc.json")
+        if strategy in ("embedded_jp_mt", "ja_audio_asr_mt", "untagged_audio_asr_mt"):
+            artifact_plan["raw_srt"] = str(outbox / f"{stem}.raw.en.srt")
+
+    # --- Quality risk ---
+    quality_risk: Dict[str, Any] = {}
+    if strategy is not None:
+        quality_risk["confidence_tier"] = _STRATEGY_CONFIDENCE_TIER.get(strategy, "unknown")
+        quality_risk["review_likely"] = strategy in _REVIEW_RECOMMENDED_STRATEGIES
+        quality_risk["probe_required"] = probe_required
+        quality_risk["heuristic_fallback"] = strategy == "untagged_audio_asr_mt"
+        if untagged_fallback_reason:
+            quality_risk["heuristic_fallback_reason"] = untagged_fallback_reason
+
+    # --- Subtitle formatting artifact check ---
+    # Flag embedded subtitle streams whose codec may carry inline styling tags.
+    _TAGGED_CODECS = frozenset({"ass", "ssa", "webvtt"})
+    formatting_risk_streams = [
+        s for s in media.subtitle_streams
+        if s.codec.lower() in _TAGGED_CODECS
+    ]
+    formatting_artifact_risk = bool(formatting_risk_streams)
+    formatting_artifact_note: str | None = None
+    if formatting_artifact_risk:
+        codecs = ", ".join(sorted({s.codec for s in formatting_risk_streams}))
+        formatting_artifact_note = (
+            f"Embedded subtitle stream(s) use codec(s) [{codecs}] which may "
+            "contain inline formatting tags (e.g. {\an8}, <i>) that would need "
+            "normalization before use."
+        )
+
+    # --- Build result ---
+    result: Dict[str, Any] = {
+        "inspect_only": True,
+        "video": str(video_path.name),
+        "planned_strategy": strategy,
+        "no_source": strategy is None,
+        "sources_detected": {
+            "en_sub_idx": orig_en_sub_idx,
+            "ja_sub_idx": orig_ja_sub_idx,
+            "en_audio_order": orig_en_audio_order,
+            "ja_audio_order": orig_ja_audio_order,
+        },
+        "audio_streams": [
+            {
+                "order": i,
+                "index": s.index,
+                "codec": s.codec,
+                "language": s.language or s.raw_language,
+                "channels": getattr(s, "channels", None),
+                "sample_rate": getattr(s, "sample_rate", None),
+            }
+            for i, s in enumerate(media.audio_streams)
+        ],
+        "subtitle_streams": [
+            {
+                "order": i,
+                "index": s.index,
+                "codec": s.codec,
+                "language": s.language or s.raw_language,
+                "is_bitmap": s.is_bitmap,
+            }
+            for i, s in enumerate(media.subtitle_streams)
+        ],
+        "selection_report": selection_report,
+        "artifact_plan": artifact_plan,
+        "quality_risk": quality_risk,
+        "probe_required": probe_required,
+        "probe_note": probe_note,
+        "formatting_artifact_risk": formatting_artifact_risk,
+        "formatting_artifact_note": formatting_artifact_note,
+    }
+
+    # --- Summary log ---
+    _log_selection_report(selection_report) if selection_report else None
+    logger.info("INSPECT RESULT (no execution performed):")
+    if strategy is None:
+        logger.warning("  ✗ No usable source found — a real run would raise an error")
+    else:
+        logger.info("  Planned strategy : %s", strategy)
+        tier = quality_risk.get("confidence_tier", "?")
+        logger.info("  Confidence tier  : %s", tier)
+        if probe_required:
+            logger.warning("  ⚠ Language probe required — final strategy may differ")
+        if quality_risk.get("review_likely"):
+            logger.warning("  ⚠ Review likely (MT pipeline)")
+        if formatting_artifact_risk:
+            logger.warning("  ⚠ Formatting artifact risk: %s", formatting_artifact_note)
+    logger.info("  Artifact plan    : %s", ", ".join(artifact_plan) or "<none>")
+    logger.info("-" * 70)
+
+    return result
+
+
+__all__ = ["run_generate", "run_generate_inspect", "score_candidate"]

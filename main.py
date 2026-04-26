@@ -424,6 +424,16 @@ Examples:
     )
 
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Inspect-only mode for generate: perform source discovery and strategy "
+            "evaluation, print the planned strategy and quality risk, then exit "
+            "without running ASR, MT, LLM polish, mux, or writing any output files."
+        )
+    )
+
+    parser.add_argument(
         "--extract-en-subs",
         action="store_true",
         help=(
@@ -581,10 +591,33 @@ Examples:
             logger.info(f"  Comparisons: {len(results['comparisons'])}")
             sys.exit(0)
         elif args.mode == "generate":
-            from orchestrator import run_generate
+            from orchestrator import run_generate, run_generate_inspect
             from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
-            logger.info("Running in GENERATE mode (strategy selection)")
             media = inspect_media(args.video)
+
+            if args.dry_run:
+                logger.info("Running in GENERATE mode (INSPECT-ONLY / dry-run)")
+                inspect_result = run_generate_inspect(
+                    media,
+                    config,
+                    audio_track_override=args.audio_track,
+                    skip_embedded_en=args.extract_en_subs,
+                    no_llm=args.no_llm,
+                )
+                logger.info("\nDry-run inspect result:")
+                logger.info(f"  Planned strategy : {inspect_result['planned_strategy'] or '<no source>'}")
+                if inspect_result["probe_required"]:
+                    logger.warning("  ⚠ Probe required: %s", inspect_result["probe_note"])
+                if inspect_result.get("formatting_artifact_risk"):
+                    logger.warning("  ⚠ Formatting risk: %s", inspect_result["formatting_artifact_note"])
+                plan = inspect_result.get("artifact_plan", {})
+                if plan:
+                    logger.info("  Artifact plan:")
+                    for key, path in plan.items():
+                        logger.info("    %s → %s", key, path)
+                sys.exit(0)
+
+            logger.info("Running in GENERATE mode (strategy selection)")
 
             # Compute media hash and open registry before generation so that
             # the pipeline run is recorded even if generation fails mid-way.
