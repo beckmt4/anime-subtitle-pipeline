@@ -1,0 +1,123 @@
+{
+  "video": "sample_ep01.mkv",
+  "reference_id": "embedded_en_s10",
+  "run_id": "fixture-run-001",
+  "candidates": [
+    {
+      "id": "embedded_en_s10",
+      "source": "embedded",
+      "language": "en",
+      "origin_stream": "sub:10",
+      "segment_count": 4
+    },
+    {
+      "id": "en_audio_asr_a0",
+      "source": "asr",
+      "language": "en",
+      "origin_stream": "audio:0",
+      "segment_count": 4
+    },
+    {
+      "id": "embedded_jp_mt_s11_marian",
+      "source": "embedded_mt_marian",
+      "language": "en",
+      "origin_stream": "sub:11",
+      "segment_count": 4,
+      "translation_engine": "marian",
+      "translation_model": "Helsinki-NLP/opus-mt-ja-en",
+      "translation_mode": "accuracy_first",
+      "translation_fallback": false
+    }
+  ],
+  "comparisons": [
+    {
+      "ref_id": "embedded_en_s10",
+      "cand_id": "en_audio_asr_a0",
+      "metrics": {
+        "wer": 0.1429,
+        "bleu": 72.3,
+        "chrf": 84.1
+      },
+      "num_segments": 4,
+      "num_diffs": 1,
+      "diffs": [
+        {
+          "start": 12.5,
+          "end": 14.0,
+          "ref": "I can't believe it",
+          "cand": "I cannot believe it"
+        }
+      ]
+    },
+    {
+      "ref_id": "embedded_en_s10",
+      "cand_id": "embedded_jp_mt_s11_marian",
+      "metrics": {
+        "wer": 0.2857,
+        "bleu": 51.4,
+        "chrf": 68.9
+      },
+      "num_segments": 4,
+      "num_diffs": 2,
+      "diffs": [
+        {
+          "start": 3.0,
+          "end": 5.0,
+          "ref": "Wait for me!",
+          "cand": "Please wait!"
+        },
+        {
+          "start": 12.5,
+          "end": 14.0,
+          "ref": "I can't believe it",
+          "cand": "Unbelievable"
+        }
+      ]
+    }
+  ],
+  "scorecards": [
+    {
+      "id": "embedded_en_s10",
+      "source": "embedded",
+      "segment_count": 4,
+      "language": "en",
+      "origin_stream": "sub:10",
+      "is_reference": true,
+      "wer": null,
+      "bleu": null,
+      "chrf": null,
+      "composite_score": 1.0,
+      "rank": "REF"
+    },
+    {
+      "id": "en_audio_asr_a0",
+      "source": "asr",
+      "segment_count": 4,
+      "language": "en",
+      "origin_stream": "audio:0",
+      "is_reference": false,
+      "wer": 0.1429,
+      "bleu": 72.3,
+      "chrf": 84.1,
+      "composite_score": 0.81955,
+      "rank": 1
+    },
+    {
+      "id": "embedded_jp_mt_s11_marian",
+      "source": "embedded_mt_marian",
+      "segment_count": 4,
+      "language": "en",
+      "origin_stream": "sub:11",
+      "is_reference": false,
+      "wer": 0.2857,
+      "bleu": 51.4,
+      "chrf": 68.9,
+      "composite_score": 0.6578999999999999,
+      "rank": 2,
+      "translation_engine": "marian",
+      "translation_model": "Helsinki-NLP/opus-mt-ja-en",
+      "translation_mode": "accuracy_first",
+      "translation_fallback": false
+    }
+  ]
+}

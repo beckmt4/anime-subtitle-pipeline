@@ -29,17 +29,6 @@ from tracing import start_span
 logger = logging.getLogger(__name__)
 
 
-def _benchmark_translation_engines(config: Config) -> List[str]:
-    configured = config.get("benchmark", "translation_engines", default=None)
-    if configured is None:
-        configured = config.get("translation", "benchmark_engines", default=None)
-    if configured is None:
-        configured = [config.get("translation", "engine", default="marian")]
-    if isinstance(configured, str):
-        configured = [configured]
-    return [str(engine).strip().lower() for engine in configured]
-
-
 def find_all_tracks_by_language(
     media: MediaInfo,
     track_type: str,
@@ -85,9 +74,8 @@ def select_reference_candidate(
     if not candidates:
         return None
 
-    priority = config.get("benchmark", "reference_priority", default=[
-        "embedded_en", "en_audio_asr", "ja_audio_asr_mt", "embedded_jp_mt"
-    ])
+    from core.benchmark.config import BenchmarkConfig
+    priority = BenchmarkConfig.from_config(config).reference_priority
 
     for pref in priority:
         for cand in candidates:
@@ -132,6 +120,9 @@ def run_benchmark(
         FileNotFoundError: If video doesn't exist.
         RuntimeError: If no suitable tracks found.
     """
+    from core.benchmark.config import BenchmarkConfig
+    bc = BenchmarkConfig.from_config(config)
+
     video_path_obj = Path(video_path)
     if not video_path_obj.exists():
         raise FileNotFoundError(f"Video not found: {video_path}")
@@ -143,20 +134,14 @@ def run_benchmark(
     with start_span("inspect_media"):
         media = inspect_media(str(video_path_obj))
 
-    use_embedded_en = config.get("benchmark", "sources", "use_embedded_en", default=True)
-    use_embedded_jp = config.get("benchmark", "sources", "use_embedded_jp", default=True)
-    use_en_audio = config.get("benchmark", "sources", "use_en_audio", default=True)
-    use_ja_audio = config.get("benchmark", "sources", "use_ja_audio", default=True)
-    compare_all_pairs = config.get("benchmark", "compare_all_pairs", default=False)
-    max_diffs = config.get("benchmark", "max_diffs_per_comparison", default=20)
-    translation_engines = _benchmark_translation_engines(config)
+    translation_engines = bc.translation_engines
 
     logger.info("\n[Discovery Phase] Finding all JP/EN audio and subtitle tracks...")
 
-    en_audio_tracks = find_all_tracks_by_language(media, "audio", ["en", "eng", "en-us"]) if use_en_audio else []
-    ja_audio_tracks = find_all_tracks_by_language(media, "audio", ["ja", "jpn", "jp", "ja-jp"]) if use_ja_audio else []
-    en_sub_tracks = find_all_tracks_by_language(media, "subtitle", ["en", "eng", "en-us"]) if use_embedded_en else []
-    ja_sub_tracks = find_all_tracks_by_language(media, "subtitle", ["ja", "jpn", "jp", "ja-jp"]) if use_embedded_jp else []
+    en_audio_tracks = find_all_tracks_by_language(media, "audio", ["en", "eng", "en-us"]) if bc.use_en_audio else []
+    ja_audio_tracks = find_all_tracks_by_language(media, "audio", ["ja", "jpn", "jp", "ja-jp"]) if bc.use_ja_audio else []
+    en_sub_tracks = find_all_tracks_by_language(media, "subtitle", ["en", "eng", "en-us"]) if bc.use_embedded_en else []
+    ja_sub_tracks = find_all_tracks_by_language(media, "subtitle", ["ja", "jpn", "jp", "ja-jp"]) if bc.use_embedded_jp else []
 
     logger.info("  EN audio tracks: %d", len(en_audio_tracks))
     logger.info("  JP audio tracks: %d", len(ja_audio_tracks))
@@ -358,7 +343,7 @@ def run_benchmark(
         logger.info("\nComparing %s vs %s...", cand.id, ref_candidate.id)
         with start_span("compare_candidate", cand_id=cand.id):
             comparison = compare_candidates(ref_candidate, cand, diff_threshold=5)
-            comparison["diffs"] = comparison["diffs"][:max_diffs]
+            comparison["diffs"] = comparison["diffs"][:bc.max_diffs_per_comparison]
             results["comparisons"].append(comparison)
             metrics = comparison["metrics"]
             logger.info(
@@ -368,7 +353,7 @@ def run_benchmark(
             )
             _persist_comparison(comparison)
 
-    if compare_all_pairs and len(candidates) > 2:
+    if bc.compare_all_pairs and len(candidates) > 2:
         logger.info("\nComputing full pairwise comparison matrix...")
         for i, cand1 in enumerate(candidates):
             for j, cand2 in enumerate(candidates):
@@ -377,7 +362,7 @@ def run_benchmark(
                 logger.info("\nComparing %s vs %s...", cand1.id, cand2.id)
                 with start_span("compare_pair", cand1=cand1.id, cand2=cand2.id):
                     comparison = compare_candidates(cand1, cand2, diff_threshold=5)
-                    comparison["diffs"] = comparison["diffs"][:max_diffs]
+                    comparison["diffs"] = comparison["diffs"][:bc.max_diffs_per_comparison]
                     results["comparisons"].append(comparison)
                     metrics = comparison["metrics"]
                     logger.info(

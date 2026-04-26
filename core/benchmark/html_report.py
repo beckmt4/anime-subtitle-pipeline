@@ -176,14 +176,14 @@ def build_scorecards(results: Dict[str, Any]) -> List[Dict[str, Any]]:
                 scorecard[extra_key] = cand_meta[extra_key]
         scorecards.append(scorecard)
 
-    # Sort: reference first, then by composite score descending, nulls last
+    # Sort: reference first, then by composite score descending (best → worst), nulls last
     def _sort_key(sc):
         if sc["is_reference"]:
-            return (0, 1.0)
+            return (2, 0.0)   # highest group → always first with reverse=True
         c = sc["composite_score"]
-        return (1, c) if c is not None else (2, 0.0)
+        return (1, c) if c is not None else (0, 0.0)  # nulls in group 0 → last
 
-    scorecards.sort(key=_sort_key, reverse=False)
+    scorecards.sort(key=_sort_key, reverse=True)
     # Assign rank (1-based, reference excluded from ranking)
     rank = 1
     for sc in scorecards:
@@ -287,7 +287,7 @@ def _render_comparisons(results: Dict[str, Any], max_diffs: int = 20) -> str:
             f'<div class="metrics-inline">{metrics_inline}</div>'
             f'</div>'
             + diff_html +
-            f'</div>'
+            '</div>'
         )
 
     return "".join(blocks)

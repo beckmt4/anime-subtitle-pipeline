@@ -662,15 +662,18 @@ Examples:
         if args.mode == "benchmark":
             from benchmark import run_benchmark
             logger.info("Running in BENCHMARK mode (compare all candidate sources)")
+            bm_registry = open_registry(config)
             results = run_benchmark(
                 video_path=args.video,
                 config=config,
                 use_llm=not args.no_llm,
+                registry=bm_registry,
             )
             logger.info("\nBenchmark Result:")
             logger.info(f"  Reference: {results['reference_id']}")
             logger.info(f"  Candidates: {len(results['candidates'])}")
             logger.info(f"  Comparisons: {len(results['comparisons'])}")
+            logger.info(f"  Run ID: {results.get('run_id', '<none>')}")
             sys.exit(0)
         elif args.mode == "generate":
             from orchestrator import run_generate
