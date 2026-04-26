@@ -5,11 +5,13 @@ This module provides generalized run_benchmark() which:
 2. Generates EN candidates from all available sources
 3. Selects appropriate reference candidate
 4. Performs pairwise comparisons with configurable metrics
-5. Saves comprehensive results to benchmark_results.json
+5. Saves comprehensive results to benchmark_results.json and an HTML report
+6. Persists each comparison as a BenchmarkRunRecord via ArtifactRegistry
 """
 
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -102,6 +104,7 @@ def run_benchmark(
     config: Config,
     use_llm: bool = True,
     output_dir: Optional[str] = None,
+    registry=None,
 ) -> Dict[str, Any]:
     """Run generalized benchmark comparing all available EN subtitle sources.
 
@@ -110,16 +113,20 @@ def run_benchmark(
     2. Generate EN candidates from all enabled sources
     3. Select reference candidate based on priority
     4. Compare all candidates against reference (or pairwise if configured)
-    5. Save comprehensive results to JSON
+    5. Build per-candidate scorecards
+    6. Save comprehensive results to JSON and HTML report
+    7. Persist each comparison via ArtifactRegistry (if registry provided)
 
     Args:
         video_path: Path to video file.
         config: Loaded Config.
         use_llm: Whether to apply LLM polishing to MT candidates.
         output_dir: Output directory for results (default: config outbox).
+        registry: Optional ArtifactRegistry instance.  When provided, each
+            pairwise comparison is persisted as a BenchmarkRunRecord.
 
     Returns:
-        Dictionary with comprehensive benchmark results.
+        Dictionary with comprehensive benchmark results including ``scorecards``.
 
     Raises:
         FileNotFoundError: If video doesn't exist.
@@ -307,12 +314,43 @@ def run_benchmark(
 
     ref_candidate = select_reference_candidate(candidates, config)
 
+    # Unique run_id for this benchmark session
+    session_run_id = str(uuid.uuid4())
+
     results: Dict[str, Any] = {
         "video": str(video_path_obj.name),
         "reference_id": ref_candidate.id,
         "candidates": candidate_metadata,
         "comparisons": [],
+        "run_id": session_run_id,
     }
+
+    def _persist_comparison(comp: Dict[str, Any]) -> None:
+        """Persist one comparison to the registry; silently skips if unavailable."""
+        if registry is None:
+            return
+        try:
+            from core.artifacts.models import BenchmarkRunRecord
+            metrics = comp.get("metrics", {})
+            registry.record_benchmark_run(BenchmarkRunRecord(
+                media_hash=_media_hash,
+                run_id=f"{session_run_id}:{comp['ref_id']}:{comp['cand_id']}",
+                metrics=metrics,
+                wer=metrics.get("wer"),
+                bleu=metrics.get("bleu"),
+                chrf=metrics.get("chrf"),
+            ))
+        except Exception as exc:
+            logger.warning("ArtifactRegistry: failed to persist benchmark run — %s", exc)
+
+    # Derive a stable media hash for registry records (hex digest of path if real file)
+    _media_hash = ""
+    if registry is not None:
+        try:
+            from core.artifacts.pipeline_wiring import compute_media_hash
+            _media_hash = compute_media_hash(video_path_obj)
+        except Exception:
+            _media_hash = video_path_obj.name  # fallback: filename as pseudo-hash
 
     for cand in candidates:
         if cand.id == ref_candidate.id:
@@ -328,6 +366,7 @@ def run_benchmark(
                 metrics["wer"] * 100, metrics["bleu"], metrics["chrf"],
                 comparison["num_diffs"],
             )
+            _persist_comparison(comparison)
 
     if compare_all_pairs and len(candidates) > 2:
         logger.info("\nComputing full pairwise comparison matrix...")
@@ -345,10 +384,23 @@ def run_benchmark(
                         "  WER=%.2f%%, BLEU=%.1f, chrF=%.1f",
                         metrics["wer"] * 100, metrics["bleu"], metrics["chrf"],
                     )
+                    _persist_comparison(comparison)
+
+    # Build per-candidate scorecards and attach to results
+    from core.benchmark.html_report import build_scorecards, render_html_report
+    results["scorecards"] = build_scorecards(results)
 
     output_path = output_dir_obj / "benchmark_results.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
+
+    # Write HTML report alongside the JSON
+    html_output_path = output_dir_obj / "benchmark_report.html"
+    try:
+        render_html_report(results, str(html_output_path))
+        logger.info("✓ HTML report saved: %s", html_output_path)
+    except Exception as exc:
+        logger.warning("HTML report generation failed: %s", exc)
 
     logger.info("\n✓ Benchmark results saved: %s", output_path)
     logger.info("✓ Reference: %s", ref_candidate.id)
