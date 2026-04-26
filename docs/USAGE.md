@@ -31,7 +31,9 @@ python main.py video.mkv --mode generate
 
 Output: `outbox/video.en.srt`
 
-Metadata (log): strategy, candidate id, segment count.
+Metadata: the CLI prints `registry_run_id=<id>` when the run is recorded in the
+artifact registry. The registry defaults to `outbox/pipeline.db` unless
+`artifacts.db_path` is configured.
 
 ## Benchmark Mode
 
@@ -119,6 +121,8 @@ generate:
 | File | Description |
 |------|-------------|
 | outbox/video.en.srt | Final production subtitles |
+| outbox/video.en.mkv | Optional muxed video with embedded English subtitles |
+| outbox/pipeline.db | SQLite artifact registry, unless `artifacts.db_path` is configured |
 | outbox/benchmark_results.json | Benchmark comparison metrics & diffs |
 | logs/video.json | Candidate chain (legacy pipeline) |
 
@@ -127,6 +131,7 @@ generate:
 - Missing ffmpeg: install and ensure on PATH.
 - No usable source: ensure at least one audio or subtitle track in JP/EN.
 - LLM timeouts: disable polish via `--no-llm` or `generate.use_llm_polish: false`.
+- Remote Ollama endpoint: set `LLM_BASE_URL`, for example `LLM_BASE_URL=http://192.168.1.147:11434`.
 
 ## Extensibility Notes
 

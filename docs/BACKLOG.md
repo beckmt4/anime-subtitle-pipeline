@@ -11,6 +11,12 @@ Generated: 2026-04-25. Based on full code review + security scan.
 - **[SECURITY]** `subtitle_corrector.py` had `OLLAMA_BASE_URL` hardcoded as `"http://localhost:11434"` with no escape hatch. Fixed to read `os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")`, matching how `MODEL` is already handled in the same file.
 - **[CODE]** `asr.py` used a `setattr` hack to attach `_build_candidate_from_segments` to the class from outside the class body. Moved it to a proper instance method.
 - **[NOISE]** `llm_polish.py` emitted a `WARNING: Non-localhost LLM endpoint` on every API call when running against Unraid Ollama (`192.168.x.x`). Removed — non-localhost is valid for production.
+- **[PERSISTENCE]** Artifact registry migrations now run automatically through `core.artifacts.schema.init_db()` and migration files are documented in `docs/migrations/README.md`.
+- **[PERSISTENCE]** `process_video()` now writes media assets, pipeline runs, subtitle candidates, output SRTs, muxed MKVs, and failure status to `ArtifactRegistry`.
+- **[PERSISTENCE]** `ArtifactRegistry` and `ProcessingLedger` now expose read APIs for pipeline run history, latest artifacts, and candidate lineage.
+- **[CONFIG]** `LLM_BASE_URL` now overrides `llm.base_url`, so Docker/Unraid deployments can point at a LAN Ollama endpoint without editing `config.yaml`.
+- **[CLI]** `subtitle_corrector.py` now exposes `--timeout` and validates it as a positive integer.
+- **[QC]** `subtitle_corrector.py` drift detection now handles all-caps names and case-only output changes.
 
 ---
 
@@ -46,9 +52,11 @@ All 9 root-level test files migrated: 8 moved to `tests/`, `test_pipeline.py` mo
 (it was a CLI smoke script, not a real pytest module). `norecursedirs = attic` added to `pytest.ini`
 to prevent `attic/debug_test.py` from being collected. No regressions introduced.
 
-### P1-2: `subtitle_corrector.py` timeout is hardcoded
+### ~~P1-2: `subtitle_corrector.py` timeout is hardcoded~~ ✅ RESOLVED (commit b6f1a62)
 
-`_call_ollama(... timeout: int = 120)` — 120s is the fallback default but the CLI exposes no `--timeout` flag. The corrector is a standalone CLI tool; heavy models on slow hardware can exceed this. Add `--timeout` to `_build_parser()`.
+`subtitle_corrector.py` now exposes `--timeout` and rejects zero, negative, and
+non-integer values before runtime. Tests cover parser defaults, custom values,
+invalid values, and timeout forwarding to the Ollama call.
 
 ### P1-3: `llm_polish.py` legacy import of `asr.Segment` 
 
@@ -60,15 +68,11 @@ This imports the ASR-specific `Segment` dataclass (with `text_ja`, `text_en_raw`
 
 `subtitle_pipeline.py` exists at root. It was likely an earlier version of `main.py`. Check whether it has unique functionality or is fully superseded. If superseded, move to `attic/`.
 
-### P1-5: `llm.base_url` in `config.yaml` is `http://localhost:11434`
+### ~~P1-5: `llm.base_url` in `config.yaml` is `http://localhost:11434`~~ ✅ RESOLVED (commit b6f1a62)
 
-This works on dev but will fail on Unraid where Ollama listens on the LAN IP. The config is the right place to change this, but there's no env var override for `llm.base_url` in `config.py`. Add a fallback: `llm_base_url` should check `LLM_BASE_URL` env var before returning the YAML value. This makes Docker/Unraid deployment easier without editing config.yaml.
-
-```python
-@property
-def llm_base_url(self) -> str:
-    return os.environ.get("LLM_BASE_URL") or self.get("llm", "base_url", default="http://localhost:11434")
-```
+`Config.llm_base_url` now checks `LLM_BASE_URL` before the YAML value, with tests
+for YAML fallback and environment override behavior. README documents the
+Docker/Unraid usage pattern.
 
 ### P1-6: 17 orchestrator tests fail in sandbox due to `temp/` unlink permission
 
@@ -118,15 +122,17 @@ The comment in `config.yaml` notes that the `generate:` section was previously n
 
 `transcribe_audio_to_candidate()` calls `transcribe_audio_to_segments()` and then reads `asr.last_candidate` — an attribute that is set as a side-effect inside `transcribe_audio_to_segments`. This is fragile: the attribute is only set after a successful run, and `getattr(asr, "last_candidate", None)` silently returns `None` on failure, triggering a fallback that rebuilds the candidate without the language info from the Whisper info object. Refactor to return the candidate directly from `transcribe_audio_to_segments`.
 
-### P2-4: `subtitle_corrector.py` `check_drift` noun detection is case-sensitive
+### ~~P2-4: `subtitle_corrector.py` `check_drift` noun detection is case-sensitive~~ ✅ RESOLVED (commit b6f1a62)
 
-`_extract_nouns()` matches `\b[A-Z][a-zA-Z]+\b` — capitalized words only. If the raw subtitle has an all-caps proper noun (e.g. `TOYO`) or a name that appears lowercase in the LLM output, drift is missed. Low-frequency edge case but worth noting.
+`_extract_nouns()` now includes all-caps proper nouns, excludes common
+single-letter words (`A`, `I`), and checks noun preservation case-insensitively.
+Tests cover all-caps extraction, missing and preserved all-caps names, case-only
+changes, and lowercased output.
 
-### P2-5: Doc sprawl in `anime-subtitle-pipeline` root
+### ~~P2-5: Doc sprawl in `anime-subtitle-pipeline` root~~ ✅ RESOLVED
 
-16 Markdown files in root: `API_DOCUMENTATION.md`, `BENCHMARK_IMPLEMENTATION.md`, `BENCHMARK_QUICKSTART.md`, `CHANGELOG.md`, `CODE_REVIEW_SUMMARY.md`, `EVALUATION.md`, `FILE_OVERVIEW.md`, `HOW_TO_RUN.md`, `PROJECT_SUMMARY.md`, `QUICKSTART.md`, `QUICK_REFERENCE.md`, `README.md`, `SECURITY.md`, `USAGE.md`, `CONTRIBUTING.md`.
-
-Consolidate into: `README.md` (overview + quickstart), `CHANGELOG.md`, `SECURITY.md`. Move the rest to `docs/`.
+Root Markdown is now limited to `README.md`, `CHANGELOG.md`, `SECURITY.md`,
+and `CONTRIBUTING.md`. Extended guides now live under `docs/`.
 
 ---
 
@@ -139,5 +145,3 @@ This was the original prototype that used GitHub Models API. It's superseded by 
 ### P3-2: `attic/` directory has no README
 
 Add `attic/README.md` explaining that this is a graveyard for retired code and scripts. Anyone reading the repo shouldn't wonder what `attic/` is for.
-
-### P3-

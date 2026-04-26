@@ -263,7 +263,12 @@ Packs supply configuration, prompt profiles, quality thresholds, model preferenc
 
 **Does not belong here:** Application-level business logic, quality policies.
 
-**Current state:** Not implemented. Outputs currently land as flat files in `outbox/` and `logs/`. This module is the target for Issue #18.
+**Current state:** Implemented for the first persistence pass. `ArtifactRegistry`
+uses SQLite, runs numbered migrations at startup, records media assets, pipeline
+runs, subtitle candidates, and output artifacts, and exposes query helpers for
+run history, latest artifacts, and candidate lineage. Flat files in `outbox/`
+and `logs/` remain the user-visible outputs while the registry stores durable
+metadata about those files.
 
 **Dependencies:** `core/subtitles` (data structures), `core/runtime` (Config, paths).
 
@@ -524,7 +529,7 @@ Each move is a single PR: new location, root shim re-exports for backward compat
 ### Phase 5 — Build unimplemented modules
 After migration, build net-new modules:
 - `core/ocr/` (Issue #21) — interface stub exists; implementation needed
-- `core/artifacts/` (Issue #18) — stub exists; SQLite implementation needed
+- `core/artifacts/` (Issue #18) — SQLite registry exists; continue extending it for benchmark/review persistence as those workflows land
 - `core/policy/` — stub exists; threshold routing implementation needed
 - `core/review/` (Issue #22) — stub exists; queue implementation needed
 - Populate `packs/domain/anime/glossary.yaml` (Issue #23)
@@ -566,7 +571,7 @@ This section maps directly to the acceptance criteria stated in Issue #28 and th
 - Extraction split: separate audio extraction from subtitle mux into distinct sub-modules within `core/extract`.
 - Legacy retirement: `asr.Segment`, `find_japanese_audio_track()`, `process_video()` — tracked as static review item #7.
 - **#17** — AI dev workflow: Reference Section 8 for where `specs/`, `prompts/`, `fixtures/`, `acceptance/` directories land.
-- **#18** — Persistent state and artifact registry: Reference Section 6 (`core/artifacts`) for ownership and scope.
+- **#18** — Persistent state and artifact registry: first SQLite-backed pass is implemented; remaining work should reference Section 6 (`core/artifacts`) for ownership and scope.
 
 **Open questions to resolve before Phase 3:**
 - Should language pack aliases live in `config.yaml` or in Python pack files? Decision: Python pack files (as implemented in `packs/language/ja_en/aliases.py`); runtime config can reference pack ID.

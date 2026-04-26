@@ -411,6 +411,7 @@ llm:
 ```
 outbox/
   video.en.srt          # English subtitles
+  pipeline.db           # SQLite artifact registry, unless artifacts.db_path is configured
 
 logs/
   video.json            # Segment data (JA text, EN raw, EN final)
@@ -424,6 +425,10 @@ If muxing enabled:
 outbox/
   video.en.mkv          # Video with embedded English subs
 ```
+
+Successful CLI runs print `registry_run_id=<id>` when the run is recorded in the
+artifact registry. The registry is created automatically at
+`artifacts.db_path`, or at `outbox/pipeline.db` when no explicit path is set.
 
 ## Performance Optimization
 
