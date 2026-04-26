@@ -482,6 +482,59 @@ class ArtifactRegistry:
         ).fetchone()
         return _row_to_artifact(row) if row else None
 
+    def list_pipeline_runs(
+        self,
+        media_hash: Optional[str] = None,
+        *,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[PipelineRunRecord]:
+        """Return pipeline runs, optionally filtered by *media_hash* and/or *status*.
+
+        Args:
+            media_hash: When provided, only runs for this media file are returned.
+            status:     When provided, only runs with this status are returned.
+            limit:      When provided, at most *limit* most-recent runs are returned.
+
+        Returns:
+            List of :class:`~core.artifacts.models.PipelineRunRecord` ordered by
+            ``created_at`` descending (most recent first).
+        """
+        clauses, params = [], []
+        if media_hash is not None:
+            clauses.append("media_hash = ?")
+            params.append(media_hash)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
+        rows = self._conn.execute(
+            f"SELECT * FROM pipeline_runs {where} ORDER BY created_at DESC{limit_clause}",
+            params,
+        ).fetchall()
+        return [_row_to_pipeline_run(r) for r in rows]
+
+    def get_runs_for_hash(self, media_hash: str) -> List[PipelineRunRecord]:
+        """Return all pipeline runs for *media_hash*, most recent first.
+
+        Convenience alias for :meth:`list_pipeline_runs` with a *media_hash* filter.
+        """
+        return self.list_pipeline_runs(media_hash=media_hash)
+
+    def get_latest_srt(self, media_hash: str) -> Optional[str]:
+        """Return the file path of the most recently stored SRT artifact for *media_hash*.
+
+        Returns ``None`` if no SRT artifact has been recorded for this media.
+        """
+        row = self._conn.execute(
+            "SELECT file_path FROM artifacts"
+            " WHERE media_hash = ? AND artifact_type = ?"
+            " ORDER BY created_at DESC, id DESC LIMIT 1",
+            (media_hash, "srt"),
+        ).fetchone()
+        return row["file_path"] if row else None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

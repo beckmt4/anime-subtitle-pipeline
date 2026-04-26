@@ -16,11 +16,12 @@ Key features:
 import logging
 import re
 import time
+import warnings
 from typing import List, NamedTuple, Optional
 
 import requests
 
-from asr import Segment  # legacy
+from asr import Segment  # legacy — use models.SubtitleCandidate for new code
 from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 from subtitle_corrector import check_drift
@@ -305,8 +306,12 @@ Improve the English subtitle:"""
         segments: List[Segment],
         style: Optional[str] = None
     ) -> List[Segment]:
-        """
-        Polish all segments in the list.
+        """Polish all segments in the list (legacy API).
+
+        .. deprecated::
+            ``polish_segments()`` operates on the legacy ``asr.Segment`` type.
+            Use :meth:`polish_candidate` / :func:`polish_candidate_with_llm`
+            with ``models.SubtitleCandidate`` instead.
 
         Updates each segment with text_en_final field containing polished text.
         Applies per-segment drift detection: if the polished output drifts from
@@ -320,6 +325,13 @@ Improve the English subtitle:"""
         Returns:
             The same list of segments with text_en_final populated
         """
+        warnings.warn(
+            "polish_segments() is deprecated and will be removed in a future release. "
+            "Use polish_candidate() / polish_candidate_with_llm() with "
+            "models.SubtitleCandidate instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not segments:
             return segments
 
@@ -549,25 +561,36 @@ def polish_english_subtitles_with_llm(
     config: Config,
     style: Optional[str] = None
 ) -> List[Segment]:
-    """
-    Convenience function for LLM polishing.
-    
+    """Convenience function for LLM polishing (legacy API).
+
+    .. deprecated::
+        Use :func:`polish_candidate_with_llm` with ``models.SubtitleCandidate``
+        instead.  This wrapper operates on the legacy ``asr.Segment`` type and
+        will be removed in a future release.
+
     If LLM is disabled in config, just copies text_en_raw to text_en_final.
-    
+
     Args:
         segments: List of Segment objects with Japanese and raw English text
         config: Configuration object
         style: Override the configured style
-        
+
     Returns:
         Segments with polished English in text_en_final
     """
+    warnings.warn(
+        "polish_english_subtitles_with_llm() is deprecated and will be removed "
+        "in a future release. Use polish_candidate_with_llm() with "
+        "models.SubtitleCandidate instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if not config.llm_enabled:
         logger.info("LLM polishing disabled, using raw translations")
         for seg in segments:
             seg.text_en_final = seg.text_en_raw
         return segments
-    
+
     polisher = LLMPolisher(config)
     return polisher.polish_segments(segments, style=style)
 
@@ -593,7 +616,22 @@ def polish_candidate_with_llm(
 
 
 def enforce_subtitle_constraints_on_segments(segments: List[Segment], config: Config) -> int:
-    """Re-apply line/char constraints to Segment.text_en_final; returns number of adjustments."""
+    """Re-apply line/char constraints to Segment.text_en_final (legacy API).
+
+    .. deprecated::
+        Use :func:`enforce_constraints_on_candidate` with
+        ``models.SubtitleCandidate`` instead.  This function operates on the
+        legacy ``asr.Segment`` type and will be removed in a future release.
+
+    Returns number of adjustments.
+    """
+    warnings.warn(
+        "enforce_subtitle_constraints_on_segments() is deprecated and will be "
+        "removed in a future release. Use enforce_constraints_on_candidate() "
+        "with models.SubtitleCandidate instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     polisher = LLMPolisher(config)
     adjustments = 0
     for seg in segments:
@@ -630,17 +668,29 @@ def enforce_constraints_on_candidate(candidate: SubtitleCandidate, config: Confi
 
 
 class BatchPolisher:
-    """
-    Polisher for multiple segment lists with persistent connection.
-    
-    Usage:
+    """Polisher for multiple segment lists with persistent connection (legacy API).
+
+    .. deprecated::
+        ``BatchPolisher`` operates on the legacy ``asr.Segment`` type via
+        :meth:`polish`.  Use :class:`LLMPolisher` directly (or
+        :func:`polish_candidate_with_llm`) with ``models.SubtitleCandidate``
+        instead.  This class will be removed in a future release.
+
+    Usage::
+
         with BatchPolisher(config) as polisher:
             for segments in segment_batches:
                 polisher.polish(segments)
-                # process segments...
     """
-    
+
     def __init__(self, config: Config):
+        warnings.warn(
+            "BatchPolisher is deprecated and will be removed in a future release. "
+            "Use LLMPolisher.polish_candidate() / polish_candidate_with_llm() "
+            "with models.SubtitleCandidate instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.polisher = LLMPolisher(config)
         self.enabled = config.llm_enabled
     
