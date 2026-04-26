@@ -874,5 +874,174 @@ def test_selection_report_rationale_is_nonempty_string():
     print("✓ Rationale is a non-empty string for all strategies")
 
 
+# ---------------------------------------------------------------------------
+# PolicyEngine unit tests (core.policy)
+# ---------------------------------------------------------------------------
+
+def test_policy_engine_pass_decision():
+    """High-scoring, non-MT candidate must receive a PASS routing decision."""
+    from core.policy import PolicyEngine
+    engine = PolicyEngine()
+    score = {"total_score": 80.0, "grade": "A"}
+    report = {"review_recommended": False, "review_reason": None}
+    result = engine.route(score, report)
+    assert result["decision"] == "pass", result
+    assert result["reasons"] == [], result
+    assert result["triggered_by"] == [], result
+    print("✓ PolicyEngine: high-confidence candidate → PASS")
+
+
+def test_policy_engine_review_due_to_low_score():
+    """Candidate with score below review threshold must route to REVIEW."""
+    from core.policy import PolicyEngine
+    engine = PolicyEngine()
+    score = {"total_score": 45.0, "grade": "C"}
+    report = {"review_recommended": False, "review_reason": None}
+    result = engine.route(score, report)
+    assert result["decision"] == "review", result
+    assert "score_below_review_threshold" in result["triggered_by"], result
+    print("✓ PolicyEngine: low-score candidate → REVIEW")
+
+
+def test_policy_engine_review_due_to_review_recommended():
+    """MT-strategy candidate must route to REVIEW even when score is above review threshold."""
+    from core.policy import PolicyEngine
+    engine = PolicyEngine()
+    # embedded_jp_mt base score is 40; with neutral QC/yield ~60, borderline —
+    # use a score just above the threshold to verify that review_recommended alone triggers REVIEW.
+    score = {"total_score": 65.0, "grade": "B"}
+    report = {
+        "review_recommended": True,
+        "review_reason": "MT pipeline output; manual review recommended",
+    }
+    result = engine.route(score, report)
+    assert result["decision"] == "review", result
+    assert "review_recommended" in result["triggered_by"], result
+    print("✓ PolicyEngine: review_recommended candidate → REVIEW regardless of score")
+
+
+def test_policy_engine_reject_decision():
+    """Candidate with score below reject threshold must route to REJECT."""
+    from core.policy import PolicyEngine
+    engine = PolicyEngine()
+    score = {"total_score": 10.0, "grade": "F"}
+    report = {"review_recommended": False, "review_reason": None}
+    result = engine.route(score, report)
+    assert result["decision"] == "reject", result
+    assert "score_below_reject_threshold" in result["triggered_by"], result
+    print("✓ PolicyEngine: very-low-score candidate → REJECT")
+
+
+def test_policy_engine_custom_thresholds():
+    """Custom threshold overrides must be respected."""
+    from core.policy import PolicyEngine
+    cfg = Config()
+    cfg._config.setdefault("policy", {})
+    cfg._config["policy"]["routing"] = {
+        "review_score_threshold": 50,
+        "reject_score_threshold": 10,
+    }
+    engine = PolicyEngine(cfg)
+    # score=45 should be below custom review threshold (50) → REVIEW
+    score = {"total_score": 45.0, "grade": "C"}
+    report = {"review_recommended": False, "review_reason": None}
+    result = engine.route(score, report)
+    assert result["decision"] == "review", result
+    # score=5 should be below custom reject threshold (10) → REJECT
+    score_low = {"total_score": 5.0, "grade": "F"}
+    result_low = engine.route(score_low, report)
+    assert result_low["decision"] == "reject", result_low
+    print("✓ PolicyEngine: custom thresholds respected")
+
+
+# ---------------------------------------------------------------------------
+# Routing decision integration tests (run_generate metadata)
+# ---------------------------------------------------------------------------
+
+def test_routing_decision_in_metadata():
+    """run_generate must include 'routing_decision' in returned metadata."""
+    cfg = Config()
+    media = _media(en_sub=True)
+    meta = orch.run_generate(media, cfg)
+    assert "routing_decision" in meta, "routing_decision key missing from metadata"
+    rd = meta["routing_decision"]
+    assert "decision" in rd, rd
+    assert "reasons" in rd, rd
+    assert "triggered_by" in rd, rd
+    print("✓ routing_decision present in run_generate metadata")
+
+
+def test_routing_decision_pass_for_embedded_en():
+    """Embedded EN subtitles (high confidence, no MT) must produce a PASS routing decision."""
+    cfg = Config()
+    media = _media(en_sub=True)
+    meta = orch.run_generate(media, cfg)
+    rd = meta["routing_decision"]
+    assert rd["decision"] == "pass", rd
+    assert rd["triggered_by"] == [], rd
+    print("✓ embedded_en strategy → routing decision PASS")
+
+
+def test_routing_decision_review_for_mt_strategies():
+    """MT strategies (embedded_jp_mt, ja_audio_asr_mt) must route to REVIEW."""
+    cfg = Config()
+    mt_cases = [
+        (_media(jp_sub=True), "embedded_jp_mt"),
+        (_media(jp_audio=True), "ja_audio_asr_mt"),
+    ]
+    for media, expected_strategy in mt_cases:
+        meta = orch.run_generate(media, cfg)
+        assert meta["strategy"] == expected_strategy, meta["strategy"]
+        rd = meta["routing_decision"]
+        assert rd["decision"] == "review", (
+            f"{expected_strategy}: expected REVIEW but got {rd['decision']!r}"
+        )
+        assert "review_recommended" in rd["triggered_by"], rd
+    print("✓ MT strategies (embedded_jp_mt, ja_audio_asr_mt) → routing decision REVIEW")
+
+
+def test_routing_decision_review_for_untagged_audio_fallback():
+    """Untagged audio fallback (very_low confidence) must not receive a PASS routing decision."""
+    from media_inspect import AudioStream
+    untagged_audio_stream = AudioStream(index=0, codec="aac", language=None)
+    media = MediaInfo(
+        path=Path("untagged.mkv"),
+        format_name="matroska",
+        duration=120.0,
+        audio_streams=[untagged_audio_stream],
+        subtitle_streams=[],
+    )
+    cfg = Config()
+    meta = orch.run_generate(media, cfg)
+    assert meta["strategy"] == "untagged_audio_asr_mt", meta["strategy"]
+    rd = meta["routing_decision"]
+    assert rd["decision"] in ("review", "reject"), (
+        f"untagged_audio_asr_mt: expected REVIEW or REJECT but got {rd['decision']!r}"
+    )
+    # The decision must be driven by either the score or review_recommended
+    assert rd["triggered_by"], (
+        "untagged_audio_asr_mt: triggered_by must be non-empty"
+    )
+    print(f"✓ untagged_audio_asr_mt fallback → routing decision {rd['decision'].upper()} (not PASS)")
+
+
+def test_routing_decision_structure_complete():
+    """routing_decision must always have the required keys with correct types."""
+    cfg = Config()
+    cases = [
+        _media(en_sub=True),
+        _media(jp_sub=True),
+        _media(jp_audio=True),
+        _media(en_audio=True),
+    ]
+    for media in cases:
+        meta = orch.run_generate(media, cfg)
+        rd = meta["routing_decision"]
+        assert rd["decision"] in ("pass", "review", "reject"), rd
+        assert isinstance(rd["reasons"], list), rd
+        assert isinstance(rd["triggered_by"], list), rd
+    print("✓ routing_decision always has valid structure for all strategies")
+
+
 if __name__ == "__main__":
     run_all_tests()

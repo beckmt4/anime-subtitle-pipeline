@@ -612,6 +612,12 @@ Examples:
             logger.info(f"  Candidate: {meta['candidate_id']}")
             logger.info(f"  Segments: {meta['segment_count']}")
             logger.info(f"  Output SRT: {meta['output_srt']}")
+            routing = meta.get("routing_decision", {})
+            decision = routing.get("decision", "")
+            if decision:
+                logger.info(f"  Routing: {decision.upper()}")
+                for reason in routing.get("reasons", []):
+                    logger.info(f"    • {reason}")
             if meta.get("registry_run_id"):
                 logger.info(f"  Registry run: {meta['registry_run_id']}")
             sys.exit(0)
