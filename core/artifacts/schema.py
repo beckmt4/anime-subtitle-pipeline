@@ -169,6 +169,7 @@ def init_db(db_path: Union[str, Path]) -> sqlite3.Connection:
         for migration in _MIGRATIONS:
             try:
                 conn.execute(migration)
-            except sqlite3.OperationalError:
-                pass  # Column already exists in an existing database.
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
     return conn
