@@ -1,5 +1,11 @@
 """Tests for benchmark comparison functionality."""
 import os
+import pytest
+
+# Skip the entire module if optional metric libraries are not installed
+pytest.importorskip("jiwer")
+pytest.importorskip("sacrebleu")
+
 from models import Segment, SubtitleCandidate
 from compare_core import align_segments, compute_metrics, compare_candidates, compute_overlap
 
