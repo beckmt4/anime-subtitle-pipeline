@@ -311,7 +311,9 @@ ASR-derived candidates carry `asr_quality` metadata with a clean/warn/fail
 status, low-confidence segment counts, threshold values, and per-segment
 `meta.asr.warnings`. The metadata is preserved through MT and LLM polish so QC
 can report `asr_low_confidence` findings for translated lines that started from
-weak transcription.
+weak transcription. ASR warning density also reduces the candidate score and
+routes outputs to review at the configured policy threshold. SRT writing clamps
+adjacent cue timings to keep at least `subtitles.min_gap_sec` between cues.
 
 Japanese-source translation is selected by `translation.engine`. `marian` is the
 offline baseline, `llm_direct` sends each source cue plus nearby context to the

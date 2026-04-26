@@ -394,6 +394,34 @@ def score_candidate(
         "contribution": yield_contribution,
     })
 
+    # --- Factor 4: ASR warning density penalty ---
+    _MAX_ASR_PENALTY = 25
+    _FULL_ASR_PENALTY_DENSITY = 0.25
+    asr_warning_count = 0
+    asr_warning_density = 0.0
+    if qc_summary is not None:
+        cue_count = qc_summary.get("cue_count", 0)
+        violations = qc_summary.get("violations", [])
+        asr_warning_count = sum(
+            1 for v in violations
+            if v.get("type") in {"asr_low_confidence", "asr_source_warning"}
+        )
+        if cue_count > 0:
+            asr_warning_density = asr_warning_count / cue_count
+    if asr_warning_count:
+        penalty_ratio = min(asr_warning_density / _FULL_ASR_PENALTY_DENSITY, 1.0)
+        asr_penalty = round(-penalty_ratio * _MAX_ASR_PENALTY, 2)
+        factors.append({
+            "name": "asr_warning_density",
+            "description": (
+                "Penalty for ASR-origin warning density; high density means "
+                "translation quality may be limited by weak transcription"
+            ),
+            "raw_value": round(asr_warning_density, 4),
+            "max_contribution": 0,
+            "contribution": asr_penalty,
+        })
+
     total = round(sum(f["contribution"] for f in factors), 2)
     total = min(max(total, 0.0), 100.0)
 
@@ -407,6 +435,8 @@ def score_candidate(
         "total_score": total,
         "grade": grade,
         "factors": factors,
+        "asr_warning_count": asr_warning_count,
+        "asr_warning_density": round(asr_warning_density, 4),
     }
 
 

@@ -156,6 +156,43 @@ class SRTWriter:
         self.split_punctuation = config.get("subtitles", "split_on_punctuation", default=[".", "!", "?", ";"])
         self.target_split_length = config.get("subtitles", "target_split_length", default=80)
         self.max_chars_per_line = config.llm_max_chars_per_line
+        self.min_gap = config.get("subtitles", "min_gap_sec", default=0.05)
+
+    def _enforce_non_overlapping_timings(self, segments: List[Segment]) -> List[Segment]:
+        """Clamp adjacent cues so the written SRT never contains overlaps."""
+        if len(segments) < 2:
+            return segments
+
+        fixed = sorted(segments, key=lambda s: (s.start, s.end))
+        for i in range(1, len(fixed)):
+            prev = fixed[i - 1]
+            curr = fixed[i]
+            min_curr_start = prev.end + self.min_gap
+            if curr.start >= min_curr_start:
+                continue
+
+            desired_prev_end = curr.start - self.min_gap
+            if desired_prev_end > prev.start:
+                logger.debug(
+                    "Shrinking overlapping cue %d end from %.3fs to %.3fs",
+                    i,
+                    prev.end,
+                    desired_prev_end,
+                )
+                prev.end = desired_prev_end
+            else:
+                new_start = prev.end + self.min_gap
+                logger.debug(
+                    "Shifting overlapping cue %d start from %.3fs to %.3fs",
+                    i + 1,
+                    curr.start,
+                    new_start,
+                )
+                curr.start = new_start
+                if curr.end <= curr.start:
+                    curr.end = curr.start + self.min_duration
+
+        return fixed
     
     def prepare_segments(self, segments: List[Segment]) -> List[Segment]:
         """
@@ -241,7 +278,7 @@ class SRTWriter:
 
             prepared.append(seg)
 
-        return prepared
+        return self._enforce_non_overlapping_timings(prepared)
     
     def write_srt(self, segments: List[Segment], output_path: str) -> Path:
         """

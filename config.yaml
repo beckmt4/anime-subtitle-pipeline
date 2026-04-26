@@ -109,10 +109,11 @@ llm:
       1. DO NOT change the meaning or add content not in the original.
       2. Keep it to {max_lines} lines maximum, ~{max_chars_per_line} characters per line.
       3. Use natural, conversational English suitable for anime viewers.
-      4. Preserve character personality and tone.
-      5. Use contractions and informal language where appropriate.
-      6. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances.
-      7. ONLY return the improved English subtitle text, nothing else.
+      4. Preserve character personality and tone, but do not make the line more dramatic.
+      5. Do not infer missing context, add new ideas, or rewrite a simple statement into a different action.
+      6. Use contractions and informal language only when they preserve the same meaning.
+      7. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances.
+      8. ONLY return the improved English subtitle text, nothing else.
 
     literal: |
       You are a professional subtitle editor. Your task is to clean up machine-translated English subtitles while staying as close to the Japanese phrasing as possible.
@@ -128,10 +129,11 @@ llm:
 # Subtitle formatting
 subtitles:
   format: "srt"                   # Output format (only SRT for now)
-  
+
   # Timing constraints
   min_duration_sec: 0.5           # Minimum subtitle duration
   max_duration_sec: 7.0           # Maximum subtitle duration
+  min_gap_sec: 0.05               # Minimum gap between adjacent cues
   
   # Split long segments at these punctuation marks
   split_on_punctuation: [".", "!", "?", ";"]
@@ -187,6 +189,7 @@ policy:
   routing:
     review_score_threshold: 60   # Route to review when score < this value
     reject_score_threshold: 20   # Route to reject when score < this value
+    asr_warning_review_density: 0.10  # Review when ASR warnings affect >=10% of cues
 
 # Subtitle QC validation
 # Applied automatically after generate mode writes the output SRT.

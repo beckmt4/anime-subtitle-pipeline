@@ -56,6 +56,7 @@ class PolicyEngine:
 
     _DEFAULT_REVIEW_THRESHOLD: int = 60
     _DEFAULT_REJECT_THRESHOLD: int = 20
+    _DEFAULT_ASR_WARNING_REVIEW_DENSITY: float = 0.10
 
     def __init__(self, cfg=None) -> None:
         if cfg is not None:
@@ -67,9 +68,14 @@ class PolicyEngine:
                 "policy", "routing", "reject_score_threshold",
                 default=self._DEFAULT_REJECT_THRESHOLD,
             )
+            self._asr_warning_review_density: float = cfg.get(
+                "policy", "routing", "asr_warning_review_density",
+                default=self._DEFAULT_ASR_WARNING_REVIEW_DENSITY,
+            )
         else:
             self._review_threshold = self._DEFAULT_REVIEW_THRESHOLD
             self._reject_threshold = self._DEFAULT_REJECT_THRESHOLD
+            self._asr_warning_review_density = self._DEFAULT_ASR_WARNING_REVIEW_DENSITY
 
     def route(
         self,
@@ -98,6 +104,7 @@ class PolicyEngine:
               ``"score_below_review_threshold"``, ``"review_recommended"``)
         """
         total_score: float = candidate_score.get("total_score", 0.0)
+        asr_warning_density: float = candidate_score.get("asr_warning_density", 0.0)
         review_recommended: bool = selection_report.get("review_recommended", False)
         review_reason: str | None = selection_report.get("review_reason")
 
@@ -111,7 +118,11 @@ class PolicyEngine:
                 f"({self._reject_threshold})"
             )
             triggered_by.append("score_below_reject_threshold")
-        elif total_score < self._review_threshold or review_recommended:
+        elif (
+            total_score < self._review_threshold
+            or review_recommended
+            or asr_warning_density >= self._asr_warning_review_density
+        ):
             decision = RoutingDecision.REVIEW
             if total_score < self._review_threshold:
                 reasons.append(
@@ -119,6 +130,12 @@ class PolicyEngine:
                     f"({self._review_threshold})"
                 )
                 triggered_by.append("score_below_review_threshold")
+            if asr_warning_density >= self._asr_warning_review_density:
+                reasons.append(
+                    f"ASR warning density {asr_warning_density:.1%} is at or above "
+                    f"the review threshold ({self._asr_warning_review_density:.1%})"
+                )
+                triggered_by.append("asr_warning_density")
             if review_recommended:
                 reasons.append(
                     review_reason

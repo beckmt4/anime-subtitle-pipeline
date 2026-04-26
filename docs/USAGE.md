@@ -53,6 +53,9 @@ When generate mode uses ASR, candidates include `asr_quality` metadata:
 The same ASR metadata is propagated through MT and LLM outputs. QC summaries can
 include `asr_low_confidence` warning findings so weak translated lines can be
 traced back to uncertain transcription instead of being blamed only on MT.
+Generate scoring penalizes ASR warning density, and the routing policy sends
+outputs to review when ASR warnings affect at least
+`policy.routing.asr_warning_review_density` of cues. The default is 10%.
 
 Japanese-source paths use `translation.engine`:
 - `marian`: current MarianMT baseline.
@@ -188,6 +191,16 @@ asr:
     warn_repeated_text_count: 3
     warn_japanese_char_ratio_below: 0.20
     fail_low_confidence_ratio: 0.50
+```
+
+Tune ASR warning routing and SRT overlap prevention:
+```yaml
+policy:
+  routing:
+    asr_warning_review_density: 0.10
+
+subtitles:
+  min_gap_sec: 0.05
 ```
 
 ## Output Artifacts Summary
