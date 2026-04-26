@@ -677,7 +677,6 @@ Examples:
             sys.exit(0)
         elif args.mode == "generate":
             from orchestrator import run_generate
-            from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
             logger.info("Running in GENERATE mode (strategy selection)")
             media = inspect_media(args.video)
 
