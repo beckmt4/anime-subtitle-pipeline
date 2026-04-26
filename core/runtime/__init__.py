@@ -1,30 +1,20 @@
 """core.runtime — config, orchestration, CLI entry point, tracing.
 
-Integration layer that wires all other core modules together and provides the
-CLI entry point.
+Integration layer that wires all other core modules together.
 
-Public API (target — populated as files migrate from root)
-----------------------------------------------------------
-Config                   YAML config loader with profile merging.
-run_generate(media, cfg) → dict   Production subtitle generation flow.
-run_benchmark(media, cfg) → dict  Multi-source benchmark flow.
-setup_tracing(cfg)                OpenTelemetry initialisation.
-start_span(name)                  Context-manager span helper.
-
-During the migration period the root-level ``config.py``, ``orchestrator.py``,
-``tracing.py``, ``batch_process.py``, and ``main.py`` own the implementation.
-Import from there until the migration is complete.
+Public API (populated as files migrate from root — Phase 4a)
+------------------------------------------------------------
+setup_tracing(service_name)   OpenTelemetry initialisation.
+start_span(name)              Context-manager span helper.
+Config                        YAML config loader (Phase 4a).
+run_generate(media, cfg)      Production generation flow (Phase 4a).
 """
 
 from __future__ import annotations
 
-from config import Config  # noqa: F401 — re-export
-from orchestrator import run_generate  # noqa: F401 — re-export
-from tracing import setup_tracing, start_span  # noqa: F401 — re-export
+from core.runtime.tracing import setup_tracing, start_span  # noqa: F401
 
 __all__ = [
-    "Config",
-    "run_generate",
     "setup_tracing",
     "start_span",
 ]

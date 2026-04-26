@@ -81,7 +81,7 @@ class TestNormLang:
 # ---------------------------------------------------------------------------
 
 class TestInspectMediaParsing:
-    @patch("media_inspect.subprocess.run")
+    @patch("core.media.subprocess.run")
     def test_minimal_ja_audio(self, mock_run, tmp_path):
         video = tmp_path / "test.mkv"
         video.write_bytes(b"")
@@ -99,7 +99,7 @@ class TestInspectMediaParsing:
         assert info.audio_streams[0].sample_rate == 48000
         assert len(info.subtitle_streams) == 0
 
-    @patch("media_inspect.subprocess.run")
+    @patch("core.media.subprocess.run")
     def test_multi_stream_audio_and_subtitle_counts(self, mock_run, tmp_path):
         video = tmp_path / "test.mkv"
         video.write_bytes(b"")
@@ -118,7 +118,7 @@ class TestInspectMediaParsing:
         assert info.subtitle_streams[1].language == "ja"
         assert info.subtitle_streams[1].is_bitmap is True  # dvd_subtitle
 
-    @patch("media_inspect.subprocess.run")
+    @patch("core.media.subprocess.run")
     def test_subprocess_called_as_list_not_shell_string(self, mock_run, tmp_path):
         """ffprobe must be invoked as a list to prevent shell injection."""
         video = tmp_path / "test.mkv"
@@ -131,7 +131,7 @@ class TestInspectMediaParsing:
         assert isinstance(cmd, list)
         assert cmd[0] == "ffprobe"
 
-    @patch("media_inspect.subprocess.run")
+    @patch("core.media.subprocess.run")
     def test_couple_of_cuckoos_fixture_en_sub_detected(self, mock_run, tmp_path):
         """Regression: file with JA audio, bitmap JA sub, and text EN sub (eng tag)."""
         video = tmp_path / "cuckoos.mkv"
@@ -152,7 +152,7 @@ class TestInspectMediaParsing:
         assert info.subtitle_streams[1].is_bitmap is False
         assert info.subtitle_streams[1].language == "en"
 
-    @patch("media_inspect.subprocess.run")
+    @patch("core.media.subprocess.run")
     def test_once_upon_a_crime_fixture_en_sub_detected(self, mock_run, tmp_path):
         """Regression: file with JA audio, JA subs, and a BCP-47 'en-US' text sub."""
         video = tmp_path / "crime.mkv"
@@ -192,7 +192,7 @@ class TestBitmapSubtitleDetection:
     def test_bitmap_codecs_flagged(self, codec, tmp_path):
         video = tmp_path / "test.mkv"
         video.write_bytes(b"")
-        with patch("media_inspect.subprocess.run") as mock_run:
+        with patch("core.media.subprocess.run") as mock_run:
             mock_run.return_value = _mock_run(self._make_data(codec))
             info = inspect_media(str(video))
         assert info.subtitle_streams[0].is_bitmap is True
@@ -201,7 +201,7 @@ class TestBitmapSubtitleDetection:
     def test_text_codecs_not_bitmap(self, codec, tmp_path):
         video = tmp_path / "test.mkv"
         video.write_bytes(b"")
-        with patch("media_inspect.subprocess.run") as mock_run:
+        with patch("core.media.subprocess.run") as mock_run:
             mock_run.return_value = _mock_run(self._make_data(codec))
             info = inspect_media(str(video))
         assert info.subtitle_streams[0].is_bitmap is False
@@ -216,7 +216,7 @@ class TestInspectMediaFailures:
         with pytest.raises(FileNotFoundError):
             inspect_media(str(tmp_path / "does_not_exist.mkv"))
 
-    @patch("media_inspect.subprocess.run")
+    @patch("core.media.subprocess.run")
     def test_ffprobe_failure_raises_runtime_error(self, mock_run, tmp_path):
         video = tmp_path / "test.mkv"
         video.write_bytes(b"")
@@ -226,7 +226,7 @@ class TestInspectMediaFailures:
         with pytest.raises(RuntimeError, match="ffprobe failed"):
             inspect_media(str(video))
 
-    @patch("media_inspect.subprocess.run")
+    @patch("core.media.subprocess.run")
     def test_invalid_json_raises_runtime_error(self, mock_run, tmp_path):
         video = tmp_path / "test.mkv"
         video.write_bytes(b"")
