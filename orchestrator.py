@@ -1150,7 +1150,12 @@ def run_generate(
                 en_audio_order,
             )
             _probe_of_en_track_failed = True
-            probed_lang = None  # treat as no probe result for routing and report
+            # Normalize to None so that the routing conditions below
+            # (probed_lang == "ja" / "en") and _build_selection_report behave
+            # identically to the inconclusive-probe case.  The failure is
+            # surfaced through the _probe_of_en_track_failed flag instead,
+            # which adds a language_probe_failed warning to the candidate.
+            probed_lang = None
         elif probed_lang == "ja":
             logger.warning(
                 "Language probe detected Japanese in EN-tagged audio track %d — "

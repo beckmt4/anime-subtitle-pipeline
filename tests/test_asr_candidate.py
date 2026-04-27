@@ -148,7 +148,7 @@ def test_detect_language_passes_decoded_audio_to_model():
     # *not* with the original path string.
     fake_model.detect_language.assert_called_once_with(fake_audio_array)
     call_arg = fake_model.detect_language.call_args[0][0]
-    assert call_arg is not "/tmp/probe.wav", (
+    assert call_arg != "/tmp/probe.wav", (
         "model.detect_language received the raw path string instead of a "
         "decoded audio array — this causes 'str has no attribute dtype'"
     )
