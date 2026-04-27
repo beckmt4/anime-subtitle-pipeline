@@ -172,7 +172,7 @@ class SRTWriter:
                 continue
 
             desired_prev_end = curr.start - self.min_gap
-            if desired_prev_end > prev.start:
+            if desired_prev_end >= prev.start + self.min_duration:
                 logger.debug(
                     "Shrinking overlapping cue %d end from %.3fs to %.3fs",
                     i,
@@ -189,7 +189,7 @@ class SRTWriter:
                     new_start,
                 )
                 curr.start = new_start
-                if curr.end <= curr.start:
+                if curr.end < curr.start + self.min_duration:
                     curr.end = curr.start + self.min_duration
 
         return fixed
@@ -278,8 +278,23 @@ class SRTWriter:
 
             prepared.append(seg)
 
-        return self._enforce_non_overlapping_timings(prepared)
-    
+        result = self._enforce_non_overlapping_timings(prepared)
+
+        # Final pass: drop any cues that are still shorter than min_duration after
+        # overlap repair. These are irrecoverable (packed so tight that both
+        # neighbouring cues cannot simultaneously satisfy min_duration).
+        final = []
+        for seg in result:
+            if seg.duration >= self.min_duration:
+                final.append(seg)
+            else:
+                logger.debug(
+                    "Dropping segment still %.3fs < min_duration %.3fs after overlap repair",
+                    seg.duration,
+                    self.min_duration,
+                )
+        return final
+
     def write_srt(self, segments: List[Segment], output_path: str) -> Path:
         """
         Write segments to an SRT file.
