@@ -386,6 +386,161 @@ def test_probe_failure_adds_warning_to_en_asr_candidate():
     print("✓ Probe failure attaches language_probe_failed warning to EN ASR candidate")
 
 
+# ---------------------------------------------------------------------------
+# --source-language override tests (issue: add source-language override)
+# ---------------------------------------------------------------------------
+
+def test_source_language_ja_skips_probe_routes_en_tagged_audio_as_ja():
+    """--source-language ja must bypass probe and treat EN-tagged audio as Japanese."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    # If probe ran, it would keep EN ASR; the override must skip it and force JA.
+    DummyASR.probe_result = ("en", 0.99)
+    meta = orch.run_generate(media, cfg, source_language="ja")
+    assert meta["strategy"] == "ja_audio_asr_mt", (
+        f"Expected ja_audio_asr_mt but got {meta['strategy']} — "
+        "--source-language=ja should route EN-tagged audio through JA ASR"
+    )
+    print("✓ --source-language=ja routes EN-tagged audio through ja_audio_asr_mt (probe skipped)")
+
+
+def test_source_language_en_routes_ja_tagged_audio_as_en():
+    """--source-language en must treat JA-tagged audio as English and use EN ASR path."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=False, jp_sub=False, jp_audio=True)
+    meta = orch.run_generate(media, cfg, source_language="en")
+    assert meta["strategy"] == "en_audio_asr", (
+        f"Expected en_audio_asr but got {meta['strategy']} — "
+        "--source-language=en should route JA-tagged audio through EN ASR"
+    )
+    print("✓ --source-language=en routes JA-tagged audio through en_audio_asr")
+
+
+def test_source_language_ja_mislabeled_metadata_no_probe():
+    """When metadata says EN but user says --source-language ja, probe must not run."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+
+    probe_called = []
+
+    original_probe = orch._probe_audio_language
+
+    def tracking_probe(*args, **kwargs):
+        probe_called.append(args)
+        return original_probe(*args, **kwargs)
+
+    orch._probe_audio_language = tracking_probe
+    try:
+        meta = orch.run_generate(media, cfg, source_language="ja")
+    finally:
+        orch._probe_audio_language = original_probe
+
+    assert meta["strategy"] == "ja_audio_asr_mt", (
+        f"Expected ja_audio_asr_mt but got {meta['strategy']}"
+    )
+    assert len(probe_called) == 0, (
+        f"Language probe must not be called when source_language is set, "
+        f"but it was called {len(probe_called)} time(s)"
+    )
+    print("✓ Language probe not called when --source-language is set (mislabeled metadata case)")
+
+
+def test_source_language_override_adds_source_warning():
+    """A candidate produced with --source-language must carry a source_language_override warning."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    meta = orch.run_generate(media, cfg, source_language="ja")
+    assert meta["strategy"] == "ja_audio_asr_mt", meta
+
+    asr_quality = meta.get("asr_quality", {})
+    source_warnings = asr_quality.get("source_warnings", [])
+    warning_types = {w["type"] for w in source_warnings}
+    assert "source_language_override" in warning_types, (
+        f"Expected 'source_language_override' in asr_quality.source_warnings, "
+        f"got: {warning_types}"
+    )
+    print("✓ source_language_override warning attached to ASR candidate")
+
+
+def test_source_language_override_reported_in_selection_report():
+    """--source-language must appear as an active override in the selection report."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    meta = orch.run_generate(media, cfg, source_language="ja")
+    rpt = meta["selection_report"]
+    assert any("source_language=ja" in o for o in rpt["overrides_active"]), (
+        f"Expected 'source_language=ja' in overrides_active, got: {rpt['overrides_active']}"
+    )
+    print("✓ source_language=ja appears in selection_report overrides_active")
+
+
+def test_source_language_auto_preserves_original_probe_behaviour():
+    """--source-language auto (default) must still run the probe for mislabeled EN audio."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    DummyASR.probe_result = ("ja", 0.97)
+    try:
+        meta = orch.run_generate(media, cfg, source_language="auto")
+    finally:
+        DummyASR.probe_result = ("en", 0.95)
+    assert meta["strategy"] == "ja_audio_asr_mt", (
+        f"Expected ja_audio_asr_mt (probe detected JA) but got {meta['strategy']} — "
+        "source_language=auto should preserve probe-based rerouting"
+    )
+    print("✓ source_language=auto preserves existing probe-based rerouting")
+
+
+def test_source_language_inspect_only_uses_override():
+    """inspect-only mode must apply the source_language override when planning strategy."""
+    cfg = Config()
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("inspect_only must not run ASR or file I/O")
+
+    original_asr = orch.FasterWhisperASR
+    original_ffmpeg = orch.extract_audio_with_ffmpeg
+    orch.FasterWhisperASR = forbidden
+    orch.extract_audio_with_ffmpeg = forbidden
+    try:
+        meta = orch.run_generate(media, cfg, inspect_only=True, source_language="ja")
+    finally:
+        orch.FasterWhisperASR = original_asr
+        orch.extract_audio_with_ffmpeg = original_ffmpeg
+
+    assert meta["inspect_only"] is True
+    assert meta["strategy"] == "ja_audio_asr_mt", (
+        f"Expected ja_audio_asr_mt but got {meta['strategy']} — "
+        "inspect-only should plan ja_audio_asr_mt when source_language=ja"
+    )
+    print("✓ inspect-only correctly plans ja_audio_asr_mt when source_language=ja")
+
+
+def test_source_language_untagged_audio_respects_override():
+    """--source-language ja on a file with no language-tagged audio must also route JA."""
+    from media_inspect import AudioStream
+    cfg = Config()
+    untagged_media = MediaInfo(
+        path=Path("untagged.mkv"),
+        format_name="matroska",
+        duration=120.0,
+        audio_streams=[AudioStream(index=0, codec="aac", language=None)],
+        subtitle_streams=[],
+    )
+    meta = orch.run_generate(untagged_media, cfg, source_language="ja")
+    assert meta["strategy"] == "ja_audio_asr_mt", (
+        f"Expected ja_audio_asr_mt but got {meta['strategy']} — "
+        "source_language=ja should route untagged audio through JA ASR"
+    )
+    print("✓ --source-language=ja routes untagged audio through ja_audio_asr_mt")
+
+
 def run_all_tests():
     test_strategy_embedded_en()
     test_strategy_en_audio_when_no_en_sub_and_en_audio_preferred()
@@ -409,6 +564,15 @@ def run_all_tests():
     test_probe_skipped_with_audio_track_override()
     test_inconclusive_probe_falls_back_to_metadata()
     test_probe_failure_adds_warning_to_en_asr_candidate()
+    # --source-language override tests
+    test_source_language_ja_skips_probe_routes_en_tagged_audio_as_ja()
+    test_source_language_en_routes_ja_tagged_audio_as_en()
+    test_source_language_ja_mislabeled_metadata_no_probe()
+    test_source_language_override_adds_source_warning()
+    test_source_language_override_reported_in_selection_report()
+    test_source_language_auto_preserves_original_probe_behaviour()
+    test_source_language_inspect_only_uses_override()
+    test_source_language_untagged_audio_respects_override()
     # Explainable selection report tests (issue #52 / #20)
     test_selection_report_present_in_metadata()
     test_selection_report_embedded_en_high_confidence()

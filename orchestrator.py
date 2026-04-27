@@ -473,6 +473,8 @@ def _build_selection_report(
     audio_track_override: int | None,
     probed_lang: str | None,
     untagged_audio_order: int | None = None,
+    source_language: str = "auto",
+    source_language_rerouted_order: int | None = None,
 ) -> Dict[str, Any]:
     """Build a structured explanation of why *strategy* was selected.
 
@@ -485,13 +487,17 @@ def _build_selection_report(
         rejection.  Possible status values: "selected", "skipped",
         "not_available".
       - overrides_active: list of override flag names that affected the
-        decision (e.g. ["skip_embedded_en", "audio_track_override=2"])
+        decision (e.g. ["skip_embedded_en", "audio_track_override=2",
+        "source_language=ja"])
       - review_recommended: True when the strategy involves a lossy processing
         step (MT / untagged-audio fallback) and human review is advisable
       - review_reason: human-readable justification (None when not recommended)
     """
     overrides_active = []
     sources_evaluated = []
+
+    if source_language != "auto":
+        overrides_active.append(f"source_language={source_language}")
 
     if audio_track_override is not None:
         overrides_active.append(f"audio_track_override={audio_track_override}")
@@ -1054,6 +1060,7 @@ def run_generate(
     registry: Optional[ArtifactRegistry] = None,
     media_hash: Optional[str] = None,
     inspect_only: bool = False,
+    source_language: str = "auto",
 ) -> Dict[str, Any]:
     """Production generation flow selecting best available source for EN subtitles.
 
@@ -1067,6 +1074,10 @@ def run_generate(
             entirely and treat the specified audio track index as Japanese audio
             (ja_audio_asr_mt path). Mirrors the CLI --audio-track flag, which was
             previously only honored by the legacy subtitle mode.
+        source_language: When not 'auto', treat the audio source as this language
+            regardless of container metadata.  This overrides the language probe and
+            re-routes audio to the appropriate ASR path (e.g. 'ja' → ja_audio_asr_mt,
+            'en' → en_audio_asr).  Mirrors the CLI --source-language flag.
         skip_embedded_en: When True, ignore any embedded English subtitle tracks and
             force the pipeline through ASR → MT (→ LLM). Used with --extract-en-subs
             so the extracted embedded subs and the freshly generated subs can be
@@ -1129,12 +1140,49 @@ def run_generate(
         f"Sources detected: en_sub={en_sub_idx} ja_sub={ja_sub_idx} en_audio={en_audio_order} ja_audio={ja_audio_order}"
     )
 
+    # --- CLI --source-language override ---
+    # When the user provides an explicit source language, skip the probe entirely
+    # and re-route audio to the appropriate language path.  Container metadata is
+    # treated as a hint only; the user's choice takes precedence.
+    if source_language != "auto" and audio_track_override is None:
+        _all_audio_orders = list(range(len(media.audio_streams)))
+        if _all_audio_orders:
+            # Prefer a track already tagged with the target language; fall back to
+            # the first available track if none match.
+            _preferred_order = next(
+                (
+                    o for o in _all_audio_orders
+                    if _lang_matches(
+                        media.audio_streams[o].language or media.audio_streams[o].raw_language,
+                        source_language,
+                    )
+                ),
+                _all_audio_orders[0],
+            )
+            _container_tag = (
+                media.audio_streams[_preferred_order].language
+                or media.audio_streams[_preferred_order].raw_language
+                or "none"
+            )
+            logger.info(
+                "CLI --source-language=%s: treating audio track %d as %s "
+                "(container language tag: %r); skipping language probe.",
+                source_language, _preferred_order, source_language, _container_tag,
+            )
+            if source_language == "en":
+                en_audio_order = _preferred_order
+                ja_audio_order = None
+            else:
+                ja_audio_order = _preferred_order
+                en_audio_order = None
+
     # When auto-routing and the only audio found is EN-tagged (no JA track),
     # probe the actual audio content so mislabeled Japanese files are routed
     # through the JA ASR → MT path instead of being silently transcribed as
     # English gibberish.
     if (
         not inspect_only
+        and source_language == "auto"
         and
         audio_track_override is None
         and prefer_audio_language == "auto"
@@ -1172,6 +1220,7 @@ def run_generate(
 
     elif (
         not inspect_only
+        and source_language == "auto"
         and
         audio_track_override is None
         and prefer_audio_language == "auto"
@@ -1294,6 +1343,7 @@ def run_generate(
             audio_track_override=audio_track_override,
             probed_lang=probed_lang,
             untagged_audio_order=selected_untagged_audio_order,
+            source_language=source_language,
         )
         _log_selection_report(selection_report)
 
@@ -1338,7 +1388,8 @@ def run_generate(
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
             with start_span("asr_en_audio"):
                 asr = FasterWhisperASR(cfg)
-                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language="en")
+                _asr_lang = source_language if source_language != "auto" else "en"
+                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language=_asr_lang)
                 candidate = build_candidate_from_segments(
                     segments,
                     cfg,
@@ -1395,12 +1446,13 @@ def run_generate(
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), ja_audio_order)
             with start_span("asr_ja_audio"):
                 asr = FasterWhisperASR(cfg)
-                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
+                _asr_lang = source_language if source_language != "auto" else "ja"
+                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language=_asr_lang)
                 ja_asr_candidate = build_candidate_from_segments(
                     segments,
                     cfg,
                     candidate_id=f"ja_audio_asr_a{ja_audio_order}",
-                    language="ja",
+                    language=_asr_lang,
                     origin_stream=f"audio:{ja_audio_order}",
                 )
                 if audio_track_override is not None:
@@ -1409,6 +1461,15 @@ def run_generate(
                         type_="audio_track_override",
                         detail=(
                             f"ASR used CLI-forced audio track {audio_track_override}; "
+                            "container language metadata was bypassed"
+                        ),
+                    )
+                elif source_language != "auto":
+                    _add_asr_source_warning(
+                        ja_asr_candidate,
+                        type_="source_language_override",
+                        detail=(
+                            f"ASR used CLI-forced source language '{source_language}'; "
                             "container language metadata was bypassed"
                         ),
                     )
@@ -1461,7 +1522,8 @@ def run_generate(
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
             with start_span("asr_en_audio"):
                 asr = FasterWhisperASR(cfg)
-                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language="en")
+                _asr_lang = source_language if source_language != "auto" else "en"
+                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language=_asr_lang)
                 candidate = build_candidate_from_segments(
                     segments,
                     cfg,
@@ -1521,12 +1583,13 @@ def run_generate(
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), fallback_order)
             with start_span("asr_untagged_audio"):
                 asr = FasterWhisperASR(cfg)
-                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language="ja")
+                _asr_lang = source_language if source_language != "auto" else "ja"
+                segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language=_asr_lang)
                 ja_asr_candidate = build_candidate_from_segments(
                     segments,
                     cfg,
                     candidate_id=f"ja_audio_asr_a{fallback_order}",
-                    language="ja",
+                    language=_asr_lang,
                     origin_stream=f"audio:{fallback_order}",
                 )
                 _add_asr_source_warning(
@@ -1590,6 +1653,7 @@ def run_generate(
             audio_track_override=audio_track_override,
             probed_lang=probed_lang,
             untagged_audio_order=selected_untagged_audio_order,
+            source_language=source_language,
         )
         _log_selection_report(selection_report)
 
