@@ -8,12 +8,12 @@ Faster-Whisper model to avoid long runtimes.
 from __future__ import annotations
 
 import logging
-
 from dataclasses import dataclass
 from typing import List
+from unittest.mock import MagicMock, patch
 
 from config import Config
-from asr import Segment, build_candidate_from_segments
+from asr import Segment, build_candidate_from_segments, FasterWhisperASR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -116,6 +116,46 @@ def test_candidate_builder_empty_asr_is_fail_status():
 
     assert candidate.meta["asr_quality"]["status"] == "fail"
     assert candidate.meta["asr_quality"]["summary_warnings"][0]["type"] == "no_speech_segments"
+
+
+def test_detect_language_passes_decoded_audio_to_model():
+    """detect_language must decode the audio file to an array before calling the model.
+
+    Passing a raw path string to WhisperModel.detect_language raises
+    ``AttributeError: 'str' object has no attribute 'dtype'`` because the
+    model expects a NumPy float32 array.  This test verifies that
+    ``faster_whisper.audio.decode_audio`` is called with the path, and that
+    the *result of decode_audio* (not the path string) is forwarded to
+    ``model.detect_language``.
+    """
+    cfg = StubConfig()
+    asr = FasterWhisperASR(cfg)
+
+    # Pre-load a mock model so load_model() is a no-op.
+    fake_model = MagicMock()
+    fake_model.detect_language.return_value = ("ja", 0.97)
+    asr.model = fake_model
+
+    fake_audio_array = MagicMock(name="audio_array")  # simulates np.ndarray
+
+    with patch("asr.decode_audio", return_value=fake_audio_array) as mock_decode:
+        lang, prob = asr.detect_language("/tmp/probe.wav")
+
+    # decode_audio must have been called with the path string and 16 kHz rate.
+    mock_decode.assert_called_once_with("/tmp/probe.wav", sampling_rate=16000)
+
+    # model.detect_language must have been called with the decoded array,
+    # *not* with the original path string.
+    fake_model.detect_language.assert_called_once_with(fake_audio_array)
+    call_arg = fake_model.detect_language.call_args[0][0]
+    assert call_arg is not "/tmp/probe.wav", (
+        "model.detect_language received the raw path string instead of a "
+        "decoded audio array — this causes 'str has no attribute dtype'"
+    )
+    assert call_arg is fake_audio_array
+
+    assert lang == "ja"
+    assert prob == 0.97
 
 
 if __name__ == "__main__":

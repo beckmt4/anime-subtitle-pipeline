@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
 
 from config import Config
 from models import Segment as GenericSegment, SubtitleCandidate
@@ -304,6 +305,12 @@ class FasterWhisperASR:
     def detect_language(self, audio_path: str) -> tuple[str, float]:
         """Probe the dominant language of an audio clip.
 
+        Loads the audio at *audio_path* into a float32 PCM array via
+        ``faster_whisper.audio.decode_audio`` and passes it to the Whisper
+        model's language detector.  ``WhisperModel.detect_language`` expects a
+        NumPy array — passing a raw file-path string causes
+        ``AttributeError: 'str' object has no attribute 'dtype'``.
+
         Loads the model if needed. Call unload_model() when done if you
         don't plan to transcribe immediately after.
 
@@ -311,7 +318,8 @@ class FasterWhisperASR:
             (language_code, probability) — e.g. ("ja", 0.97)
         """
         self.load_model()
-        lang, prob = self.model.detect_language(str(audio_path))
+        audio = decode_audio(str(audio_path), sampling_rate=16000)
+        lang, prob = self.model.detect_language(audio)
         logger.debug("Language probe: '%s' confidence=%.2f", lang, prob)
         return lang, prob
 
