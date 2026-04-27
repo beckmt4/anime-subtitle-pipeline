@@ -698,11 +698,7 @@ Examples:
             logger.info(f"  Comparisons: {len(results['comparisons'])}")
             logger.info(f"  Run ID: {results.get('run_id', '<none>')}")
             if results.get("status") == "single_candidate_only":
-                print(
-                    f"WARNING: Benchmark produced only one candidate — "
-                    f"no comparison was performed. "
-                    f"{results.get('warning', '')}"
-                )
+                print(f"WARNING: {results.get('warning', 'Only one candidate — no comparison performed.')}")
                 if getattr(args, "strict_benchmark", False):
                     sys.exit(2)
             sys.exit(0)

@@ -346,15 +346,6 @@ def render_html_report(
 
     scorecard_table = _render_scorecard_table(scorecards)
 
-    if status == "single_candidate_only":
-        comparisons_html = (
-            '<div class="warning-banner">'
-            '⚠ No benchmark comparison possible — only one candidate was generated.'
-            '</div>'
-        )
-    else:
-        comparisons_html = _render_comparisons(results)
-
     warning_banner = ""
     if status == "single_candidate_only":
         warning_banner = (
@@ -362,6 +353,9 @@ def render_html_report(
             f'⚠ <strong>Single candidate only:</strong> {_e(warning)}'
             f'</div>\n'
         )
+        comparisons_html = '<p class="no-diffs">No benchmark comparison possible.</p>'
+    else:
+        comparisons_html = _render_comparisons(results)
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="en">

@@ -1073,7 +1073,7 @@ class TestSingleCandidateDetection:
     def test_json_output_contains_warning(self, tmp_path, monkeypatch):
         self._make_single_candidate_results(tmp_path, monkeypatch)
         out = tmp_path / "benchmark_results.json"
-        assert out.exists()
+        assert out.exists(), "benchmark_results.json should be written"
         data = json.loads(out.read_text(encoding="utf-8"))
         assert data.get("status") == "single_candidate_only"
         assert data.get("warning")
