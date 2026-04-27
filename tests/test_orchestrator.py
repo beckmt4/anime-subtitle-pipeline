@@ -38,11 +38,15 @@ def stub_extract_audio_with_ffmpeg(video_path: str, out_path: str, audio_order: 
 class DummyASR:
     # Override per-test to control probe outcome: (language, probability)
     probe_result: tuple[str, float] = ("en", 0.95)
+    # Set to an Exception instance to simulate a probe crash.
+    probe_exception: Exception | None = None
 
     def __init__(self, cfg):
         pass
 
     def detect_language(self, audio_path: str) -> tuple[str, float]:
+        if DummyASR.probe_exception is not None:
+            raise DummyASR.probe_exception
         return DummyASR.probe_result
 
     def unload_model(self) -> None:
@@ -353,6 +357,35 @@ def test_inconclusive_probe_falls_back_to_metadata():
     print("✓ Inconclusive probe (low confidence) does not reroute; metadata tag honoured")
 
 
+def test_probe_failure_adds_warning_to_en_asr_candidate():
+    """When the probe crashes, the EN ASR candidate must carry a
+    language_probe_failed source warning so its confidence is downgraded rather
+    than the pipeline silently trusting the stream metadata tag."""
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_audio_language"] = "auto"
+    media = _media(en_sub=False, en_audio=True, jp_sub=False, jp_audio=False)
+    DummyASR.probe_exception = RuntimeError("'str' object has no attribute 'dtype'")
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        DummyASR.probe_exception = None
+
+    assert meta["strategy"] == "en_audio_asr", (
+        f"Expected en_audio_asr but got {meta['strategy']} — "
+        "a failed probe should still route through EN ASR (metadata tag preserved)"
+    )
+
+    asr_quality = meta.get("asr_quality", {})
+    source_warnings = asr_quality.get("source_warnings", [])
+    warning_types = {w["type"] for w in source_warnings}
+    assert "language_probe_failed" in warning_types, (
+        f"Expected 'language_probe_failed' in asr_quality.source_warnings, "
+        f"got: {warning_types}"
+    )
+    print("✓ Probe failure attaches language_probe_failed warning to EN ASR candidate")
+
+
 def run_all_tests():
     test_strategy_embedded_en()
     test_strategy_en_audio_when_no_en_sub_and_en_audio_preferred()
@@ -375,6 +408,7 @@ def run_all_tests():
     test_probe_skipped_when_ja_audio_present()
     test_probe_skipped_with_audio_track_override()
     test_inconclusive_probe_falls_back_to_metadata()
+    test_probe_failure_adds_warning_to_en_asr_candidate()
     # Explainable selection report tests (issue #52 / #20)
     test_selection_report_present_in_metadata()
     test_selection_report_embedded_en_high_confidence()

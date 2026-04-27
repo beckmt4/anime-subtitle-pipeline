@@ -70,6 +70,10 @@ logger = logging.getLogger(__name__)
 # Audio language probe settings (used when metadata tag is absent or suspect).
 _PROBE_DURATION_SEC = 30       # seconds of audio to sample
 _PROBE_JA_THRESHOLD = 0.85    # minimum Whisper confidence to reroute
+# Sentinel returned by _probe_audio_language when an exception prevents the probe
+# from running at all.  Distinct from None (inconclusive / low confidence) so
+# callers can log a specific warning and downgrade candidate confidence.
+_PROBE_FAILED: str = "probe_failed"
 
 # Confidence tiers describe how much processing uncertainty the selected path
 # introduces.  Higher-tier sources require less lossy transformation and are
@@ -869,8 +873,12 @@ def _probe_audio_language(
         )
         return None
     except Exception as exc:
-        logger.warning("Language probe failed: %s — proceeding with metadata tag", exc)
-        return None
+        logger.warning(
+            "Language probe failed: %s — stream metadata tag will be used; "
+            "candidate confidence will be downgraded",
+            exc,
+        )
+        return _PROBE_FAILED
     finally:
         try:
             probe_path.unlink(missing_ok=True)
@@ -1108,6 +1116,11 @@ def run_generate(
     orig_en_audio_order = en_audio_order
     orig_ja_audio_order = ja_audio_order
     probed_lang: str | None = None
+    # Set to True when the probe was attempted on an EN-tagged track but crashed
+    # (as opposed to simply returning a low-confidence / inconclusive result).
+    # Used to attach a language_probe_failed source warning to the EN ASR candidate
+    # so its confidence is downgraded rather than silently trusting metadata.
+    _probe_of_en_track_failed: bool = False
     # Audio order of the track chosen as the untagged fallback candidate; set
     # whenever the untagged branch is entered (including via probe).
     selected_untagged_audio_order: int | None = None
@@ -1129,7 +1142,16 @@ def run_generate(
         and en_audio_order is not None
     ):
         probed_lang = _probe_audio_language(video_path, en_audio_order, cfg)
-        if probed_lang == "ja":
+        if probed_lang == _PROBE_FAILED:
+            logger.warning(
+                "Language probe failed for EN-tagged track %d — "
+                "stream metadata will be trusted without verification; "
+                "candidate confidence will be downgraded.",
+                en_audio_order,
+            )
+            _probe_of_en_track_failed = True
+            probed_lang = None  # treat as no probe result for routing and report
+        elif probed_lang == "ja":
             logger.warning(
                 "Language probe detected Japanese in EN-tagged audio track %d — "
                 "rerouting through JA ASR → MT path (container tag is likely wrong).",
@@ -1192,11 +1214,18 @@ def run_generate(
             en_audio_order = _fallback_order
             probed_lang = "en"
         else:
-            logger.warning(
-                "Language probe inconclusive for untagged audio track %d — "
-                "will fall back to untagged_audio_asr_mt (treating as Japanese).",
-                _fallback_order,
-            )
+            if _probed_untagged_lang == _PROBE_FAILED:
+                logger.warning(
+                    "Language probe failed for untagged audio track %d — "
+                    "will fall back to untagged_audio_asr_mt (treating as Japanese).",
+                    _fallback_order,
+                )
+            else:
+                logger.warning(
+                    "Language probe inconclusive for untagged audio track %d — "
+                    "will fall back to untagged_audio_asr_mt (treating as Japanese).",
+                    _fallback_order,
+                )
 
     # --extract-en-subs: embedded EN subs were already written to outbox by the
     # caller; skip them here so the pipeline runs ASR → MT (→ LLM) and produces
@@ -1435,6 +1464,15 @@ def run_generate(
                     language="en",
                     origin_stream=f"audio:{en_audio_order}",
                 )
+                if _probe_of_en_track_failed:
+                    _add_asr_source_warning(
+                        candidate,
+                        type_="language_probe_failed",
+                        detail=(
+                            f"Language probe failed for EN-tagged track {en_audio_order}; "
+                            "stream metadata language tag was trusted without verification"
+                        ),
+                    )
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:

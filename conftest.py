@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 _HEAVY_STUBS = [
     # ASR backend
     "faster_whisper",
+    "faster_whisper.audio",
     # GPU / ML
     "torch",
     "transformers",
