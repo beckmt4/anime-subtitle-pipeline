@@ -30,6 +30,7 @@ selection_report without running heavy processing steps.
 """
 from __future__ import annotations
 
+import copy
 import itertools
 import logging
 from pathlib import Path
@@ -570,9 +571,13 @@ def _build_selection_report(
             and untagged_audio_order is not None
         )
         _effective_en_audio = (
-            orig_en_audio_order
-            if orig_en_audio_order is not None
-            else (untagged_audio_order if _untagged_probed_as_en else None)
+            source_language_rerouted_order
+            if source_language == "en" and source_language_rerouted_order is not None
+            else (
+                orig_en_audio_order
+                if orig_en_audio_order is not None
+                else (untagged_audio_order if _untagged_probed_as_en else None)
+            )
         )
         en_audio_detected = _effective_en_audio is not None
         # Compute probe_rerouted once — reused for both the en_audio and ja_audio entries.
@@ -586,6 +591,12 @@ def _build_selection_report(
                 f"Language probe detected Japanese content in EN-tagged track "
                 f"{orig_en_audio_order} (confidence ≥ {_PROBE_JA_THRESHOLD:.0%}); "
                 "rerouted to ja_audio_asr_mt path"
+            )
+        elif strategy == "en_audio_asr" and source_language == "en":
+            en_audio_status = "selected"
+            en_audio_reason = (
+                f"CLI --source-language=en override active; audio track "
+                f"{_effective_en_audio} treated as English and routed through EN ASR"
             )
         elif strategy == "en_audio_asr" and _untagged_probed_as_en:
             en_audio_status = "selected"
@@ -657,7 +668,9 @@ def _build_selection_report(
             and orig_en_audio_order is None
             and untagged_audio_order is not None
         )
-        if probe_rerouted_from_en:
+        if source_language == "ja" and source_language_rerouted_order is not None:
+            effective_ja_audio = source_language_rerouted_order
+        elif probe_rerouted_from_en:
             effective_ja_audio = orig_en_audio_order
         elif probe_rerouted_from_untagged:
             effective_ja_audio = untagged_audio_order
@@ -671,7 +684,12 @@ def _build_selection_report(
             ja_audio_reason = "No Japanese audio stream detected in container"
         elif strategy == "ja_audio_asr_mt":
             ja_audio_status = "selected"
-            if probe_rerouted_from_en:
+            if source_language == "ja" and source_language_rerouted_order is not None:
+                ja_audio_reason = (
+                    f"CLI --source-language=ja override active; audio track "
+                    f"{effective_ja_audio} treated as Japanese and routed through ASR → MT"
+                )
+            elif probe_rerouted_from_en:
                 ja_audio_reason = (
                     f"EN-tagged audio track {effective_ja_audio} rerouted by "
                     f"language probe (detected Japanese, confidence ≥ "
@@ -821,6 +839,21 @@ def _add_asr_source_warning(
         quality["status"] = "warn"
     if candidate.meta.get("asr_quality_status") == "clean":
         candidate.meta["asr_quality_status"] = "warn"
+
+
+_PROPAGATED_ASR_META_KEYS = (
+    "asr_quality",
+    "asr_quality_status",
+    "asr_low_confidence_segment_count",
+    "asr_source_warnings",
+)
+
+
+def _propagate_asr_meta(parent: SubtitleCandidate, child: SubtitleCandidate) -> None:
+    """Preserve ASR source metadata across MT/polish stages."""
+    for key in _PROPAGATED_ASR_META_KEYS:
+        if key in parent.meta and key not in child.meta:
+            child.meta[key] = copy.deepcopy(parent.meta[key])
 
 
 def _asr_quality_summary(candidate: SubtitleCandidate) -> Dict[str, Any]:
@@ -1127,6 +1160,7 @@ def run_generate(
     orig_en_audio_order = en_audio_order
     orig_ja_audio_order = ja_audio_order
     probed_lang: str | None = None
+    source_language_rerouted_order: int | None = None
     # Set to True when the probe was attempted on an EN-tagged track but crashed
     # (as opposed to simply returning a low-confidence / inconclusive result).
     # Used to attach a language_probe_failed source warning to the EN ASR candidate
@@ -1169,6 +1203,7 @@ def run_generate(
                 "(container language tag: %r); skipping language probe.",
                 source_language, _preferred_order, source_language, _container_tag,
             )
+            source_language_rerouted_order = _preferred_order
             if source_language == "en":
                 en_audio_order = _preferred_order
                 ja_audio_order = None
@@ -1344,6 +1379,7 @@ def run_generate(
             probed_lang=probed_lang,
             untagged_audio_order=selected_untagged_audio_order,
             source_language=source_language,
+            source_language_rerouted_order=source_language_rerouted_order,
         )
         _log_selection_report(selection_report)
 
@@ -1492,6 +1528,7 @@ def run_generate(
             )
             with start_span("mt_ja_audio"):
                 mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
+                _propagate_asr_meta(ja_asr_candidate, mt_candidate)
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_asr_db_id,
@@ -1610,6 +1647,7 @@ def run_generate(
             )
             with start_span("mt_untagged_audio"):
                 mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
+                _propagate_asr_meta(ja_asr_candidate, mt_candidate)
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_asr_db_id,
@@ -1654,6 +1692,7 @@ def run_generate(
             probed_lang=probed_lang,
             untagged_audio_order=selected_untagged_audio_order,
             source_language=source_language,
+            source_language_rerouted_order=source_language_rerouted_order,
         )
         _log_selection_report(selection_report)
 
