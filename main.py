@@ -524,6 +524,19 @@ Examples:
             "without running ASR, MT, LLM, QC, muxing, registry writes, or output writes"
         )
     )
+
+    parser.add_argument(
+        "--source-language",
+        type=str,
+        default="auto",
+        metavar="LANG",
+        help=(
+            "Override the audio source language for ASR (e.g. 'ja', 'en', 'zh'). "
+            "When set, container metadata language tags are ignored and the specified "
+            "language is used for transcription. Default: 'auto' (use container metadata "
+            "and language probe)."
+        ),
+    )
     
     parser.add_argument(
         "--mode",
@@ -707,6 +720,7 @@ Examples:
                     registry=registry,
                     media_hash=media_hash,
                     inspect_only=args.inspect_only,
+                    source_language=args.source_language,
                 )
             finally:
                 if registry is not None:
