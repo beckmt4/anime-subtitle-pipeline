@@ -1,0 +1,17 @@
+{
+  "fixture": "anime",
+  "description": "Expected quality floor for corpus benchmark on this fixture.",
+  "engines": {
+    "marian": {
+      "wer_max": 0.60,
+      "bleu_min": 15.0,
+      "chrf_min": 35.0
+    },
+    "llm_direct": {
+      "wer_max": 0.55,
+      "bleu_min": 20.0,
+      "chrf_min": 40.0
+    }
+  },
+  "notes": "Thresholds are conservative floors. A passing engine should stay below wer_max and above bleu_min/chrf_min."
+}
