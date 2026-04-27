@@ -319,7 +319,7 @@ class FasterWhisperASR:
         """
         self.load_model()
         audio = decode_audio(str(audio_path), sampling_rate=16000)
-        lang, prob = self.model.detect_language(audio)
+        lang, prob, _ = self.model.detect_language(audio)
         logger.debug("Language probe: '%s' confidence=%.2f", lang, prob)
         return lang, prob
 
