@@ -133,7 +133,7 @@ def test_detect_language_passes_decoded_audio_to_model():
 
     # Pre-load a mock model so load_model() is a no-op.
     fake_model = MagicMock()
-    fake_model.detect_language.return_value = ("ja", 0.97)
+    fake_model.detect_language.return_value = ("ja", 0.97, [("ja", 0.97)])
     asr.model = fake_model
 
     fake_audio_array = MagicMock(name="audio_array")  # simulates np.ndarray
