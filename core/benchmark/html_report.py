@@ -65,6 +65,8 @@ tr:hover td { background: #f0f4f8; }
                      align-items: center; margin-bottom: 8px; }
 .comparison-header .ids { font-weight: 600; }
 .comparison-header .metrics-inline { font-size: 0.88em; color: #555; }
+.warning-banner { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px;
+                  padding: 10px 16px; margin-bottom: 16px; color: #856404; font-weight: 600; }
 .no-diffs { color: #888; font-style: italic; }
 .badge { display: inline-block; padding: 3px 10px; border-radius: 4px;
          font-size: 0.82em; background: #2c3e50; color: #fff; margin-left: 8px; }
@@ -244,7 +246,15 @@ def _render_scorecard_table(scorecards: List[Dict[str, Any]]) -> str:
 def _render_comparisons(results: Dict[str, Any], max_diffs: int = 20) -> str:
     comparisons = results.get("comparisons", [])
     if not comparisons:
-        return '<p class="no-diffs">No comparisons recorded.</p>'
+        warning_msg = results.get(
+            "warning",
+            "No comparisons recorded — only one candidate was available or all "
+            "non-reference candidates were skipped.",
+        )
+        return (
+            f'<div class="warning-banner">⚠ {_e(warning_msg)}</div>'
+            '<p class="no-diffs">No comparisons recorded.</p>'
+        )
 
     blocks = []
     for comp in comparisons:
@@ -323,10 +333,20 @@ def render_html_report(
 
     video = _e(results.get("video", "unknown"))
     reference_id = _e(results.get("reference_id", "—"))
+    run_id = _e(results.get("run_id", "—"))
     num_candidates = len(results.get("candidates", []))
     num_comparisons = len(results.get("comparisons", []))
 
     scorecards = build_scorecards(results)
+
+    warning_html = ""
+    if num_comparisons == 0:
+        warning_msg = _e(results.get(
+            "warning",
+            "No comparisons produced — only one candidate was available or all "
+            "non-reference candidates were skipped.",
+        ))
+        warning_html = f'<div class="warning-banner">⚠ {warning_msg}</div>'
 
     scorecard_table = _render_scorecard_table(scorecards)
     comparisons_html = _render_comparisons(results)
@@ -343,11 +363,12 @@ def render_html_report(
 <h1>Benchmark Report <span class="badge">{video}</span></h1>
 <p class="meta">
   Generated: {_e(generated_at)} &nbsp;|&nbsp;
+  Run ID: <code>{run_id}</code> &nbsp;|&nbsp;
   Reference: <strong>{reference_id}</strong> &nbsp;|&nbsp;
   Candidates: {num_candidates} &nbsp;|&nbsp;
   Comparisons: {num_comparisons}
 </p>
-
+{warning_html}
 <h2>Candidate Scorecards</h2>
 {scorecard_table}
 

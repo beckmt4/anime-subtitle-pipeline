@@ -707,3 +707,297 @@ class TestRegressionFixtures:
             assert 0.0 <= m["wer"], "WER must be non-negative"
             assert 0.0 <= m["bleu"] <= 100.0, "BLEU must be 0-100"
             assert 0.0 <= m["chrf"] <= 100.0, "chrF must be 0-100"
+
+
+# ===========================================================================
+# Issue #123 — Benchmark staleness / self-comparison / comparisons=0 warnings
+# ===========================================================================
+
+class TestBenchmarkStalenessGuards:
+    """Acceptance criteria for issue #123: stale artifacts, self-comparison, and warnings."""
+
+    # ------------------------------------------------------------------
+    # HTML report includes run_id
+    # ------------------------------------------------------------------
+
+    def test_html_report_includes_run_id(self):
+        """render_html_report must surface the run_id in the HTML output."""
+        from core.benchmark.html_report import render_html_report
+
+        data = dict(_load_fixture())
+        data["run_id"] = "test-run-uuid-001"
+        html = render_html_report(data)
+
+        assert "test-run-uuid-001" in html, "run_id must appear in the HTML report"
+
+    def test_html_report_run_id_missing_renders_without_crash(self):
+        """When run_id is absent, report renders without raising an exception."""
+        from core.benchmark.html_report import render_html_report
+
+        data = {k: v for k, v in _load_fixture().items() if k != "run_id"}
+        html = render_html_report(data)
+
+        assert "<!DOCTYPE html>" in html  # renders without error
+
+    # ------------------------------------------------------------------
+    # Warning when comparisons=0
+    # ------------------------------------------------------------------
+
+    def test_html_report_warns_on_zero_comparisons(self):
+        """HTML report must include a visible warning banner when comparisons=0."""
+        from core.benchmark.html_report import render_html_report
+
+        data = dict(_load_fixture(), comparisons=[])
+        html = render_html_report(data)
+
+        assert '<div class="warning-banner">' in html, "A warning-banner element is required for 0 comparisons"
+        assert "No comparisons" in html
+
+    def test_html_report_warning_banner_absent_when_comparisons_exist(self):
+        """No warning banner when comparisons are present."""
+        from core.benchmark.html_report import render_html_report
+
+        data = _load_fixture()
+        assert data["comparisons"], "fixture must have comparisons for this test"
+        html = render_html_report(data)
+
+        assert '<div class="warning-banner">' not in html
+
+    def test_html_report_displays_warning_field_from_results(self):
+        """Custom warning message from results dict is shown in the banner."""
+        from core.benchmark.html_report import render_html_report
+
+        data = dict(_load_fixture(), comparisons=[],
+                    warning="Only one candidate was generated.")
+        html = render_html_report(data)
+
+        assert "Only one candidate was generated." in html
+
+    def test_run_benchmark_adds_warning_field_for_single_candidate(
+        self, tmp_path, monkeypatch
+    ):
+        """run_benchmark sets results['warning'] when only the reference candidate exists."""
+        pytest.importorskip("jiwer")
+        pytest.importorskip("sacrebleu")
+
+        import benchmark as bm
+        from config import Config
+        from models import Segment, SubtitleCandidate
+        from media_inspect import MediaInfo, SubtitleStream
+
+        # Only one EN subtitle stream -> single candidate -> no comparisons
+        synth = MediaInfo(
+            path=Path("x.mkv"), format_name="matroska", duration=10.0,
+            audio_streams=[],
+            subtitle_streams=[
+                SubtitleStream(index=0, codec="subrip", language="en", raw_language="eng"),
+            ],
+        )
+        segs = [Segment(start=0.0, end=1.0, text="hello")]
+
+        monkeypatch.setattr(bm, "inspect_media", lambda _: synth)
+        monkeypatch.setattr(bm, "extract_subtitle_track",
+                            lambda v, i, language, output_dir=None: SubtitleCandidate(
+                                id=f"embedded_{language}_s{i}", language=language,
+                                source="embedded", origin_stream=f"sub:{i}",
+                                segments=segs, meta={}))
+
+        cfg = Config()
+        cfg._config["benchmark"] = {
+            "sources": {"use_embedded_en": True, "use_embedded_jp": False,
+                        "use_en_audio": False, "use_ja_audio": False},
+        }
+
+        dummy_video = tmp_path / "single.mkv"
+        dummy_video.write_bytes(b"\x00" * 16)
+
+        results = bm.run_benchmark(str(dummy_video), cfg, use_llm=False,
+                                   output_dir=str(tmp_path))
+
+        assert results["comparisons"] == [], "Should produce no comparisons"
+        assert "warning" in results, "results must include a warning field"
+        assert results["warning"], "warning field must not be empty"
+
+    # ------------------------------------------------------------------
+    # Self-comparison guard in _persist_comparison
+    # ------------------------------------------------------------------
+
+    def test_persist_comparison_skips_self_comparison(self, tmp_path, monkeypatch):
+        """_persist_comparison must not record a run where ref_id == cand_id."""
+        pytest.importorskip("jiwer")
+        pytest.importorskip("sacrebleu")
+
+        import benchmark as bm
+        from config import Config
+        from models import Segment, SubtitleCandidate
+        from media_inspect import MediaInfo, SubtitleStream
+        from core.artifacts import ArtifactRegistry
+
+        synth = MediaInfo(
+            path=Path("x.mkv"), format_name="matroska", duration=10.0,
+            audio_streams=[],
+            subtitle_streams=[
+                SubtitleStream(index=0, codec="subrip", language="en", raw_language="eng"),
+                SubtitleStream(index=1, codec="subrip", language="en", raw_language="eng"),
+            ],
+        )
+        segs = [Segment(start=0.0, end=1.0, text="hello")]
+
+        # Return identical IDs for both streams to trigger the self-comparison guard
+        def _fake_extract(v, i, language, output_dir=None):
+            return SubtitleCandidate(
+                id="embedded_en_s0",  # always the same ID
+                language=language, source="embedded",
+                origin_stream=f"sub:{i}", segments=segs, meta={},
+            )
+
+        monkeypatch.setattr(bm, "inspect_media", lambda _: synth)
+        monkeypatch.setattr(bm, "extract_subtitle_track", _fake_extract)
+
+        cfg = Config()
+        cfg._config["benchmark"] = {
+            "sources": {"use_embedded_en": True, "use_embedded_jp": False,
+                        "use_en_audio": False, "use_ja_audio": False},
+        }
+
+        dummy_video = tmp_path / "dup.mkv"
+        dummy_video.write_bytes(b"\x00" * 16)
+
+        registry = ArtifactRegistry(db_path=":memory:")
+        results = bm.run_benchmark(str(dummy_video), cfg, use_llm=False,
+                                   output_dir=str(tmp_path), registry=registry)
+
+        # No comparisons should be recorded when all candidate IDs equal the reference ID
+        from core.artifacts.pipeline_wiring import compute_media_hash
+        stored = registry.list_benchmark_runs(compute_media_hash(dummy_video))
+        assert len(stored) == 0, (
+            f"Self-comparison must not be persisted; found {len(stored)} records"
+        )
+
+    # ------------------------------------------------------------------
+    # Segment count stored in registry matches comparison num_segments
+    # ------------------------------------------------------------------
+
+    def test_registry_record_includes_num_segments(self, tmp_path, monkeypatch):
+        """Persisted BenchmarkRunRecord metrics include num_segments from comparison."""
+        pytest.importorskip("jiwer")
+        pytest.importorskip("sacrebleu")
+
+        import benchmark as bm
+        from config import Config
+        from models import Segment, SubtitleCandidate
+        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.artifacts import ArtifactRegistry
+        from core.artifacts.pipeline_wiring import compute_media_hash
+
+        synth = MediaInfo(
+            path=Path("x.mkv"), format_name="matroska", duration=10.0,
+            audio_streams=[AudioStream(index=0, codec="aac", language="en", raw_language="eng")],
+            subtitle_streams=[SubtitleStream(index=0, codec="subrip", language="en", raw_language="eng")],
+        )
+        segs = [Segment(start=0.0, end=1.0, text="hello world")]
+
+        monkeypatch.setattr(bm, "inspect_media", lambda _: synth)
+        monkeypatch.setattr(bm, "extract_subtitle_track",
+                            lambda v, i, language, output_dir=None: SubtitleCandidate(
+                                id=f"embedded_{language}_s{i}", language=language,
+                                source="embedded", origin_stream=f"sub:{i}",
+                                segments=segs, meta={}))
+        monkeypatch.setattr(bm, "extract_audio_with_ffmpeg",
+                            lambda v, o, n: Path(o).write_bytes(b""))
+
+        class _ASR:
+            def __init__(self, _c): pass
+            def transcribe_audio_to_segments(self, _p, language):
+                return segs, None
+
+        monkeypatch.setattr(bm, "FasterWhisperASR", _ASR)
+        monkeypatch.setattr(bm, "build_candidate_from_segments",
+                            lambda s, c, candidate_id, language, origin_stream:
+                            SubtitleCandidate(id=candidate_id, language=language,
+                                             source="asr", origin_stream=origin_stream,
+                                             segments=s, meta={}))
+
+        cfg = Config()
+        cfg._config["benchmark"] = {
+            "sources": {"use_embedded_en": True, "use_embedded_jp": False,
+                        "use_en_audio": True, "use_ja_audio": False},
+        }
+
+        dummy_video = tmp_path / "segs.mkv"
+        dummy_video.write_bytes(b"\x00" * 16)
+
+        registry = ArtifactRegistry(db_path=":memory:")
+        results = bm.run_benchmark(str(dummy_video), cfg, use_llm=False,
+                                   output_dir=str(tmp_path), registry=registry)
+
+        assert results["comparisons"], "Need at least one comparison for this test"
+        stored = registry.list_benchmark_runs(compute_media_hash(dummy_video))
+        assert stored, "Registry should have at least one run"
+
+        for record, comp in zip(stored, results["comparisons"]):
+            assert "num_segments" in record.metrics, (
+                "Persisted metrics must include num_segments"
+            )
+            assert record.metrics["num_segments"] == comp["num_segments"], (
+                f"Registry num_segments {record.metrics['num_segments']} "
+                f"!= comparison num_segments {comp['num_segments']}"
+            )
+
+    # ------------------------------------------------------------------
+    # Atomic JSON write — stale artifacts
+    # ------------------------------------------------------------------
+
+    def test_json_output_no_tmp_file_after_success(self, tmp_path, monkeypatch):
+        """benchmark_results.json.tmp must not remain after a successful write."""
+        pytest.importorskip("jiwer")
+        pytest.importorskip("sacrebleu")
+
+        import benchmark as bm
+        from config import Config
+        from models import Segment, SubtitleCandidate
+        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+
+        synth = MediaInfo(
+            path=Path("x.mkv"), format_name="matroska", duration=10.0,
+            audio_streams=[AudioStream(index=0, codec="aac", language="en", raw_language="eng")],
+            subtitle_streams=[SubtitleStream(index=0, codec="subrip", language="en", raw_language="eng")],
+        )
+        segs = [Segment(start=0.0, end=1.0, text="atomic")]
+
+        monkeypatch.setattr(bm, "inspect_media", lambda _: synth)
+        monkeypatch.setattr(bm, "extract_subtitle_track",
+                            lambda v, i, language, output_dir=None: SubtitleCandidate(
+                                id=f"embedded_{language}_s{i}", language=language,
+                                source="embedded", origin_stream=f"sub:{i}",
+                                segments=segs, meta={}))
+        monkeypatch.setattr(bm, "extract_audio_with_ffmpeg",
+                            lambda v, o, n: Path(o).write_bytes(b""))
+
+        class _ASR:
+            def __init__(self, _c): pass
+            def transcribe_audio_to_segments(self, _p, language):
+                return segs, None
+
+        monkeypatch.setattr(bm, "FasterWhisperASR", _ASR)
+        monkeypatch.setattr(bm, "build_candidate_from_segments",
+                            lambda s, c, candidate_id, language, origin_stream:
+                            SubtitleCandidate(id=candidate_id, language=language,
+                                             source="asr", origin_stream=origin_stream,
+                                             segments=s, meta={}))
+
+        cfg = Config()
+        cfg._config["benchmark"] = {
+            "sources": {"use_embedded_en": True, "use_embedded_jp": False,
+                        "use_en_audio": True, "use_ja_audio": False},
+        }
+
+        dummy_video = tmp_path / "atomic.mkv"
+        dummy_video.write_bytes(b"\x00" * 16)
+
+        bm.run_benchmark(str(dummy_video), cfg, use_llm=False, output_dir=str(tmp_path))
+
+        assert (tmp_path / "benchmark_results.json").exists(), "JSON output must exist"
+        assert not (tmp_path / "benchmark_results.json.tmp").exists(), (
+            ".tmp file must not remain after a successful write"
+        )

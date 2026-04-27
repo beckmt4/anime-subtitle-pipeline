@@ -11,6 +11,7 @@ This module provides generalized run_benchmark() which:
 
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
@@ -314,14 +315,23 @@ def run_benchmark(
         """Persist one comparison to the registry; silently skips if unavailable."""
         if registry is None:
             return
+        if comp.get("ref_id") == comp.get("cand_id"):
+            logger.warning(
+                "Skipping self-comparison for candidate %r — "
+                "pass allow_self_comparison=True to override",
+                comp.get("ref_id"),
+            )
+            return
         try:
             from core.artifacts.models import BenchmarkRunRecord
             metrics = comp.get("metrics", {})
+            # Include num_segments so registry segment count matches the comparison result
+            stored_metrics = {**metrics, "num_segments": comp.get("num_segments", 0)}
             # Use "|" as delimiter — candidate IDs use ":" for stream refs (e.g. "sub:10")
             registry.record_benchmark_run(BenchmarkRunRecord(
                 media_hash=_media_hash,
                 run_id=f"{session_run_id}|{comp['ref_id']}|{comp['cand_id']}",
-                metrics=metrics,
+                metrics=stored_metrics,
                 wer=metrics.get("wer"),
                 bleu=metrics.get("bleu"),
                 chrf=metrics.get("chrf"),
@@ -360,6 +370,9 @@ def run_benchmark(
             for j, cand2 in enumerate(candidates):
                 if i >= j:
                     continue
+                if cand1.id == cand2.id:
+                    logger.warning("Skipping self-comparison: %s", cand1.id)
+                    continue
                 logger.info("\nComparing %s vs %s...", cand1.id, cand2.id)
                 with start_span("compare_pair", cand1=cand1.id, cand2=cand2.id):
                     comparison = compare_candidates(cand1, cand2, diff_threshold=5)
@@ -376,9 +389,26 @@ def run_benchmark(
     from core.benchmark.html_report import build_scorecards, render_html_report
     results["scorecards"] = build_scorecards(results)
 
+    if not results["comparisons"]:
+        logger.warning(
+            "⚠ No comparisons produced for %s — "
+            "only one candidate was generated or all non-reference candidates were skipped.",
+            video_path_obj.name,
+        )
+        results["warning"] = (
+            "No comparisons produced: only one candidate available or all candidates "
+            "matched the reference and were skipped."
+        )
+
     output_path = output_dir_obj / "benchmark_results.json"
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
+    _tmp_json = output_path.with_suffix(".json.tmp")
+    try:
+        with open(_tmp_json, "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        os.replace(_tmp_json, output_path)
+    except Exception:
+        _tmp_json.unlink(missing_ok=True)
+        raise
 
     # Write HTML report alongside the JSON
     html_output_path = output_dir_obj / "benchmark_report.html"
