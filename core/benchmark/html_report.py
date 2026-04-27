@@ -246,15 +246,7 @@ def _render_scorecard_table(scorecards: List[Dict[str, Any]]) -> str:
 def _render_comparisons(results: Dict[str, Any], max_diffs: int = 20) -> str:
     comparisons = results.get("comparisons", [])
     if not comparisons:
-        warning_msg = results.get(
-            "warning",
-            "No comparisons recorded — only one candidate was available or all "
-            "non-reference candidates were skipped.",
-        )
-        return (
-            f'<div class="warning-banner">⚠ {_e(warning_msg)}</div>'
-            '<p class="no-diffs">No comparisons recorded.</p>'
-        )
+        return '<p class="no-diffs">No comparisons recorded.</p>'
 
     blocks = []
     for comp in comparisons:

@@ -317,8 +317,7 @@ def run_benchmark(
             return
         if comp.get("ref_id") == comp.get("cand_id"):
             logger.warning(
-                "Skipping self-comparison for candidate %r — "
-                "pass allow_self_comparison=True to override",
+                "Skipping self-comparison for candidate %r",
                 comp.get("ref_id"),
             )
             return
@@ -401,7 +400,7 @@ def run_benchmark(
         )
 
     output_path = output_dir_obj / "benchmark_results.json"
-    _tmp_json = output_path.with_suffix(".json.tmp")
+    _tmp_json = output_path.parent / (output_path.name + ".tmp")
     try:
         with open(_tmp_json, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
