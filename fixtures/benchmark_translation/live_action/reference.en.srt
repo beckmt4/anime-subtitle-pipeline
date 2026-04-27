@@ -1,0 +1,19 @@
+1
+00:00:02,000 --> 00:00:04,500
+How did today's meeting go?
+
+2
+00:00:05,300 --> 00:00:07,800
+It was quite tough.
+
+3
+00:00:08,500 --> 00:00:10,200
+But it went well.
+
+4
+00:00:11,000 --> 00:00:13,600
+Really? Congratulations!
+
+5
+00:00:14,200 --> 00:00:16,800
+Thank you. It's thanks to the team.
