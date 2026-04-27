@@ -303,13 +303,24 @@ def run_benchmark(
     # Unique run_id for this benchmark session
     session_run_id = str(uuid.uuid4())
 
+    _single_candidate = len(candidates) == 1
+
     results: Dict[str, Any] = {
         "video": str(video_path_obj.name),
         "reference_id": ref_candidate.id,
         "candidates": candidate_metadata,
         "comparisons": [],
         "run_id": session_run_id,
+        "status": "single_candidate_only" if _single_candidate else "ok",
     }
+
+    if _single_candidate:
+        _warn_msg = (
+            "Only one candidate was generated — no benchmark comparison is possible. "
+            "Add more audio/subtitle tracks or enable additional translation engines."
+        )
+        logger.warning("⚠ BENCHMARK WARNING: %s", _warn_msg)
+        results["warning"] = _warn_msg
 
     def _persist_comparison(comp: Dict[str, Any]) -> None:
         """Persist one comparison to the registry; silently skips if unavailable."""
@@ -347,23 +358,24 @@ def run_benchmark(
         except Exception:
             _media_hash = video_path_obj.name  # fallback: filename as pseudo-hash
 
-    for cand in candidates:
-        if cand.id == ref_candidate.id:
-            continue
-        logger.info("\nComparing %s vs %s...", cand.id, ref_candidate.id)
-        with start_span("compare_candidate", cand_id=cand.id):
-            comparison = compare_candidates(ref_candidate, cand, diff_threshold=5)
-            comparison["diffs"] = comparison["diffs"][:bc.max_diffs_per_comparison]
-            results["comparisons"].append(comparison)
-            metrics = comparison["metrics"]
-            logger.info(
-                "  WER=%.2f%%, BLEU=%.1f, chrF=%.1f, diffs=%d",
-                metrics["wer"] * 100, metrics["bleu"], metrics["chrf"],
-                comparison["num_diffs"],
-            )
-            _persist_comparison(comparison)
+    if not _single_candidate:
+        for cand in candidates:
+            if cand.id == ref_candidate.id:
+                continue
+            logger.info("\nComparing %s vs %s...", cand.id, ref_candidate.id)
+            with start_span("compare_candidate", cand_id=cand.id):
+                comparison = compare_candidates(ref_candidate, cand, diff_threshold=5)
+                comparison["diffs"] = comparison["diffs"][:bc.max_diffs_per_comparison]
+                results["comparisons"].append(comparison)
+                metrics = comparison["metrics"]
+                logger.info(
+                    "  WER=%.2f%%, BLEU=%.1f, chrF=%.1f, diffs=%d",
+                    metrics["wer"] * 100, metrics["bleu"], metrics["chrf"],
+                    comparison["num_diffs"],
+                )
+                _persist_comparison(comparison)
 
-    if bc.compare_all_pairs and len(candidates) > 2:
+    if not _single_candidate and bc.compare_all_pairs and len(candidates) > 2:
         logger.info("\nComputing full pairwise comparison matrix...")
         for i, cand1 in enumerate(candidates):
             for j, cand2 in enumerate(candidates):

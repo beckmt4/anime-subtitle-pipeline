@@ -556,7 +556,17 @@ Examples:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Override logging level"
     )
-    
+
+    parser.add_argument(
+        "--strict-benchmark",
+        action="store_true",
+        dest="strict_benchmark",
+        help=(
+            "In benchmark mode, exit with code 2 when only one candidate is generated "
+            "(i.e. no comparison was possible)."
+        )
+    )
+
     args = parser.parse_args()
     
     # Load configuration
@@ -687,6 +697,14 @@ Examples:
             logger.info(f"  Candidates: {len(results['candidates'])}")
             logger.info(f"  Comparisons: {len(results['comparisons'])}")
             logger.info(f"  Run ID: {results.get('run_id', '<none>')}")
+            if results.get("status") == "single_candidate_only":
+                print(
+                    f"WARNING: Benchmark produced only one candidate — "
+                    f"no comparison was performed. "
+                    f"{results.get('warning', '')}"
+                )
+                if getattr(args, "strict_benchmark", False):
+                    sys.exit(2)
             sys.exit(0)
         elif args.mode == "generate":
             from orchestrator import run_generate

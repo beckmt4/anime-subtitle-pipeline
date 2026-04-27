@@ -1001,3 +1001,196 @@ class TestBenchmarkStalenessGuards:
         assert not (tmp_path / "benchmark_results.json.tmp").exists(), (
             ".tmp file must not remain after a successful write"
         )
+
+
+# ===========================================================================
+# Single-candidate detection
+# ===========================================================================
+
+class TestSingleCandidateDetection:
+    """run_benchmark with only one candidate reports status=single_candidate_only."""
+
+    def _make_single_candidate_results(self, tmp_path, monkeypatch):
+        """Run run_benchmark with only one EN candidate available."""
+        import benchmark as bm
+        from config import Config
+        from models import Segment, SubtitleCandidate
+        from media_inspect import MediaInfo, SubtitleStream
+
+        synth = MediaInfo(
+            path=Path("x.mkv"),
+            format_name="matroska",
+            duration=10.0,
+            audio_streams=[],
+            subtitle_streams=[
+                SubtitleStream(index=0, codec="subrip", language="en", raw_language="eng")
+            ],
+        )
+        segs = [Segment(start=0.0, end=1.0, text="hello")]
+
+        monkeypatch.setattr(bm, "inspect_media", lambda _: synth)
+        monkeypatch.setattr(
+            bm,
+            "extract_subtitle_track",
+            lambda v, i, language, output_dir=None: SubtitleCandidate(
+                id=f"embedded_{language}_s{i}",
+                language=language,
+                source="embedded",
+                origin_stream=f"sub:{i}",
+                segments=segs,
+                meta={},
+            ),
+        )
+
+        cfg = Config()
+        cfg._config["benchmark"] = {
+            "sources": {
+                "use_embedded_en": True,
+                "use_embedded_jp": False,
+                "use_en_audio": False,
+                "use_ja_audio": False,
+            },
+        }
+
+        dummy_video = tmp_path / "ep01.mkv"
+        dummy_video.write_bytes(b"\x00" * 16)
+
+        return bm.run_benchmark(str(dummy_video), cfg, use_llm=False, output_dir=str(tmp_path))
+
+    def test_status_is_single_candidate_only(self, tmp_path, monkeypatch):
+        results = self._make_single_candidate_results(tmp_path, monkeypatch)
+        assert results["status"] == "single_candidate_only"
+
+    def test_warning_field_present(self, tmp_path, monkeypatch):
+        results = self._make_single_candidate_results(tmp_path, monkeypatch)
+        assert "warning" in results
+        assert results["warning"]
+
+    def test_comparisons_empty(self, tmp_path, monkeypatch):
+        results = self._make_single_candidate_results(tmp_path, monkeypatch)
+        assert results["comparisons"] == []
+
+    def test_json_output_contains_warning(self, tmp_path, monkeypatch):
+        self._make_single_candidate_results(tmp_path, monkeypatch)
+        out = tmp_path / "benchmark_results.json"
+        assert out.exists()
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data.get("status") == "single_candidate_only"
+        assert data.get("warning")
+
+    def test_html_report_says_no_comparison_possible(self, tmp_path, monkeypatch):
+        self._make_single_candidate_results(tmp_path, monkeypatch)
+        html = (tmp_path / "benchmark_report.html").read_text(encoding="utf-8")
+        assert "No benchmark comparison possible" in html
+
+    def test_html_report_shows_warning_banner(self, tmp_path, monkeypatch):
+        self._make_single_candidate_results(tmp_path, monkeypatch)
+        html = (tmp_path / "benchmark_report.html").read_text(encoding="utf-8")
+        assert '<div class="warning-banner">' in html
+
+    def test_render_html_report_single_candidate_status(self):
+        """render_html_report shows the single-candidate no-comparison message."""
+        from core.benchmark.html_report import render_html_report
+
+        data = {
+            "video": "test.mkv",
+            "reference_id": "embedded_en_s0",
+            "run_id": "test-run",
+            "status": "single_candidate_only",
+            "warning": "Only one candidate - no comparison possible.",
+            "candidates": [
+                {
+                    "id": "embedded_en_s0",
+                    "source": "embedded",
+                    "language": "en",
+                    "origin_stream": "sub:0",
+                    "segment_count": 1,
+                }
+            ],
+            "comparisons": [],
+        }
+        html = render_html_report(data)
+        assert "No benchmark comparison possible" in html
+        assert '<div class="warning-banner">' in html
+
+    def test_render_html_report_ok_status_no_banner(self):
+        """Normal results must not show the warning banner element."""
+        from core.benchmark.html_report import render_html_report
+
+        data = _load_fixture()
+        html = render_html_report(data)
+        assert '<div class="warning-banner">' not in html
+
+    def test_multi_candidate_status_is_ok(self, tmp_path, monkeypatch):
+        """When multiple candidates exist, status must be ok."""
+        pytest.importorskip("jiwer")
+        pytest.importorskip("sacrebleu")
+
+        import benchmark as bm
+        from config import Config
+        from models import Segment, SubtitleCandidate
+        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+
+        synth = MediaInfo(
+            path=Path("x.mkv"),
+            format_name="matroska",
+            duration=10.0,
+            audio_streams=[AudioStream(index=0, codec="aac", language="en", raw_language="eng")],
+            subtitle_streams=[
+                SubtitleStream(index=0, codec="subrip", language="en", raw_language="eng")
+            ],
+        )
+        segs = [Segment(start=0.0, end=1.0, text="hello")]
+
+        monkeypatch.setattr(bm, "inspect_media", lambda _: synth)
+        monkeypatch.setattr(
+            bm,
+            "extract_subtitle_track",
+            lambda v, i, language, output_dir=None: SubtitleCandidate(
+                id=f"embedded_{language}_s{i}",
+                language=language,
+                source="embedded",
+                origin_stream=f"sub:{i}",
+                segments=segs,
+                meta={},
+            ),
+        )
+        monkeypatch.setattr(
+            bm, "extract_audio_with_ffmpeg", lambda v, o, n: Path(o).write_bytes(b"")
+        )
+
+        class _ASR:
+            def __init__(self, _c): pass
+            def transcribe_audio_to_segments(self, _p, language):
+                return segs, None
+
+        monkeypatch.setattr(bm, "FasterWhisperASR", _ASR)
+        monkeypatch.setattr(
+            bm,
+            "build_candidate_from_segments",
+            lambda s, c, candidate_id, language, origin_stream: SubtitleCandidate(
+                id=candidate_id,
+                language=language,
+                source="asr",
+                origin_stream=origin_stream,
+                segments=s,
+                meta={},
+            ),
+        )
+
+        cfg = Config()
+        cfg._config["benchmark"] = {
+            "sources": {
+                "use_embedded_en": True,
+                "use_embedded_jp": False,
+                "use_en_audio": True,
+                "use_ja_audio": False,
+            },
+        }
+
+        dummy_video = tmp_path / "ep02.mkv"
+        dummy_video.write_bytes(b"\x00" * 16)
+
+        results = bm.run_benchmark(str(dummy_video), cfg, use_llm=False, output_dir=str(tmp_path))
+        assert results["status"] == "ok"
+        assert "warning" not in results

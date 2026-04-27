@@ -70,6 +70,8 @@ tr:hover td { background: #f0f4f8; }
 .no-diffs { color: #888; font-style: italic; }
 .badge { display: inline-block; padding: 3px 10px; border-radius: 4px;
          font-size: 0.82em; background: #2c3e50; color: #fff; margin-left: 8px; }
+.warning-banner { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px;
+                  padding: 10px 16px; margin-bottom: 16px; color: #856404; font-size: 0.95em; }
 """
 
 # ---------------------------------------------------------------------------
@@ -328,6 +330,8 @@ def render_html_report(
     run_id = _e(results.get("run_id", "—"))
     num_candidates = len(results.get("candidates", []))
     num_comparisons = len(results.get("comparisons", []))
+    status = results.get("status", "ok")
+    warning = results.get("warning", "")
 
     scorecards = build_scorecards(results)
 
@@ -341,7 +345,23 @@ def render_html_report(
         warning_html = f'<div class="warning-banner">⚠ {warning_msg}</div>'
 
     scorecard_table = _render_scorecard_table(scorecards)
-    comparisons_html = _render_comparisons(results)
+
+    if status == "single_candidate_only":
+        comparisons_html = (
+            '<div class="warning-banner">'
+            '⚠ No benchmark comparison possible — only one candidate was generated.'
+            '</div>'
+        )
+    else:
+        comparisons_html = _render_comparisons(results)
+
+    warning_banner = ""
+    if status == "single_candidate_only":
+        warning_banner = (
+            f'<div class="warning-banner">'
+            f'⚠ <strong>Single candidate only:</strong> {_e(warning)}'
+            f'</div>\n'
+        )
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="en">
@@ -353,7 +373,7 @@ def render_html_report(
 </head>
 <body>
 <h1>Benchmark Report <span class="badge">{video}</span></h1>
-<p class="meta">
+{warning_banner}<p class="meta">
   Generated: {_e(generated_at)} &nbsp;|&nbsp;
   Run ID: <code>{run_id}</code> &nbsp;|&nbsp;
   Reference: <strong>{reference_id}</strong> &nbsp;|&nbsp;
