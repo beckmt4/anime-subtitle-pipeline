@@ -1065,6 +1065,7 @@ class TestSingleCandidateDetection:
         results = self._make_single_candidate_results(tmp_path, monkeypatch)
         assert "warning" in results
         assert results["warning"]
+        assert "Only one candidate was generated" in results["warning"]
 
     def test_comparisons_empty(self, tmp_path, monkeypatch):
         results = self._make_single_candidate_results(tmp_path, monkeypatch)
@@ -1077,6 +1078,7 @@ class TestSingleCandidateDetection:
         data = json.loads(out.read_text(encoding="utf-8"))
         assert data.get("status") == "single_candidate_only"
         assert data.get("warning")
+        assert "Only one candidate was generated" in data["warning"]
 
     def test_html_report_says_no_comparison_possible(self, tmp_path, monkeypatch):
         self._make_single_candidate_results(tmp_path, monkeypatch)
@@ -1087,6 +1089,7 @@ class TestSingleCandidateDetection:
         self._make_single_candidate_results(tmp_path, monkeypatch)
         html = (tmp_path / "benchmark_report.html").read_text(encoding="utf-8")
         assert '<div class="warning-banner">' in html
+        assert html.count('<div class="warning-banner">') == 1
 
     def test_render_html_report_single_candidate_status(self):
         """render_html_report shows the single-candidate no-comparison message."""
@@ -1112,6 +1115,7 @@ class TestSingleCandidateDetection:
         html = render_html_report(data)
         assert "No benchmark comparison possible" in html
         assert '<div class="warning-banner">' in html
+        assert html.count('<div class="warning-banner">') == 1
 
     def test_render_html_report_ok_status_no_banner(self):
         """Normal results must not show the warning banner element."""

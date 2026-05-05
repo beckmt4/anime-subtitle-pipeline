@@ -336,7 +336,7 @@ def render_html_report(
     scorecards = build_scorecards(results)
 
     warning_html = ""
-    if num_comparisons == 0:
+    if num_comparisons == 0 and status != "single_candidate_only":
         warning_msg = _e(results.get(
             "warning",
             "No comparisons produced — only one candidate was available or all "
