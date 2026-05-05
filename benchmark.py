@@ -406,7 +406,8 @@ def run_benchmark(
             "only one candidate was generated or all non-reference candidates were skipped.",
             video_path_obj.name,
         )
-        results["warning"] = (
+        results.setdefault(
+            "warning",
             "No comparisons produced: only one candidate available or all candidates "
             "matched the reference and were skipped."
         )
