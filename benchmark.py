@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
 from config import Config
+from core.ocr import OCRBackend
 from media_inspect import inspect_media, MediaInfo
 from audio_utils import extract_audio_with_ffmpeg
 from subtitle_utils import extract_subtitle_track
@@ -34,7 +35,8 @@ logger = logging.getLogger(__name__)
 def find_all_tracks_by_language(
     media: MediaInfo,
     track_type: str,
-    language_codes: List[str]
+    language_codes: List[str],
+    subtitle_filter: str = "text",
 ) -> List[Tuple[int, int, str]]:
     """Find all tracks of given type matching any language code.
 
@@ -56,9 +58,12 @@ def find_all_tracks_by_language(
     for order_idx, stream in enumerate(streams):
         lang = (stream.language or stream.raw_language or "und").lower()
         if lang in lang_set:
-            if track_type == "subtitle" and stream.is_bitmap:
-                logger.debug("Skipping bitmap subtitle stream %d", stream.index)
-                continue
+            if track_type == "subtitle":
+                if subtitle_filter == "text" and stream.is_bitmap:
+                    logger.debug("Skipping bitmap subtitle stream %d", stream.index)
+                    continue
+                if subtitle_filter == "bitmap" and not stream.is_bitmap:
+                    continue
             matches.append((order_idx, stream.index, lang))
             logger.info(
                 "Found %s track: order=%d global=%d lang=%s",
@@ -95,6 +100,7 @@ def run_benchmark(
     use_llm: bool = True,
     output_dir: Optional[str] = None,
     registry=None,
+    ocr_backend: OCRBackend | None = None,
 ) -> Dict[str, Any]:
     """Run generalized benchmark comparing all available EN subtitle sources.
 
@@ -114,6 +120,7 @@ def run_benchmark(
         output_dir: Output directory for results (default: config outbox).
         registry: Optional ArtifactRegistry instance.  When provided, each
             pairwise comparison is persisted as a BenchmarkRunRecord.
+        ocr_backend: Optional OCR backend for bitmap subtitle candidate generation.
 
     Returns:
         Dictionary with comprehensive benchmark results including ``scorecards``.
@@ -145,18 +152,68 @@ def run_benchmark(
 
     en_audio_tracks = find_all_tracks_by_language(media, "audio", ["en", "eng", "en-us"]) if bc.use_en_audio else []
     ja_audio_tracks = find_all_tracks_by_language(media, "audio", ["ja", "jpn", "jp", "ja-jp"]) if bc.use_ja_audio else []
-    en_sub_tracks = find_all_tracks_by_language(media, "subtitle", ["en", "eng", "en-us"]) if bc.use_embedded_en else []
-    ja_sub_tracks = find_all_tracks_by_language(media, "subtitle", ["ja", "jpn", "jp", "ja-jp"]) if bc.use_embedded_jp else []
+    en_sub_tracks = (
+        find_all_tracks_by_language(
+            media, "subtitle", ["en", "eng", "en-us"], subtitle_filter="text"
+        )
+        if bc.use_embedded_en
+        else []
+    )
+    ja_sub_tracks = (
+        find_all_tracks_by_language(
+            media, "subtitle", ["ja", "jpn", "jp", "ja-jp"], subtitle_filter="text"
+        )
+        if bc.use_embedded_jp
+        else []
+    )
+    en_bitmap_tracks = (
+        find_all_tracks_by_language(
+            media, "subtitle", ["en", "eng", "en-us"], subtitle_filter="bitmap"
+        )
+        if bc.use_embedded_en
+        else []
+    )
+    ja_bitmap_tracks = (
+        find_all_tracks_by_language(
+            media, "subtitle", ["ja", "jpn", "jp", "ja-jp"], subtitle_filter="bitmap"
+        )
+        if bc.use_embedded_jp
+        else []
+    )
+    if ocr_backend is None and (en_bitmap_tracks or ja_bitmap_tracks):
+        logger.info("Bitmap subtitle tracks detected but OCR backend not configured; skipping OCR candidates")
+        en_bitmap_tracks = []
+        ja_bitmap_tracks = []
 
     logger.info("  EN audio tracks: %d", len(en_audio_tracks))
     logger.info("  JP audio tracks: %d", len(ja_audio_tracks))
-    logger.info("  EN subtitle tracks: %d", len(en_sub_tracks))
-    logger.info("  JP subtitle tracks: %d", len(ja_sub_tracks))
+    logger.info("  EN text subtitle tracks: %d", len(en_sub_tracks))
+    logger.info("  JP text subtitle tracks: %d", len(ja_sub_tracks))
+    logger.info("  EN bitmap subtitle tracks (OCR): %d", len(en_bitmap_tracks))
+    logger.info("  JP bitmap subtitle tracks (OCR): %d", len(ja_bitmap_tracks))
 
-    if not any([en_audio_tracks, ja_audio_tracks, en_sub_tracks, ja_sub_tracks]):
+    if not any(
+        [
+            en_audio_tracks,
+            ja_audio_tracks,
+            en_sub_tracks,
+            ja_sub_tracks,
+            en_bitmap_tracks,
+            ja_bitmap_tracks,
+        ]
+    ):
+        ocr_skip_hint = ""
+        if ocr_backend is None:
+            raw_bitmap_tracks = find_all_tracks_by_language(
+                media, "subtitle", ["en", "eng", "en-us", "ja", "jpn", "jp", "ja-jp"],
+                subtitle_filter="bitmap",
+            )
+            if raw_bitmap_tracks:
+                ocr_skip_hint = " Bitmap subtitle tracks were detected but OCR backend is not configured."
         raise RuntimeError(
             "No suitable tracks found for benchmarking. "
             "Video must have at least one EN or JP audio/subtitle track."
+            + ocr_skip_hint
         )
 
     video_stem = video_path_obj.stem
@@ -234,6 +291,89 @@ def run_benchmark(
                 "translation_model": final_cand.meta.get("translation_model") or final_cand.meta.get("model"),
                 "translation_mode": final_cand.meta.get("translation_mode"),
                 "translation_workflow": final_cand.meta.get("translation_workflow", "single_pass"),
+                "translation_fallback": final_cand.meta.get("translation_fallback", False),
+                "translation_qc": translation_qc,
+            })
+            logger.info("  → %s: %d segments", final_cand.id, final_cand.segment_count)
+
+    # 2.5 Embedded EN bitmap subtitles → OCR
+    for idx, (order, global_idx, lang) in enumerate(en_bitmap_tracks):
+        logger.info(
+            "\n[EN-bitmap %d] Extracting EN bitmap subtitle via OCR (order=%d, global=%d)...",
+            idx + 1, order, global_idx,
+        )
+        with start_span("extract_embedded_en_bitmap_ocr"):
+            cand = extract_subtitle_track(
+                str(video_path_obj),
+                global_idx,
+                language="en",
+                output_dir=temp_dir,
+                ocr_backend=ocr_backend,
+            )
+        candidates.append(cand)
+        candidate_metadata.append({
+            "id": cand.id,
+            "source": "bitmap_ocr",
+            "language": "en",
+            "origin_stream": cand.origin_stream,
+            "segment_count": cand.segment_count,
+        })
+        logger.info("  → %s: %d segments", cand.id, cand.segment_count)
+
+    # 2.6 Embedded JP bitmap subtitles → OCR → MT
+    for idx, (order, global_idx, lang) in enumerate(ja_bitmap_tracks):
+        logger.info(
+            "\n[JP-bitmap %d] Extracting JP bitmap subtitle via OCR (order=%d, global=%d)...",
+            idx + 1, order, global_idx,
+        )
+        with start_span("extract_embedded_jp_bitmap_ocr"):
+            ja_cand = extract_subtitle_track(
+                str(video_path_obj),
+                global_idx,
+                language="ja",
+                output_dir=temp_dir,
+                ocr_backend=ocr_backend,
+            )
+        for engine in translation_engines:
+            logger.info("  Translating JP bitmap candidate with engine=%s", engine)
+            with start_span("mt_embedded_jp_bitmap", engine=engine):
+                mt_cand = translate_candidate_jp_to_en_workflow(
+                    ja_cand, config, engine=engine, ja_candidate=ja_cand
+                )
+            run_post_mt_llm = use_llm and config.llm_enabled and (
+                mt_cand.meta.get("translation_workflow") != "literal_then_natural"
+                or allow_post_two_pass_llm
+            )
+            if run_post_mt_llm:
+                with start_span("llm_polish_embedded_jp_bitmap"):
+                    polished = polish_candidate_with_llm(mt_cand, config)
+                    final_cand = enforce_constraints_on_candidate(polished, config)
+                source_desc = f"bitmap_mt_{engine}_llm"
+            else:
+                final_cand = mt_cand
+                source_desc = f"bitmap_mt_{engine}"
+            translation_qc = run_translation_qc(
+                final_cand,
+                source_candidate=ja_cand,
+                candidate_metadata=final_cand.meta,
+                config=config,
+            )
+            candidates.append(final_cand)
+            candidate_metadata.append({
+                "id": final_cand.id,
+                "source": source_desc,
+                "language": "en",
+                "origin_stream": final_cand.origin_stream,
+                "segment_count": final_cand.segment_count,
+                "translation_engine": final_cand.meta.get("translation_engine", engine),
+                "translation_model": (
+                    final_cand.meta.get("translation_model")
+                    or final_cand.meta.get("model")
+                ),
+                "translation_mode": final_cand.meta.get("translation_mode"),
+                "translation_workflow": final_cand.meta.get(
+                    "translation_workflow", "single_pass"
+                ),
                 "translation_fallback": final_cand.meta.get("translation_fallback", False),
                 "translation_qc": translation_qc,
             })

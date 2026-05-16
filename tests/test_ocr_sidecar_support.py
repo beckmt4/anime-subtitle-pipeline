@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from config import Config
-from core.ocr import OCRBackend
+from core.ocr import OCRBackend, create_backend
 from core.policy import PolicyEngine
 from media_inspect import MediaInfo, SubtitleStream
 from models import Segment, SubtitleCandidate
@@ -132,3 +132,19 @@ def test_qc_and_policy_route_ocr_heavy_results_to_review(tmp_path):
     assert score["ocr_warning_density"] == 1.0
     assert decision["decision"] == "review"
     assert "ocr_warning_density" in decision["triggered_by"]
+
+
+def test_create_backend_loads_plugin_from_config():
+    cfg = Config()
+    cfg._config.setdefault("ocr", {})
+    cfg._config["ocr"].update({
+        "enabled": True,
+        "backend": "tests.test_ocr_sidecar_support:DummyOCRBackend",
+        "language_models": {"ja": "ja_model"},
+    })
+
+    backend = create_backend(cfg)
+
+    assert backend is not None
+    assert isinstance(backend, OCRBackend)
+    assert backend.__class__.__name__ == "DummyOCRBackend"

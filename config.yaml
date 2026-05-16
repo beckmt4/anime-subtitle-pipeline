@@ -206,6 +206,11 @@ generate:
 
 # OCR subtitle handling (bitmap subtitle tracks)
 ocr:
+  enabled: false                  # Master switch for bitmap subtitle OCR
+  backend: ""                     # Plugin class path: "<module>:<Class>" or "<module>.<Class>"
+  language_models:                # Optional backend-specific language model hints
+    en: ""
+    ja: ""
   confidence_warn_below: 0.70     # QC warning threshold for per-cue OCR confidence
 
 # Benchmark mode candidate generation.

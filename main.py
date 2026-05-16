@@ -39,6 +39,7 @@ from core.artifacts.models import (
     PIPELINE_STATUS_FAILED,
 )
 from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
+from core.ocr import create_backend as create_ocr_backend
 from media_inspect import inspect_media, choose_audio_track
 from models import SubtitleCandidate
 from asr import FasterWhisperASR, build_candidate_from_segments
@@ -685,12 +686,18 @@ Examples:
         if args.mode == "benchmark":
             from benchmark import run_benchmark
             logger.info("Running in BENCHMARK mode (compare all candidate sources)")
+            ocr_backend = create_ocr_backend(config)
+            if ocr_backend is None:
+                logger.info("OCR backend not configured; bitmap subtitle OCR candidates will be skipped")
+            else:
+                logger.info("OCR backend active: %s", ocr_backend.__class__.__name__)
             bm_registry = open_registry(config)
             results = run_benchmark(
                 video_path=args.video,
                 config=config,
                 use_llm=not args.no_llm,
                 registry=bm_registry,
+                ocr_backend=ocr_backend,
             )
             logger.info("\nBenchmark Result:")
             logger.info(f"  Reference: {results['reference_id']}")
@@ -706,6 +713,11 @@ Examples:
             from orchestrator import run_generate
             logger.info("Running in GENERATE mode (strategy selection)")
             media = inspect_media(args.video)
+            ocr_backend = create_ocr_backend(config)
+            if ocr_backend is None:
+                logger.info("OCR backend not configured; bitmap subtitle OCR sources will be skipped")
+            else:
+                logger.info("OCR backend active: %s", ocr_backend.__class__.__name__)
 
             if args.inspect_only:
                 logger.info("Inspect-only requested: registry and output writes disabled")
@@ -735,6 +747,7 @@ Examples:
                     media_hash=media_hash,
                     inspect_only=args.inspect_only,
                     source_language=args.source_language,
+                    ocr_backend=ocr_backend,
                 )
             finally:
                 if registry is not None:

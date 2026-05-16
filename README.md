@@ -306,6 +306,14 @@ generate:
   prefer_audio_language: "auto"   # "en" | "ja" | "auto"
   use_llm_polish: true            # Polish MT outputs
 
+ocr:
+  enabled: false
+  backend: ""                     # "<module>:<Class>" implementing core.ocr.OCRBackend
+  language_models:
+    en: ""
+    ja: ""
+  confidence_warn_below: 0.70
+
 benchmark:
   translation_engines: ["marian"] # compare e.g. ["marian", "llm_direct"]
   sources:
@@ -402,6 +410,17 @@ elif EN audio exists:
 else:
   error (no usable source)
 ```
+
+## Bitmap OCR backend setup
+
+- `main.py --mode generate` and `--mode benchmark` both call `core.ocr.create_backend(config)`.
+- `--inspect-only` uses the same OCR config path as normal generate mode.
+- OCR is enabled only when `ocr.enabled: true` **and** `ocr.backend` resolves to a loadable class that inherits `core.ocr.OCRBackend`.
+- `ocr.backend` supports either `<module>:<Class>` or `<module>.<Class>`.
+- The factory passes optional config hints to your backend constructor when supported: `config`, `language_models`, and `confidence_warn_below`.
+- If OCR is disabled or backend loading fails, bitmap subtitle sources are skipped and reporting/logs state that OCR is not configured.
+
+This closes the product wiring gap tracked by parent epic `beckmt4/anime-subtitle-pipeline#21` for CLI generate/benchmark OCR source availability.
 
 ## Example Commands
 
