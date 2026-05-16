@@ -25,8 +25,9 @@ Checks
 8. **line-count violations** – No cue contains more than ``max_lines``
    display lines.
 9. **translation judge heuristics** – When candidate metadata is supplied,
-   flags likely untranslated output, omissions, added meaning, and softened
-   explicit dialogue under the live-action/adult profile.
+   flags likely untranslated output, omissions, added meaning, softened
+   explicit dialogue, low-confidence markers, and high-risk safety-review
+   indicators under the live-action/adult profile.
 
 Default thresholds
 ------------------
@@ -128,6 +129,35 @@ _ADULT_EN_MARKERS = (
     "horny",
     "nipple",
 )
+_LOW_CONFIDENCE_MARKERS = (
+    "[low_confidence]",
+    "[uncertain]",
+    "[inaudible]",
+    "not sure",
+    "unclear",
+    "can't hear",
+    "couldn't hear",
+    "???",
+)
+_HIGH_RISK_MARKERS = (
+    "未成年",
+    "児童",
+    "子供",
+    "少女",
+    "少年",
+    "同意なし",
+    "無理やり",
+    "強姦",
+    "レイプ",
+    "minor",
+    "underage",
+    "child",
+    "without consent",
+    "non-consensual",
+    "coerc",
+    "forced",
+    "rape",
+)
 
 # ---------------------------------------------------------------------------
 # Severity constants
@@ -206,6 +236,11 @@ def _make_violation(
     }
 
 
+def _contains_any_marker(text: str, markers: Tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(marker.lower() in lowered for marker in markers)
+
+
 def _build_summary(
     parsed_ok: bool,
     cue_count: int,
@@ -229,6 +264,18 @@ def _add_translation_judge_warnings(
     violations: List[Dict[str, Any]],
 ) -> None:
     dialogue_profile = str(candidate.meta.get("translation_dialogue_profile", "default"))
+    flag_low_confidence = bool(
+        candidate.meta.get(
+            "translation_flag_low_confidence",
+            dialogue_profile == "live_action_adult",
+        )
+    )
+    flag_high_risk_content = bool(
+        candidate.meta.get(
+            "translation_flag_high_risk_content",
+            dialogue_profile == "live_action_adult",
+        )
+    )
     for idx, seg in enumerate(candidate.segments[:cue_count], start=1):
         source_text = ""
         if isinstance(seg.meta, dict):
@@ -296,6 +343,33 @@ def _add_translation_judge_warnings(
                             ),
                         )
                     )
+
+        if flag_low_confidence and _contains_any_marker(
+            translated_text, _LOW_CONFIDENCE_MARKERS
+        ):
+            violations.append(
+                _make_violation(
+                    "translation_low_confidence_flagged",
+                    _SEVERITY_WARNING,
+                    idx,
+                    "Translation line is flagged as uncertain and should be reviewed",
+                )
+            )
+
+        if flag_high_risk_content and _contains_any_marker(
+            f"{source_text}\n{translated_text}", _HIGH_RISK_MARKERS
+        ):
+            violations.append(
+                _make_violation(
+                    "translation_high_risk_content_review",
+                    _SEVERITY_WARNING,
+                    idx,
+                    (
+                        "Potential minor/coercion/illegal-content indicator detected; "
+                        "manual safety review required"
+                    ),
+                )
+            )
 
 
 # ---------------------------------------------------------------------------

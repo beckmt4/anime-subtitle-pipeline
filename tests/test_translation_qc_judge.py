@@ -94,3 +94,51 @@ def test_qc_flags_untranslated_output_when_cjk_present(tmp_path):
     result = run_qc(srt, candidate=candidate)
 
     assert any(v["type"] == "translation_possible_untranslated" for v in result["violations"])
+
+
+def test_qc_flags_low_confidence_marker_for_review(tmp_path):
+    srt = _write_single_cue(tmp_path, "[LOW_CONFIDENCE] I'm not sure what he said.")
+    candidate = SubtitleCandidate(
+        id="ja_mt",
+        language="en",
+        source="mt",
+        origin_stream="sub:0",
+        segments=[
+            Segment(
+                1.0,
+                3.0,
+                "[LOW_CONFIDENCE] I'm not sure what he said.",
+                meta={"source_text_ja": "……よく聞き取れない"},
+            )
+        ],
+        meta={"translation_dialogue_profile": "live_action_adult"},
+    )
+
+    result = run_qc(srt, candidate=candidate)
+
+    assert any(
+        v["type"] == "translation_low_confidence_flagged"
+        for v in result["violations"]
+    )
+
+
+def test_qc_flags_high_risk_content_for_manual_review(tmp_path):
+    text = "[REVIEW_HIGH_RISK] She's underage, force her."
+    srt = _write_single_cue(tmp_path, text)
+    candidate = SubtitleCandidate(
+        id="ja_mt",
+        language="en",
+        source="mt",
+        origin_stream="sub:0",
+        segments=[
+            Segment(1.0, 3.0, text, meta={"source_text_ja": "未成年だ、無理やりやれ"})
+        ],
+        meta={"translation_dialogue_profile": "live_action_adult"},
+    )
+
+    result = run_qc(srt, candidate=candidate)
+
+    assert any(
+        v["type"] == "translation_high_risk_content_review"
+        for v in result["violations"]
+    )

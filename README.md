@@ -275,6 +275,18 @@ translation:
   context_window_segments: 4
   mode: "accuracy_first"          # literal | natural_subtitle | accuracy_first
   dialogue_profile: "default"     # default | live_action_adult
+  preserve_adult_register: false
+  flag_low_confidence: false
+  flag_high_risk_content: false
+  profiles:
+    live_action_adult:
+      engine: "llm_direct"
+      workflow: "literal_then_natural"
+      mode: "accuracy_first"
+      context_window_segments: 6
+      preserve_adult_register: true
+      flag_low_confidence: true
+      flag_high_risk_content: true
 
 generate:
   prefer_subtitles: true          # Prefer existing EN subs
@@ -314,7 +326,8 @@ status, low-confidence segment counts, threshold values, and per-segment
 can report `asr_low_confidence` findings for translated lines that started from
 weak transcription. QC also includes translation-judge warnings for likely
 untranslated output, omissions, added meaning, and softened explicit dialogue
-under the `live_action_adult` profile. ASR warning density also reduces the
+under the `live_action_adult` profile, plus low-confidence (`[LOW_CONFIDENCE]`)
+and high-risk (`[REVIEW_HIGH_RISK]`) review flags. ASR warning density also reduces the
 candidate score and routes outputs to review at the configured policy threshold.
 SRT writing clamps adjacent cue timings to keep at least `subtitles.min_gap_sec`
 between cues.
@@ -325,6 +338,8 @@ local Ollama-compatible LLM endpoint, and `hybrid` runs MarianMT first, then ask
 the LLM to translate with the Marian baseline available as context. Candidate
 metadata records engine, model, mode, dialogue profile, fallback status, and
 baseline details.
+When `translation.dialogue_profile` is `live_action_adult`, the
+`translation.profiles.live_action_adult` preset is automatically applied.
 
 Benchmark metrics:
 - **WER** – Word Error Rate (lower better)

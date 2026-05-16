@@ -33,7 +33,21 @@ def _cfg(engine: str = "marian", dialogue_profile: str = "default") -> Config:
         "context_window_segments": 2,
         "mode": "accuracy_first",
         "dialogue_profile": dialogue_profile,
+        "preserve_adult_register": False,
+        "flag_low_confidence": False,
+        "flag_high_risk_content": False,
         "timeout": 5,
+        "profiles": {
+            "live_action_adult": {
+                "engine": "llm_direct",
+                "workflow": "literal_then_natural",
+                "mode": "accuracy_first",
+                "context_window_segments": 6,
+                "preserve_adult_register": True,
+                "flag_low_confidence": True,
+                "flag_high_risk_content": True,
+            }
+        },
     })
     cfg._config.setdefault("llm", {})
     cfg._config["llm"]["enabled"] = True
@@ -133,14 +147,19 @@ def test_live_action_adult_profile_updates_prompt_and_metadata(monkeypatch):
 
     monkeypatch.setattr(mt.LLMDirectTranslator, "_generate_text", fake_generate)
 
-    translated = mt.translate_candidate_jp_to_en(
-        _candidate(),
-        _cfg("llm_direct", dialogue_profile="live_action_adult"),
-    )
+    translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg(dialogue_profile="live_action_adult"))
 
     assert translated.meta["translation_dialogue_profile"] == "live_action_adult"
+    assert translated.meta["translation_engine"] == "llm_direct"
+    assert translated.meta["context_window_segments"] == 6
+    assert translated.meta["translation_flag_low_confidence"] is True
+    assert translated.meta["translation_flag_high_risk_content"] is True
     assert "Dialogue profile: live_action_adult" in captured["prompt"]
-    assert "do not euphemize or sanitize direct content" in captured["prompt"]
+    lowered_prompt = captured["prompt"].lower()
+    assert "do not euphemize or sanitize explicit content" in lowered_prompt
+    assert "do not add sexual content that is not present" in lowered_prompt
+    assert "[LOW_CONFIDENCE]" in captured["prompt"]
+    assert "[REVIEW_HIGH_RISK]" in captured["prompt"]
 
 
 def test_llm_direct_prompt_includes_context_and_accepts_only_current_output(monkeypatch):

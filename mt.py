@@ -59,16 +59,47 @@ def _translation_config(config: Config) -> Dict[str, Any]:
             return default
         return getter(*keys, default=default)
 
-    return {
+    settings = {
         "engine": _get("translation", "engine", default="marian"),
         "fallback_engine": _get("translation", "fallback_engine", default="marian"),
         "context_window_segments": _get("translation", "context_window_segments", default=4),
         "mode": _get("translation", "mode", default="accuracy_first"),
         "dialogue_profile": _get("translation", "dialogue_profile", default="default"),
+        "preserve_adult_register": bool(
+            _get("translation", "preserve_adult_register", default=False)
+        ),
+        "flag_low_confidence": bool(
+            _get("translation", "flag_low_confidence", default=False)
+        ),
+        "flag_high_risk_content": bool(
+            _get("translation", "flag_high_risk_content", default=False)
+        ),
         "timeout": _get("translation", "timeout", default=getattr(config, "llm_timeout", 30)),
         "workflow": _get("translation", "workflow", default="single_pass"),
         "save_intermediate": bool(_get("translation", "save_intermediate", default=False)),
     }
+    settings["dialogue_profile"] = _validate_dialogue_profile(settings["dialogue_profile"])
+    profile = settings["dialogue_profile"]
+    profile_preset = _get("translation", "profiles", profile, default={})
+    if isinstance(profile_preset, dict):
+        for key in (
+            "engine",
+            "fallback_engine",
+            "context_window_segments",
+            "mode",
+            "timeout",
+            "workflow",
+        ):
+            if profile_preset.get(key) is not None:
+                settings[key] = profile_preset[key]
+        for key in (
+            "preserve_adult_register",
+            "flag_low_confidence",
+            "flag_high_risk_content",
+        ):
+            if key in profile_preset:
+                settings[key] = bool(profile_preset.get(key))
+    return settings
 
 
 def _validate_engine(engine: str) -> str:
@@ -101,6 +132,9 @@ def _with_translation_meta(
     model: str,
     mode: str,
     dialogue_profile: str,
+    preserve_adult_register: bool = False,
+    flag_low_confidence: bool = False,
+    flag_high_risk_content: bool = False,
     fallback: bool = False,
     fallback_engine: Optional[str] = None,
     fallback_reason: Optional[str] = None,
@@ -111,6 +145,9 @@ def _with_translation_meta(
         "translation_model": model,
         "translation_mode": mode,
         "translation_dialogue_profile": dialogue_profile,
+        "translation_preserve_adult_register": preserve_adult_register,
+        "translation_flag_low_confidence": flag_low_confidence,
+        "translation_flag_high_risk_content": flag_high_risk_content,
         "translation_fallback": fallback,
         "fallback_engine": fallback_engine,
         "fallback_reason": fallback_reason,
@@ -353,6 +390,7 @@ class MarianTranslator:
         Preserves timing; returns a NEW candidate whose segments contain the
         translated text as `text`.
         """
+        tcfg = _translation_config(self.config)
         if not candidate.segments:
             return SubtitleCandidate(
                 id=f"{candidate.id}_mt",
@@ -366,10 +404,11 @@ class MarianTranslator:
                         candidate,
                         engine="marian",
                         model=self.config.mt_model_name,
-                        mode=_translation_config(self.config)["mode"],
-                        dialogue_profile=_validate_dialogue_profile(
-                            _translation_config(self.config)["dialogue_profile"]
-                        ),
+                        mode=tcfg["mode"],
+                        dialogue_profile=tcfg["dialogue_profile"],
+                        preserve_adult_register=tcfg["preserve_adult_register"],
+                        flag_low_confidence=tcfg["flag_low_confidence"],
+                        flag_high_risk_content=tcfg["flag_high_risk_content"],
                     ),
                 },
             )
@@ -400,7 +439,6 @@ class MarianTranslator:
             )
             for s, t in zip(candidate.segments, translations)
         ]
-        tcfg = _translation_config(self.config)
         return SubtitleCandidate(
             id=f"{candidate.id}_mt",
             language=target_language,
@@ -414,7 +452,10 @@ class MarianTranslator:
                     engine="marian",
                     model=self.config.mt_model_name,
                     mode=tcfg["mode"],
-                    dialogue_profile=_validate_dialogue_profile(tcfg["dialogue_profile"]),
+                    dialogue_profile=tcfg["dialogue_profile"],
+                    preserve_adult_register=tcfg["preserve_adult_register"],
+                    flag_low_confidence=tcfg["flag_low_confidence"],
+                    flag_high_risk_content=tcfg["flag_high_risk_content"],
                 ),
             },
         )
@@ -442,7 +483,10 @@ class LLMDirectTranslator:
         self.model_name = config.llm_model_name
         self.base_url = config.llm_base_url.rstrip("/")
         self.mode = tcfg["mode"]
-        self.dialogue_profile = _validate_dialogue_profile(tcfg["dialogue_profile"])
+        self.dialogue_profile = tcfg["dialogue_profile"]
+        self.preserve_adult_register = bool(tcfg["preserve_adult_register"])
+        self.flag_low_confidence = bool(tcfg["flag_low_confidence"])
+        self.flag_high_risk_content = bool(tcfg["flag_high_risk_content"])
         self.context_window_segments = int(tcfg["context_window_segments"])
         self.timeout = int(tcfg["timeout"])
 
@@ -459,13 +503,24 @@ class LLMDirectTranslator:
             instruction = "Translate into concise, natural English subtitle lines while preserving meaning."
         else:
             instruction = (
-            "Translate for maximum accuracy first, then make the English subtitle natural. "
-            "Do not omit, soften, sanitize, or add meaning."
-        )
-        if self.dialogue_profile == "live_action_adult":
+                "Translate for maximum accuracy first, then make the English subtitle natural. "
+                "Do not omit, soften, sanitize, or add meaning."
+            )
+        if self.dialogue_profile == "live_action_adult" and self.preserve_adult_register:
             instruction += (
-                " For live-action/adult dialogue, preserve explicit sexual/profane wording and register; "
-                "do not euphemize or sanitize direct content."
+                " For live-action/adult dialogue, preserve explicit sexual/profane wording, crude language, "
+                "hesitation, fragments, and speaker register. Do not euphemize or sanitize explicit content, "
+                "and do not add sexual content that is not present in the Japanese source."
+            )
+        if self.flag_low_confidence:
+            instruction += (
+                " If a line is uncertain due to unclear source/context, prefix the output with "
+                "'[LOW_CONFIDENCE]' instead of guessing."
+            )
+        if self.flag_high_risk_content:
+            instruction += (
+                " If content appears to describe real illegal material involving minors or coercion, "
+                "prefix with '[REVIEW_HIGH_RISK]' for manual review and do not normalize the content."
             )
         return instruction
 
@@ -619,6 +674,9 @@ class LLMDirectTranslator:
                     model=self.model_name,
                     mode=self.mode,
                     dialogue_profile=self.dialogue_profile,
+                    preserve_adult_register=self.preserve_adult_register,
+                    flag_low_confidence=self.flag_low_confidence,
+                    flag_high_risk_content=self.flag_high_risk_content,
                     extra=extra,
                 ),
             },

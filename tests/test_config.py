@@ -325,3 +325,9 @@ class TestDefaultConfigTranslationPlacement:
 
     def test_translation_dialogue_profile_is_present(self, default_cfg):
         assert default_cfg.translation_dialogue_profile == "default"
+
+    def test_live_action_adult_translation_profile_preset_is_present(self, default_cfg):
+        preset = default_cfg.get("translation", "profiles", "live_action_adult", default={})
+        assert preset.get("engine") == "llm_direct"
+        assert preset.get("workflow") == "literal_then_natural"
+        assert preset.get("context_window_segments") == 6
