@@ -209,6 +209,8 @@ def test_strategy_embedded_jp_mt():
     media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=True)
     meta = orch.run_generate(media, cfg)
     assert meta["strategy"] == "embedded_jp_mt", meta
+    assert meta["translation_qc"] is not None
+    assert "qc_status" in meta["translation_qc"]
     print("✓ embedded_jp_mt strategy chosen correctly")
 
 

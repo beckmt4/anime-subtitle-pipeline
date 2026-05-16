@@ -288,6 +288,19 @@ translation:
       flag_low_confidence: true
       flag_high_risk_content: true
 
+translation_qc:
+  warn_min_ratio: 0.45
+  fail_min_ratio: 0.25
+  warn_max_ratio: 1.8
+  fail_max_ratio: 2.8
+  warn_missing_keywords: 1
+  fail_missing_keywords: 2
+  warn_score_below: 0.80
+  fail_score_below: 0.55
+  llm_judge:
+    enabled: false              # optional local LLM semantic judge
+    timeout: 30
+
 generate:
   prefer_subtitles: true          # Prefer existing EN subs
   prefer_audio_language: "auto"   # "en" | "ja" | "auto"
@@ -331,6 +344,13 @@ and high-risk (`[REVIEW_HIGH_RISK]`) review flags. ASR warning density also redu
 candidate score and routes outputs to review at the configured policy threshold.
 SRT writing clamps adjacent cue timings to keep at least `subtitles.min_gap_sec`
 between cues.
+
+Translation-faithfulness QC (`translation_qc.run_translation_qc`) returns
+`pass|warn|fail`, a normalized score, and per-segment findings with codes such as
+`missing_final_line`, `non_english_leakage`, `possible_omission`,
+`possible_added_meaning`, `final_literal_entity_drift`, and `register_softened`.
+Generate-mode metadata includes this summary for translated outputs, and benchmark
+candidate metadata includes `translation_qc` summaries for JP-source candidates.
 
 Japanese-source translation is selected by `translation.engine`. `marian` is the
 offline baseline, `llm_direct` sends each source cue plus nearby context to the

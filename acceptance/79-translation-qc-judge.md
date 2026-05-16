@@ -2,42 +2,46 @@
 
 ## Implemented
 
-Translation judge heuristics are integrated directly into `subtitle_qc.run_qc()`
-via a `_add_translation_judge_warnings()` helper in `subtitle_qc.py`.  When the
-optional `candidate` parameter is provided, the following per-segment checks are
-applied before the ASR-warning passthrough:
+Translation faithfulness checks now run through a dedicated module:
+
+- `translation_qc.py` (`run_translation_qc`)
+
+The judge accepts:
+
+- Japanese source candidate
+- Optional literal English candidate
+- Final English candidate
+- Candidate metadata / config
+
+and emits structured candidate-level + segment-level summaries:
+
+- `candidate_id`
+- `qc_status` (`pass|warn|fail`)
+- `score` (0.0–1.0)
+- `findings[]` (per-segment findings with source/literal/final text)
+- `segment_results[]` (per-segment review requirement + status)
 
 | Check | Violation type | Severity |
 |---|---|---|
-| CJK characters remain in English output | `translation_possible_untranslated` | warning |
-| Translated cue is ≤ 30 % of source length (source ≥ 10 chars) | `translation_possible_omission` | warning |
-| Translated cue is ≥ 3.5× longer than a short source (source ≤ 8 chars, output ≥ 40 chars) | `translation_possible_added_meaning` | warning |
-| Adult-register Japanese markers present but no corresponding English markers under `live_action_adult` profile | `translation_possible_softened_adult_dialogue` | warning |
+| Missing or empty final line | `missing_final_line` | fail |
+| CJK characters remain in English output | `non_english_leakage` | warning |
+| Major final/baseline length drift | `possible_omission`, `possible_added_meaning` | warn/fail (config-driven) |
+| Final drops obvious literal terms/entities | `final_literal_entity_drift` | warn/fail (config-driven) |
+| Register appears softened vs source/literal | `register_softened` | warning |
+| Optional local-LLM judge findings | `<llm code>` | warning/fail |
 
-All checks are deterministic heuristics that require no external model or
-network call.  They emit `warning`-severity violations so `pass_qc` is not
-affected; the findings are included in the machine-readable QC summary for
-downstream review tooling.
+Warn/fail behavior is configurable in `config.yaml` under `translation_qc`.
 
-Source text used in the ratio checks is read from
-`segment.meta["source_text_ja"]` (set by both MarianMT and LLM direct
-translation engines) or `segment.meta["source_text"]` as a fallback.
-
-The `translation_dialogue_profile` value is read from `candidate.meta` and
-controls whether the softened-adult-dialogue check runs.
+Generate mode now includes `translation_qc` metadata for translated outputs.
+Benchmark candidate metadata now includes `translation_qc` summaries for
+JP-source translated candidates.
 
 ## Tests
 
+- `tests/test_translation_qc.py`
+  - `test_translation_qc_pass_case`
+  - `test_translation_qc_warn_case_for_possible_omission`
+  - `test_translation_qc_fail_case_for_empty_final_line`
+  - `test_translation_qc_uses_mocked_llm_judge`
 - `tests/test_translation_qc_judge.py`
-  - `test_qc_flags_possible_omission_for_short_translation`
-  - `test_qc_flags_possible_added_meaning_for_overlong_translation`
-  - `test_qc_flags_softened_adult_dialogue_for_live_action_profile`
-  - `test_qc_flags_untranslated_output_when_cjk_present`
-
-## Deferred
-
-- Optional local LLM judge path behind config for semantic equivalence scoring.
-- Named-entity drift detection between intermediate and final translation.
-- Per-candidate `qc_status` / `score` aggregate field (findings are currently
-  surfaced as violations in the existing QC summary schema).
-- Full manual review UI.
+  - existing subtitle-QC translation warning coverage remains in place

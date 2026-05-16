@@ -268,6 +268,7 @@ def test_benchmark_can_compare_translation_engines():
     ]
     assert len(engine_candidates) == 4, engine_candidates
     assert {c["translation_engine"] for c in engine_candidates} == {"marian", "llm_direct"}
+    assert all("translation_qc" in c for c in engine_candidates)
 
 
 def run_all_generalized_tests():

@@ -25,6 +25,7 @@ from mt import translate_candidate_jp_to_en
 from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candidate
 from models import SubtitleCandidate
 from compare_core import compare_candidates
+from translation_qc import run_translation_qc
 from tracing import start_span
 
 logger = logging.getLogger(__name__)
@@ -207,6 +208,12 @@ def run_benchmark(
             else:
                 final_cand = mt_cand
                 source_desc = f"embedded_mt_{engine}"
+            translation_qc = run_translation_qc(
+                final_cand,
+                source_candidate=ja_cand,
+                candidate_metadata=final_cand.meta,
+                config=config,
+            )
             candidates.append(final_cand)
             candidate_metadata.append({
                 "id": final_cand.id,
@@ -218,6 +225,7 @@ def run_benchmark(
                 "translation_model": final_cand.meta.get("translation_model") or final_cand.meta.get("model"),
                 "translation_mode": final_cand.meta.get("translation_mode"),
                 "translation_fallback": final_cand.meta.get("translation_fallback", False),
+                "translation_qc": translation_qc,
             })
             logger.info("  → %s: %d segments", final_cand.id, final_cand.segment_count)
 
@@ -277,6 +285,12 @@ def run_benchmark(
             else:
                 final_cand = mt_cand
                 source_desc = f"asr_mt_{engine}"
+            translation_qc = run_translation_qc(
+                final_cand,
+                source_candidate=ja_asr_candidate,
+                candidate_metadata=final_cand.meta,
+                config=config,
+            )
             candidates.append(final_cand)
             candidate_metadata.append({
                 "id": final_cand.id,
@@ -288,6 +302,7 @@ def run_benchmark(
                 "translation_model": final_cand.meta.get("translation_model") or final_cand.meta.get("model"),
                 "translation_mode": final_cand.meta.get("translation_mode"),
                 "translation_fallback": final_cand.meta.get("translation_fallback", False),
+                "translation_qc": translation_qc,
             })
             logger.info("  → %s: %d segments", final_cand.id, final_cand.segment_count)
         if ja_audio_path.exists():

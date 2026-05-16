@@ -46,6 +46,7 @@ from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candida
 from srt_writer import write_candidate_srt
 from models import SubtitleCandidate
 from subtitle_qc import run_qc
+from translation_qc import run_translation_qc
 from tracing import start_span
 import uuid
 from typing import Optional
@@ -1403,8 +1404,10 @@ def run_generate(
     try:
         strategy = None
         candidate: SubtitleCandidate | None = None
+        translation_source_candidate: SubtitleCandidate | None = None
         _final_db_id: Optional[int] = None
         polish_stats: Dict[str, Any] | None = None
+        translation_qc_summary: Dict[str, Any] | None = None
 
         # Decision tree
         if prefer_subtitles and en_sub_idx is not None:
@@ -1447,6 +1450,7 @@ def run_generate(
             with start_span("extract_embedded_jp"):
                 ja_candidate = extract_subtitle_track(video_path, ja_sub_idx, language="ja",
                                                       output_dir=Path(cfg.get_path("temp")))
+            translation_source_candidate = ja_candidate
             _ja_db_id = _reg_store_candidate(
                 registry, media_hash, ja_candidate, source="embedded",
             )
@@ -1518,6 +1522,7 @@ def run_generate(
                             "overrode missing or conflicting container metadata"
                         ),
                     )
+            translation_source_candidate = ja_asr_candidate
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:
@@ -1637,6 +1642,7 @@ def run_generate(
                         f"selection reason: {_fallback_reason}"
                     ),
                 )
+            translation_source_candidate = ja_asr_candidate
             try:
                 audio_path.unlink(missing_ok=True)
             except PermissionError:
@@ -1715,6 +1721,14 @@ def run_generate(
                 max_lines=cfg.llm_max_lines,
             )
 
+        if strategy in {"embedded_jp_mt", "ja_audio_asr_mt", "untagged_audio_asr_mt"}:
+            translation_qc_summary = run_translation_qc(
+                candidate,
+                source_candidate=translation_source_candidate,
+                candidate_metadata=candidate.meta,
+                config=cfg,
+            )
+
         asr_quality = _asr_quality_summary(candidate)
         low_confidence_count = asr_quality.get("low_confidence_segment_count", 0)
         if low_confidence_count:
@@ -1761,6 +1775,7 @@ def run_generate(
             "segment_count": candidate.segment_count,
             "output_srt": str(out_srt),
             "qc": qc_summary,
+            "translation_qc": translation_qc_summary,
             "qc_json": str(qc_path),
             "selection_report": selection_report,
             "candidate_score": candidate_score,
