@@ -14,8 +14,16 @@
   - Accepts an optional `baseline_candidate` (used by the `hybrid` engine path)
     and includes the baseline MarianMT translation in the prompt for reference.
   - Retries failed LLM requests up to two times before raising.
+  - Validates Ollama payload shape and rejects malformed payloads.
+  - Rejects non-English/CJK output and empty output, then fails safely.
+  - Normalizes multi-line/model-labeled replies and accepts only the current
+    segment translation line.
   - Returns a structured `SubtitleCandidate` whose segment timing is preserved
     exactly from the source candidate.
+- Added `llm_translate.py` compatibility module exposing:
+  - `LLMTranslator` alias
+  - `LLMDirectTranslator`
+  - `translate_candidate(...)` convenience API
 - Translation metadata recorded in candidate `meta`:
   - `translation_engine` (`llm_direct`)
   - `translation_model` (LLM model name)
@@ -37,7 +45,9 @@
   - LLM direct selector metadata
   - LLM direct fallback to Marian with explicit metadata
   - Hybrid baseline plus LLM output
-  - Context window sent in prompt (live-action profile test captures prompt)
+  - Context window + previous accepted English sent in prompt
+  - Only current-segment output accepted from multi-line/model-labeled responses
+  - Deterministic fallback tests for timeout, empty, malformed, and non-English output
   - Invalid engine configuration raises `InvalidTranslationEngineError`
 
 ## Deferred

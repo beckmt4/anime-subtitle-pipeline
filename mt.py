@@ -22,6 +22,7 @@ from transformers import MarianMTModel, MarianTokenizer
 from asr import Segment  # legacy Segment (for backward compatibility wrappers)
 from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
+from packs.language.ja_en.cjk_filter import has_cjk_leak
 
 logger = logging.getLogger(__name__)
 
@@ -480,11 +481,17 @@ class LLMDirectTranslator:
         candidate: SubtitleCandidate,
         index: int,
         baseline_text: Optional[str] = None,
+        previous_english_text: Optional[str] = None,
     ) -> str:
         source_text = candidate.segments[index].text
         baseline_block = (
             f"\nBaseline MarianMT translation:\n{baseline_text}\n"
             if baseline_text is not None
+            else ""
+        )
+        previous_english_block = (
+            f"\nPrevious accepted English output:\n{previous_english_text}\n"
+            if previous_english_text
             else ""
         )
         return (
@@ -495,9 +502,22 @@ class LLMDirectTranslator:
             "Context segments. Translate only the line marked with >>.\n"
             f"{self._context_for_index(candidate, index)}\n"
             f"{baseline_block}\n"
+            f"{previous_english_block}\n"
             "Return only the English translation for this one subtitle cue.\n"
             f"Japanese cue:\n{source_text}"
         )
+
+    @staticmethod
+    def _extract_translation_text(raw_text: str) -> str:
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        if not lines:
+            raise RuntimeError("LLM direct translation returned empty response")
+        text = lines[0]
+        if ":" in text:
+            label, maybe_translation = text.split(":", 1)
+            if label.strip().lower() in {"translation", "english", "output"} and maybe_translation.strip():
+                text = maybe_translation.strip()
+        return text
 
     def _generate_text(self, prompt: str, retry_count: int = 2) -> str:
         payload = {
@@ -509,6 +529,7 @@ class LLMDirectTranslator:
                 "top_p": self.config.get("llm", "top_p", default=0.9),
             },
         }
+        last_error: Optional[str] = None
         for attempt in range(retry_count + 1):
             try:
                 response = requests.post(
@@ -517,16 +538,25 @@ class LLMDirectTranslator:
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
-                text = str(response.json().get("response", "")).strip()
-                if not text:
-                    raise RuntimeError("LLM direct translation returned empty response")
+                response_data = response.json()
+                if not isinstance(response_data, dict) or not isinstance(response_data.get("response"), str):
+                    raise RuntimeError("LLM direct translation returned malformed response payload")
+                text = self._extract_translation_text(response_data["response"])
+                if has_cjk_leak(text):
+                    raise RuntimeError("LLM direct translation returned non-English output")
                 return text
             except requests.Timeout:
                 logger.warning("LLM direct request timeout (attempt %d/%d)", attempt + 1, retry_count + 1)
+                last_error = "request timeout"
             except Exception as e:
                 logger.warning("LLM direct request failed (attempt %d/%d): %s", attempt + 1, retry_count + 1, e)
+                last_error = str(e)
             if attempt < retry_count:
                 time.sleep(1)
+        if last_error:
+            raise RuntimeError(
+                f"LLM direct translation failed after {retry_count + 1} attempts: {last_error}"
+            )
         raise RuntimeError(f"LLM direct translation failed after {retry_count + 1} attempts")
 
     def translate_candidate(
@@ -544,7 +574,13 @@ class LLMDirectTranslator:
             baseline_text = None
             if baseline_candidate is not None and i < len(baseline_candidate.segments):
                 baseline_text = baseline_candidate.segments[i].text
-            prompt = self._build_prompt(candidate, i, baseline_text=baseline_text)
+            previous_english_text = next((t for t in reversed(translations) if t.strip()), None)
+            prompt = self._build_prompt(
+                candidate,
+                i,
+                baseline_text=baseline_text,
+                previous_english_text=previous_english_text,
+            )
             translations.append(self._generate_text(prompt))
 
         new_segments = [
@@ -569,7 +605,7 @@ class LLMDirectTranslator:
         return SubtitleCandidate(
             id=f"{candidate.id}_{engine_name}",
             language=target_language,
-            source="mt",
+            source="llm_translate",
             origin_stream=candidate.origin_stream,
             segments=new_segments,
             meta={

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import requests
 
 from config import Config
 from models import Segment, SubtitleCandidate
@@ -67,6 +68,7 @@ def test_llm_direct_engine_records_metadata(monkeypatch):
     translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
 
     assert translated.id == "embedded_ja_s1_llm_direct"
+    assert translated.source == "llm_translate"
     assert translated.meta["translation_engine"] == "llm_direct"
     assert translated.meta["translation_model"]
     assert translated.meta["translation_dialogue_profile"] == "default"
@@ -139,3 +141,116 @@ def test_live_action_adult_profile_updates_prompt_and_metadata(monkeypatch):
     assert translated.meta["translation_dialogue_profile"] == "live_action_adult"
     assert "Dialogue profile: live_action_adult" in captured["prompt"]
     assert "do not euphemize or sanitize direct content" in captured["prompt"]
+
+
+def test_llm_direct_prompt_includes_context_and_accepts_only_current_output(monkeypatch):
+    prompts = []
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": "Translation: focused output\nextra explanation that must be ignored"}
+
+    def fake_post(url, json, timeout):
+        prompts.append(json["prompt"])
+        return _Response()
+
+    monkeypatch.setattr(mt.requests, "post", fake_post)
+
+    translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
+
+    assert len(prompts) == 2
+    assert ">> 1: こんにちは" in prompts[0]
+    assert "  2: 世界" in prompts[0]
+    assert ">> 2: 世界" in prompts[1]
+    assert "  1: こんにちは" in prompts[1]
+    assert "Previous accepted English output:\nfocused output" in prompts[1]
+    assert translated.segments[0].text == "focused output"
+    assert translated.segments[1].text == "focused output"
+
+
+def test_llm_direct_timeout_falls_back_to_marian(monkeypatch):
+    monkeypatch.setattr(
+        mt.MarianTranslator,
+        "translate_batch",
+        lambda self, texts: [f"fallback:{text}" for text in texts],
+    )
+    monkeypatch.setattr(
+        mt.requests,
+        "post",
+        lambda *args, **kwargs: (_ for _ in ()).throw(requests.Timeout()),
+    )
+
+    translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
+
+    assert translated.meta["translation_fallback"] is True
+    assert "failed after" in translated.meta["fallback_reason"]
+    assert translated.segments[0].text == "fallback:こんにちは"
+
+
+def test_llm_direct_empty_response_falls_back_to_marian(monkeypatch):
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": "   "}
+
+    monkeypatch.setattr(
+        mt.MarianTranslator,
+        "translate_batch",
+        lambda self, texts: [f"fallback:{text}" for text in texts],
+    )
+    monkeypatch.setattr(mt.requests, "post", lambda *args, **kwargs: _Response())
+
+    translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
+
+    assert translated.meta["translation_fallback"] is True
+    assert "empty response" in translated.meta["fallback_reason"]
+    assert translated.segments[0].text == "fallback:こんにちは"
+
+
+def test_llm_direct_malformed_response_falls_back_to_marian(monkeypatch):
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"unexpected": "shape"}
+
+    monkeypatch.setattr(
+        mt.MarianTranslator,
+        "translate_batch",
+        lambda self, texts: [f"fallback:{text}" for text in texts],
+    )
+    monkeypatch.setattr(mt.requests, "post", lambda *args, **kwargs: _Response())
+
+    translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
+
+    assert translated.meta["translation_fallback"] is True
+    assert "malformed response payload" in translated.meta["fallback_reason"]
+    assert translated.segments[0].text == "fallback:こんにちは"
+
+
+def test_llm_direct_non_english_response_falls_back_to_marian(monkeypatch):
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": "日本語のままです"}
+
+    monkeypatch.setattr(
+        mt.MarianTranslator,
+        "translate_batch",
+        lambda self, texts: [f"fallback:{text}" for text in texts],
+    )
+    monkeypatch.setattr(mt.requests, "post", lambda *args, **kwargs: _Response())
+
+    translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
+
+    assert translated.meta["translation_fallback"] is True
+    assert "non-English output" in translated.meta["fallback_reason"]
+    assert translated.segments[0].text == "fallback:こんにちは"
