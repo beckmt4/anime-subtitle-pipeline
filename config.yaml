@@ -78,6 +78,8 @@ translation:
   mode: "accuracy_first"          # literal | natural_subtitle | accuracy_first
   dialogue_profile: "default"     # default | live_action_adult
   timeout: 60                     # seconds for LLM direct translation calls
+  workflow: "single_pass"         # single_pass | literal_then_natural
+  save_intermediate: false        # save literal-pass segments in candidate metadata
 
 # LLM Polishing (Optional)
 llm:
@@ -126,6 +128,18 @@ llm:
       4. Keep honorifics and cultural terms when important.
       5. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances. Romanize honorifics (e.g., "san", "sensei") instead of using kanji/kana.
       6. ONLY return the improved English subtitle text, nothing else.
+
+    natural_from_literal: |
+      You are a professional subtitle editor. You are given a literal English translation of Japanese dialogue. Your task is to adapt it into natural, readable subtitle text while preserving its exact meaning.
+
+      Rules:
+      1. Keep the exact meaning from the literal translation — do NOT add, remove, soften, or change any content.
+      2. Make the phrasing natural and conversational in English.
+      3. Keep to {max_lines} lines maximum, ~{max_chars_per_line} characters per line.
+      4. Preserve all names, honorifics, and cultural terms from the literal translation.
+      5. Preserve register and tone — if the literal translation is blunt or formal, keep it that way.
+      6. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances.
+      7. ONLY return the adapted English subtitle text, nothing else.
 
 # Subtitle formatting
 subtitles:
