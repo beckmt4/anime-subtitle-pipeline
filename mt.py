@@ -808,11 +808,42 @@ def translate_candidate_jp_to_en(
     return translate_candidate(candidate, config, engine=engine, target_language="en")
 
 
+def translate_candidate_jp_to_en_workflow(
+    candidate: SubtitleCandidate,
+    config: Config,
+    engine: Optional[str] = None,
+    ja_candidate: Optional[SubtitleCandidate] = None,
+) -> SubtitleCandidate:
+    """Translate JP→EN using the configured translation.workflow selector."""
+    workflow = str(_translation_config(config).get("workflow", "single_pass")).strip().lower()
+    if workflow not in VALID_TRANSLATION_WORKFLOWS:
+        logger.warning(
+            "Unknown translation.workflow=%r; expected one of %s. Falling back to single_pass.",
+            workflow,
+            ", ".join(sorted(VALID_TRANSLATION_WORKFLOWS)),
+        )
+        workflow = "single_pass"
+
+    if workflow == "literal_then_natural":
+        return run_two_pass_translation(
+            candidate,
+            config,
+            ja_candidate=ja_candidate,
+            target_language="en",
+            engine=engine,
+        )
+
+    translated = translate_candidate_jp_to_en(candidate, config, engine=engine)
+    translated.meta.setdefault("translation_workflow", "single_pass")
+    return translated
+
+
 def run_two_pass_translation(
     candidate: SubtitleCandidate,
     config: Config,
     ja_candidate: Optional[SubtitleCandidate] = None,
     target_language: str = "en",
+    engine: Optional[str] = None,
 ) -> SubtitleCandidate:
     """Run the literal-first / natural-second two-pass translation workflow.
 
@@ -849,6 +880,7 @@ def run_two_pass_translation(
     literal_candidate = translate_candidate(
         candidate,
         config,
+        engine=engine,
         target_language=target_language,
     )
     literal_candidate.meta["translation_pass"] = "literal"
@@ -912,6 +944,7 @@ __all__ = [
     "translate_candidate",
     "translate_segments_ja_to_en",
     "translate_candidate_jp_to_en",
+    "translate_candidate_jp_to_en_workflow",
     "run_two_pass_translation",
     "BatchTranslator",
 ]

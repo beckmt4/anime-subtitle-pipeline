@@ -90,6 +90,21 @@ def dummy_translate_candidate_jp_to_en(cand: SubtitleCandidate, config: Config, 
     )
 
 
+def dummy_translate_candidate_jp_to_en_workflow(
+    cand: SubtitleCandidate,
+    config: Config,
+    engine=None,
+    ja_candidate=None,
+):
+    translated = dummy_translate_candidate_jp_to_en(cand, config, engine=engine)
+    workflow = config.get("translation", "workflow", default="single_pass")
+    translated.meta["translation_workflow"] = workflow
+    if workflow == "literal_then_natural":
+        translated.id = f"{translated.id}_natural"
+        translated.source = "two_pass_llm"
+    return translated
+
+
 def dummy_polish_candidate_with_llm(cand: SubtitleCandidate, config: Config):
     return SubtitleCandidate(
         id=cand.id + "_llm",
@@ -117,7 +132,7 @@ def dummy_extract_audio_with_ffmpeg(video_path: str, out_path: str, audio_order:
 def _install_monkeypatches():
     bm.inspect_media = lambda path: _SYNTH_MEDIA
     bm.extract_subtitle_track = dummy_extract_subtitle_track
-    bm.translate_candidate_jp_to_en = dummy_translate_candidate_jp_to_en
+    bm.translate_candidate_jp_to_en_workflow = dummy_translate_candidate_jp_to_en_workflow
     bm.polish_candidate_with_llm = dummy_polish_candidate_with_llm
     bm.enforce_constraints_on_candidate = dummy_enforce_constraints_on_candidate
     bm.extract_audio_with_ffmpeg = dummy_extract_audio_with_ffmpeg
@@ -269,6 +284,68 @@ def test_benchmark_can_compare_translation_engines():
     assert len(engine_candidates) == 4, engine_candidates
     assert {c["translation_engine"] for c in engine_candidates} == {"marian", "llm_direct"}
     assert all("translation_qc" in c for c in engine_candidates)
+    assert all(c.get("translation_workflow") == "single_pass" for c in engine_candidates)
+
+
+def test_benchmark_records_workflow_metadata_for_jp_candidates():
+    """JP-derived benchmark candidates should include translation_workflow metadata."""
+    _install_monkeypatches()
+    cfg = Config()
+    cfg._config.setdefault("translation", {})
+    cfg._config["translation"]["workflow"] = "single_pass"
+    cfg._config.setdefault("benchmark", {})
+    cfg._config["benchmark"].update({
+        "sources": {
+            "use_embedded_en": True,
+            "use_embedded_jp": True,
+            "use_en_audio": False,
+            "use_ja_audio": True,
+        },
+        "translation_engines": ["marian"],
+        "reference_priority": ["embedded_en", "embedded_jp_mt", "ja_audio_asr_mt"],
+        "compare_all_pairs": False,
+    })
+
+    dummy_video = Path("temp/test_video_workflow_metadata.mkv")
+    dummy_video.parent.mkdir(parents=True, exist_ok=True)
+    dummy_video.write_bytes(b"00")
+
+    results = bm.run_benchmark(str(dummy_video), cfg, use_llm=False)
+
+    jp_candidates = [c for c in results["candidates"] if c["source"].startswith(("embedded_mt_", "asr_mt_"))]
+    assert jp_candidates, "Expected JP-derived candidates in benchmark results"
+    assert all(c.get("translation_workflow") == "single_pass" for c in jp_candidates), jp_candidates
+
+
+def test_benchmark_two_pass_skips_generic_llm_polish_by_default():
+    """literal_then_natural should not be followed by generic benchmark LLM polish unless opted in."""
+    _install_monkeypatches()
+    cfg = Config()
+    cfg._config.setdefault("translation", {})
+    cfg._config["translation"]["workflow"] = "literal_then_natural"
+    cfg._config.setdefault("benchmark", {})
+    cfg._config["benchmark"].update({
+        "sources": {
+            "use_embedded_en": True,
+            "use_embedded_jp": True,
+            "use_en_audio": False,
+            "use_ja_audio": True,
+        },
+        "translation_engines": ["marian"],
+        "reference_priority": ["embedded_en", "embedded_jp_mt", "ja_audio_asr_mt"],
+        "compare_all_pairs": False,
+    })
+
+    dummy_video = Path("temp/test_video_two_pass_workflow.mkv")
+    dummy_video.parent.mkdir(parents=True, exist_ok=True)
+    dummy_video.write_bytes(b"00")
+
+    results = bm.run_benchmark(str(dummy_video), cfg, use_llm=True)
+
+    jp_candidates = [c for c in results["candidates"] if c["source"].startswith(("embedded_mt_", "asr_mt_"))]
+    assert jp_candidates, "Expected JP-derived candidates in benchmark results"
+    assert all(c.get("translation_workflow") == "literal_then_natural" for c in jp_candidates), jp_candidates
+    assert all(not c["source"].endswith("_llm") for c in jp_candidates), jp_candidates
 
 
 def run_all_generalized_tests():

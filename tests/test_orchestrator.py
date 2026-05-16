@@ -88,6 +88,21 @@ def stub_translate_candidate_jp_to_en(cand: SubtitleCandidate, cfg: Config):
     )
 
 
+def stub_translate_candidate_jp_to_en_workflow(
+    cand: SubtitleCandidate,
+    cfg: Config,
+    engine=None,
+    ja_candidate=None,
+):
+    translated = stub_translate_candidate_jp_to_en(cand, cfg)
+    workflow = cfg.get("translation", "workflow", default="single_pass")
+    translated.meta["translation_workflow"] = workflow
+    if workflow == "literal_then_natural":
+        translated.id = f"{translated.id}_natural"
+        translated.source = "two_pass_llm"
+    return translated
+
+
 def stub_polish_candidate_with_llm(cand: SubtitleCandidate, cfg: Config, **kwargs):
     return SubtitleCandidate(
         id=cand.id + "_llm",
@@ -150,6 +165,7 @@ orch.extract_audio_with_ffmpeg = stub_extract_audio_with_ffmpeg
 orch.FasterWhisperASR = DummyASR
 orch.build_candidate_from_segments = stub_build_candidate_from_segments
 orch.translate_candidate_jp_to_en = stub_translate_candidate_jp_to_en
+orch.translate_candidate_jp_to_en_workflow = stub_translate_candidate_jp_to_en_workflow
 orch.polish_candidate_with_llm = stub_polish_candidate_with_llm
 orch.enforce_constraints_on_candidate = stub_enforce_constraints_on_candidate
 orch.write_candidate_srt = stub_write_candidate_srt
@@ -935,6 +951,45 @@ def test_no_polish_status_for_non_mt_strategies():
     print("✓ polish_status absent for strategies that skip LLM polish")
 
 
+def test_two_pass_workflow_skips_generic_post_mt_polish_by_default():
+    """literal_then_natural should not be polished again by generic post-MT LLM pass."""
+    cfg = Config()
+    cfg._config.setdefault("translation", {})
+    cfg._config["translation"]["workflow"] = "literal_then_natural"
+    media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=False)
+
+    original_stub = orch.polish_candidate_with_llm
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Generic LLM polish must be skipped for literal_then_natural workflow")
+
+    orch.polish_candidate_with_llm = forbidden
+    try:
+        meta = orch.run_generate(media, cfg)
+    finally:
+        orch.polish_candidate_with_llm = original_stub
+
+    assert meta["strategy"] == "embedded_jp_mt"
+    assert meta.get("translation_workflow") == "literal_then_natural", meta
+    assert "polish_status" not in meta, meta
+
+
+def test_two_pass_workflow_can_opt_in_generic_post_mt_polish():
+    """allow_post_two_pass_llm should enable an explicit second polishing pass."""
+    cfg = Config()
+    cfg._config.setdefault("translation", {})
+    cfg._config["translation"]["workflow"] = "literal_then_natural"
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["allow_post_two_pass_llm"] = True
+    media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=False)
+
+    meta = orch.run_generate(media, cfg)
+
+    assert meta["strategy"] == "embedded_jp_mt"
+    assert meta.get("translation_workflow") == "literal_then_natural", meta
+    assert meta.get("polish_status") == "changed", meta
+
+
 # ---------------------------------------------------------------------------
 # Explainable source-selection report tests (issue #52 / #20)
 # ---------------------------------------------------------------------------
@@ -1187,7 +1242,7 @@ def test_inspect_only_embedded_jp_mt_skips_mt_llm_and_writes():
     media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=False)
     originals = (
         orch.extract_subtitle_track,
-        orch.translate_candidate_jp_to_en,
+        orch.translate_candidate_jp_to_en_workflow,
         orch.polish_candidate_with_llm,
         orch.write_candidate_srt,
     )
@@ -1197,7 +1252,7 @@ def test_inspect_only_embedded_jp_mt_skips_mt_llm_and_writes():
 
     (
         orch.extract_subtitle_track,
-        orch.translate_candidate_jp_to_en,
+        orch.translate_candidate_jp_to_en_workflow,
         orch.polish_candidate_with_llm,
         orch.write_candidate_srt,
     ) = (forbidden, forbidden, forbidden, forbidden)
@@ -1206,7 +1261,7 @@ def test_inspect_only_embedded_jp_mt_skips_mt_llm_and_writes():
     finally:
         (
             orch.extract_subtitle_track,
-            orch.translate_candidate_jp_to_en,
+            orch.translate_candidate_jp_to_en_workflow,
             orch.polish_candidate_with_llm,
             orch.write_candidate_srt,
         ) = originals
@@ -1223,7 +1278,7 @@ def test_inspect_only_ja_audio_skips_asr_mt_llm_and_writes():
     originals = (
         orch.extract_audio_with_ffmpeg,
         orch.FasterWhisperASR,
-        orch.translate_candidate_jp_to_en,
+        orch.translate_candidate_jp_to_en_workflow,
         orch.polish_candidate_with_llm,
         orch.write_candidate_srt,
     )
@@ -1234,7 +1289,7 @@ def test_inspect_only_ja_audio_skips_asr_mt_llm_and_writes():
     (
         orch.extract_audio_with_ffmpeg,
         orch.FasterWhisperASR,
-        orch.translate_candidate_jp_to_en,
+        orch.translate_candidate_jp_to_en_workflow,
         orch.polish_candidate_with_llm,
         orch.write_candidate_srt,
     ) = (forbidden, forbidden, forbidden, forbidden, forbidden)
@@ -1244,7 +1299,7 @@ def test_inspect_only_ja_audio_skips_asr_mt_llm_and_writes():
         (
             orch.extract_audio_with_ffmpeg,
             orch.FasterWhisperASR,
-            orch.translate_candidate_jp_to_en,
+            orch.translate_candidate_jp_to_en_workflow,
             orch.polish_candidate_with_llm,
             orch.write_candidate_srt,
         ) = originals

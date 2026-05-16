@@ -642,3 +642,39 @@ class TestValidTranslationWorkflows:
     def test_constant_contains_expected_values(self):
         assert "single_pass" in mt.VALID_TRANSLATION_WORKFLOWS
         assert "literal_then_natural" in mt.VALID_TRANSLATION_WORKFLOWS
+
+
+class TestTranslateCandidateJPToENWorkflowSelector:
+    def test_single_pass_uses_single_pass_translator(self):
+        ja = _ja_candidate(["日本語"])
+        cfg = _cfg(workflow="single_pass")
+        single = _en_candidate(["Single."], id="single")
+
+        with patch("mt.translate_candidate_jp_to_en", return_value=single) as mock_single, \
+             patch("mt.run_two_pass_translation") as mock_two_pass:
+            result = mt.translate_candidate_jp_to_en_workflow(ja, cfg)
+
+        assert result is single
+        mock_single.assert_called_once_with(ja, cfg, engine=None)
+        mock_two_pass.assert_not_called()
+        assert result.meta["translation_workflow"] == "single_pass"
+
+    def test_literal_then_natural_uses_two_pass_and_forwards_engine(self):
+        ja = _ja_candidate(["日本語"])
+        cfg = _cfg(workflow="literal_then_natural")
+        two_pass = _en_candidate(["Natural."], id="two_pass")
+        two_pass.meta["translation_workflow"] = "literal_then_natural"
+
+        with patch("mt.run_two_pass_translation", return_value=two_pass) as mock_two_pass, \
+             patch("mt.translate_candidate_jp_to_en") as mock_single:
+            result = mt.translate_candidate_jp_to_en_workflow(ja, cfg, engine="llm_direct", ja_candidate=ja)
+
+        assert result is two_pass
+        mock_two_pass.assert_called_once_with(
+            ja,
+            cfg,
+            ja_candidate=ja,
+            target_language="en",
+            engine="llm_direct",
+        )
+        mock_single.assert_not_called()
