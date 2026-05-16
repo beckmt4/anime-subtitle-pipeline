@@ -479,6 +479,195 @@ Improve the English subtitle:"""
             },
         )
 
+    def adapt_candidate_from_literal(
+        self,
+        literal_candidate: SubtitleCandidate,
+        ja_candidate: Optional[SubtitleCandidate] = None,
+    ) -> SubtitleCandidate:
+        """Adapt a literal-pass candidate into natural subtitle text (Pass 2).
+
+        Takes the output of Pass 1 (literal translation) and produces readable
+        subtitle English while preserving exact meaning.  Drift detection
+        compares the natural output against the literal input; diverging
+        segments revert to the literal text with a ``two_pass_qc_warning``
+        meta key so review tooling can surface them.
+
+        A stock-phrase collapse guard also applies: if the LLM collapses all
+        segments into the same generic phrase the entire batch reverts to the
+        literal pass.
+
+        Args:
+            literal_candidate: Literal-pass SubtitleCandidate from Pass 1.
+            ja_candidate: Optional Japanese source candidate.  When segment
+                counts align, each segment's Japanese text is included in the
+                LLM prompt as additional context.
+        """
+        if not literal_candidate.segments:
+            return SubtitleCandidate(
+                id=f"{literal_candidate.id}_natural",
+                language=literal_candidate.language,
+                source="two_pass_llm",
+                origin_stream=literal_candidate.origin_stream,
+                segments=[],
+                meta={
+                    "polisher_model": self.model_name,
+                    "translation_workflow": "literal_then_natural",
+                    "literal_pass_candidate_id": literal_candidate.id,
+                    **_copy_asr_candidate_meta(literal_candidate),
+                },
+            )
+
+        if not self.config.llm_enabled or not self.check_connection():
+            logger.info(
+                "LLM disabled/unreachable; returning literal candidate as natural adaptation fallback"
+            )
+            passthrough_segments = [
+                GenericSegment(s.start, s.end, s.text, meta=dict(s.meta))
+                for s in literal_candidate.segments
+            ]
+            return SubtitleCandidate(
+                id=f"{literal_candidate.id}_natural",
+                language=literal_candidate.language,
+                source="two_pass_llm",
+                origin_stream=literal_candidate.origin_stream,
+                segments=passthrough_segments,
+                meta={
+                    "polisher_model": self.model_name,
+                    "translation_workflow": "literal_then_natural",
+                    "literal_pass_candidate_id": literal_candidate.id,
+                    "fallback": True,
+                    **_copy_asr_candidate_meta(literal_candidate),
+                },
+            )
+
+        # Build per-segment (text_ja, text_literal) pairs
+        ja_texts: List[str] = []
+        if (
+            ja_candidate is not None
+            and len(ja_candidate.segments) == len(literal_candidate.segments)
+        ):
+            ja_texts = [s.text for s in ja_candidate.segments]
+            logger.debug(
+                "adapt_candidate_from_literal: using %d Japanese source segments for context",
+                len(ja_texts),
+            )
+        else:
+            if ja_candidate is not None:
+                logger.warning(
+                    "adapt_candidate_from_literal: ja_candidate segment count (%d) != "
+                    "literal_candidate segment count (%d); ignoring Japanese context",
+                    len(ja_candidate.segments),
+                    len(literal_candidate.segments),
+                )
+            ja_texts = [""] * len(literal_candidate.segments)
+
+        literal_texts: List[str] = [s.text for s in literal_candidate.segments]
+        adapted_texts: List[str] = []
+
+        for s, text_ja in zip(literal_candidate.segments, ja_texts):
+            adapted = self.polish_text(
+                text_ja=text_ja,
+                text_en_raw=s.text,
+                style="natural_from_literal",
+            )
+            adapted_texts.append(adapted)
+
+        # Stock-phrase collapse guard
+        if _is_stock_phrase_collapse(literal_texts, adapted_texts):
+            logger.warning(
+                "Two-pass LLM adaptation: stock-phrase collapse detected across %d segment(s) "
+                "(%r); reverting all to literal pass.",
+                len(literal_candidate.segments),
+                adapted_texts[0] if adapted_texts else "",
+            )
+            passthrough_segments = [
+                GenericSegment(s.start, s.end, s.text, meta=dict(s.meta))
+                for s in literal_candidate.segments
+            ]
+            stats = PolishStats(
+                total=len(literal_candidate.segments),
+                polished=0,
+                reverted=len(literal_candidate.segments),
+                unchanged=0,
+            )
+            return SubtitleCandidate(
+                id=f"{literal_candidate.id}_natural",
+                language=literal_candidate.language,
+                source="two_pass_llm",
+                origin_stream=literal_candidate.origin_stream,
+                segments=passthrough_segments,
+                meta={
+                    "polisher_model": self.model_name,
+                    "translation_workflow": "literal_then_natural",
+                    "literal_pass_candidate_id": literal_candidate.id,
+                    "two_pass_qc_warning": "stock_phrase_collapse_reverted_to_literal",
+                    "two_pass_adapt_stats": stats._asdict(),
+                    **_copy_asr_candidate_meta(literal_candidate),
+                },
+            )
+
+        # Per-segment drift check (natural output vs literal input)
+        n_adapted = 0
+        n_reverted = 0
+        n_unchanged = 0
+        adapted_segments: List[GenericSegment] = []
+
+        for s, adapted in zip(literal_candidate.segments, adapted_texts):
+            is_drift, reason, detail = check_drift(s.text, adapted)
+            if is_drift:
+                logger.debug(
+                    "Two-pass natural adaptation drifted from literal "
+                    "(reason=%s detail=%s): %r → %r; reverting to literal.",
+                    reason, detail, s.text, adapted,
+                )
+                seg_meta = dict(s.meta)
+                seg_meta["two_pass_qc_warning"] = f"drift_reverted_to_literal:{reason}"
+                adapted_segments.append(
+                    GenericSegment(s.start, s.end, s.text, meta=seg_meta)
+                )
+                n_reverted += 1
+            elif adapted == s.text:
+                adapted_segments.append(
+                    GenericSegment(s.start, s.end, adapted, meta=dict(s.meta))
+                )
+                n_unchanged += 1
+            else:
+                seg_meta = dict(s.meta)
+                seg_meta["literal_text"] = s.text
+                adapted_segments.append(
+                    GenericSegment(s.start, s.end, adapted, meta=seg_meta)
+                )
+                n_adapted += 1
+
+        stats = PolishStats(
+            total=len(literal_candidate.segments),
+            polished=n_adapted,
+            reverted=n_reverted,
+            unchanged=n_unchanged,
+        )
+        logger.info(
+            "[two_pass] adapt_candidate_from_literal %s: total=%d adapted=%d reverted=%d unchanged=%d",
+            literal_candidate.id,
+            stats.total,
+            stats.polished,
+            stats.reverted,
+            stats.unchanged,
+        )
+        return SubtitleCandidate(
+            id=f"{literal_candidate.id}_natural",
+            language=literal_candidate.language,
+            source="two_pass_llm",
+            origin_stream=literal_candidate.origin_stream,
+            segments=adapted_segments,
+            meta={
+                "polisher_model": self.model_name,
+                "translation_workflow": "literal_then_natural",
+                "literal_pass_candidate_id": literal_candidate.id,
+                "two_pass_adapt_stats": stats._asdict(),
+                **_copy_asr_candidate_meta(literal_candidate),
+            },
+        )
+
 
 def polish_candidate_with_llm(
     candidate: SubtitleCandidate,
@@ -498,6 +687,35 @@ def polish_candidate_with_llm(
     """
     polisher = LLMPolisher(config)
     return polisher.polish_candidate(candidate, ja_candidate=ja_candidate, style=style)
+
+
+def adapt_candidate_from_literal(
+    literal_candidate: SubtitleCandidate,
+    config: Config,
+    ja_candidate: Optional[SubtitleCandidate] = None,
+) -> SubtitleCandidate:
+    """Convenience wrapper: adapt a literal-pass candidate into natural subtitle text.
+
+    This is Pass 2 of the two-pass workflow (``translation.workflow:
+    literal_then_natural``).  The LLM receives the literal translation plus
+    the original Japanese text as context and produces natural subtitle English.
+
+    Per-segment drift detection compares the natural output against the literal
+    input; segments that diverge too far revert to the literal text and receive
+    a ``two_pass_qc_warning`` in their meta so downstream review tooling can
+    surface them.
+
+    Args:
+        literal_candidate: The literal-pass SubtitleCandidate from Pass 1.
+        config: Pipeline configuration.
+        ja_candidate: Optional Japanese source candidate for additional LLM
+            context.  When segment counts align, each segment's Japanese text
+            is included in the prompt.
+    """
+    polisher = LLMPolisher(config)
+    return polisher.adapt_candidate_from_literal(
+        literal_candidate, ja_candidate=ja_candidate
+    )
 
 
 def enforce_constraints_on_candidate(candidate: SubtitleCandidate, config: Config) -> SubtitleCandidate:
@@ -524,6 +742,7 @@ def enforce_constraints_on_candidate(candidate: SubtitleCandidate, config: Confi
 __all__ = [
     "LLMPolisher",
     "PolishStats",
+    "adapt_candidate_from_literal",
     "polish_candidate_with_llm",
     "enforce_constraints_on_candidate",
 ]

@@ -180,6 +180,14 @@ class Config:
     @property
     def translation_dialogue_profile(self) -> str:
         return self.get("translation", "dialogue_profile", default="default")
+
+    @property
+    def translation_workflow(self) -> str:
+        return self.get("translation", "workflow", default="single_pass")
+
+    @property
+    def translation_save_intermediate(self) -> bool:
+        return bool(self.get("translation", "save_intermediate", default=False))
     
     @property
     def llm_enabled(self) -> bool:

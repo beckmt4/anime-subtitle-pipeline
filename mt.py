@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 VALID_TRANSLATION_ENGINES = {"marian", "llm_direct", "hybrid"}
 VALID_DIALOGUE_PROFILES = {"default", "live_action_adult"}
+VALID_TRANSLATION_WORKFLOWS = {"single_pass", "literal_then_natural"}
 
 
 _PROPAGATED_ASR_META_KEYS = (
@@ -65,6 +66,8 @@ def _translation_config(config: Config) -> Dict[str, Any]:
         "mode": _get("translation", "mode", default="accuracy_first"),
         "dialogue_profile": _get("translation", "dialogue_profile", default="default"),
         "timeout": _get("translation", "timeout", default=getattr(config, "llm_timeout", 30)),
+        "workflow": _get("translation", "workflow", default="single_pass"),
+        "save_intermediate": bool(_get("translation", "save_intermediate", default=False)),
     }
 
 
@@ -747,6 +750,72 @@ def translate_candidate_jp_to_en(
     return translate_candidate(candidate, config, engine=engine, target_language="en")
 
 
+def run_two_pass_translation(
+    candidate: SubtitleCandidate,
+    config: Config,
+    ja_candidate: Optional[SubtitleCandidate] = None,
+    target_language: str = "en",
+) -> SubtitleCandidate:
+    """Run the literal-first / natural-second two-pass translation workflow.
+
+    Pass 1 — Literal: translates the Japanese candidate to a literal English
+        candidate using the configured translation engine.
+    Pass 2 — Natural adaptation: adapts the literal candidate into readable
+        subtitle text via the LLM, using the Japanese source as additional
+        context.  The LLM drift guard reverts any segment whose natural output
+        diverges from the literal pass, and emits a per-segment QC warning.
+
+    The literal-pass candidate ID and (optionally) its segment texts are stored
+    in the returned candidate's ``meta`` for full traceability.
+
+    Args:
+        candidate: Japanese source candidate.
+        config: Pipeline configuration.
+        ja_candidate: Optional Japanese source candidate for LLM context in
+            Pass 2.  Defaults to ``candidate`` when not provided.
+        target_language: Target language code (default ``"en"``).
+
+    Returns:
+        Final SubtitleCandidate with natural subtitle text, timing preserved
+        from the source candidate.
+
+    Raises:
+        InvalidTranslationEngineError: If the configured translation engine
+            is not supported.
+    """
+    from llm_polish import adapt_candidate_from_literal
+
+    tcfg = _translation_config(config)
+
+    # Pass 1: Literal translation
+    literal_candidate = translate_candidate(
+        candidate,
+        config,
+        target_language=target_language,
+    )
+    literal_candidate.meta["translation_pass"] = "literal"
+
+    # Pass 2: Natural adaptation via LLM
+    ja_ctx = ja_candidate if ja_candidate is not None else candidate
+    final_candidate = adapt_candidate_from_literal(
+        literal_candidate,
+        config,
+        ja_candidate=ja_ctx,
+    )
+
+    # Store literal pass information in final candidate metadata
+    final_candidate.meta["translation_workflow"] = "literal_then_natural"
+    final_candidate.meta["literal_pass_candidate_id"] = literal_candidate.id
+
+    if tcfg["save_intermediate"]:
+        final_candidate.meta["literal_pass_segments"] = [
+            {"start": s.start, "end": s.end, "text": s.text}
+            for s in literal_candidate.segments
+        ]
+
+    return final_candidate
+
+
 # Alternative: Keep model loaded for batch processing
 class BatchTranslator:
     """
@@ -781,8 +850,10 @@ __all__ = [
     "LLMDirectTranslator",
     "MarianTranslator",
     "VALID_TRANSLATION_ENGINES",
+    "VALID_TRANSLATION_WORKFLOWS",
     "translate_candidate",
     "translate_segments_ja_to_en",
     "translate_candidate_jp_to_en",
+    "run_two_pass_translation",
     "BatchTranslator",
 ]
