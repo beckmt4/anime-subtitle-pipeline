@@ -16,6 +16,7 @@ pytest.importorskip("jiwer")
 pytest.importorskip("sacrebleu")
 
 from config import Config
+from core.ocr import OCRBackend
 from models import Segment, SubtitleCandidate
 from media_inspect import MediaInfo, AudioStream, SubtitleStream
 import benchmark as bm
@@ -60,7 +61,36 @@ def dummy_build_candidate_from_segments(segments, config, candidate_id, language
     )
 
 
-def dummy_extract_subtitle_track(video, sub_index, language, output_dir=None):
+class DummyOCRBackend(OCRBackend):
+    def extract(self, video_path: str, stream_index: int, language_hint: str | None = None):
+        lang = language_hint or "und"
+        return SubtitleCandidate(
+            id=f"bitmap_{lang}_s{stream_index}",
+            language=lang,
+            source="embedded",
+            origin_stream=f"sub:{stream_index}",
+            segments=[
+                Segment(start=0.0, end=1.5, text=f"bitmap-{lang}-1", meta={"ocr_confidence": 0.9}),
+                Segment(start=1.6, end=3.0, text=f"bitmap-{lang}-2", meta={"ocr_confidence": 0.92}),
+            ],
+            meta={},
+        )
+
+
+def _subtitle_stream(global_index: int) -> SubtitleStream | None:
+    for stream in _SYNTH_MEDIA.subtitle_streams:
+        if stream.index == global_index:
+            return stream
+    return None
+
+
+def dummy_extract_subtitle_track(video, sub_index, language, output_dir=None, ocr_backend=None):
+    stream = _subtitle_stream(sub_index)
+    if stream is not None and stream.is_bitmap:
+        if ocr_backend is None:
+            raise RuntimeError("OCR backend not configured")
+        return ocr_backend.extract(str(video), sub_index, language_hint=language)
+
     return SubtitleCandidate(
         id=f"embedded_{language}_s{sub_index}",
         language=language,
@@ -350,6 +380,79 @@ def test_benchmark_two_pass_skips_generic_llm_polish_by_default():
     assert all(not c["source"].endswith("_llm") for c in jp_candidates), jp_candidates
 
 
+def test_benchmark_includes_bitmap_candidates_when_ocr_enabled():
+    _install_monkeypatches()
+    cfg = Config()
+    cfg._config.setdefault("benchmark", {})
+    cfg._config["benchmark"].update({
+        "sources": {
+            "use_embedded_en": True,
+            "use_embedded_jp": True,
+            "use_en_audio": False,
+            "use_ja_audio": False,
+        },
+        "translation_engines": ["marian"],
+        "reference_priority": ["bitmap_en", "embedded_en"],
+        "compare_all_pairs": False,
+    })
+
+    original_subs = list(_SYNTH_MEDIA.subtitle_streams)
+    _SYNTH_MEDIA.subtitle_streams = original_subs + [
+        SubtitleStream(index=12, codec="pgssub", language="en", raw_language="eng", is_bitmap=True),
+        SubtitleStream(index=13, codec="pgssub", language="ja", raw_language="jpn", is_bitmap=True),
+    ]
+    try:
+        dummy_video = Path("temp/test_video_bitmap_ocr.mkv")
+        dummy_video.parent.mkdir(parents=True, exist_ok=True)
+        dummy_video.write_bytes(b"00")
+
+        results = bm.run_benchmark(
+            str(dummy_video), cfg, use_llm=False, ocr_backend=DummyOCRBackend()
+        )
+    finally:
+        _SYNTH_MEDIA.subtitle_streams = original_subs
+
+    candidate_ids = {c["id"] for c in results["candidates"]}
+    candidate_sources = {c["source"] for c in results["candidates"]}
+
+    assert "bitmap_en_s12" in candidate_ids
+    assert any(source.startswith("bitmap_mt_") for source in candidate_sources)
+
+
+def test_benchmark_bitmap_only_requires_ocr_backend():
+    _install_monkeypatches()
+    cfg = Config()
+    cfg._config.setdefault("benchmark", {})
+    cfg._config["benchmark"].update({
+        "sources": {
+            "use_embedded_en": True,
+            "use_embedded_jp": True,
+            "use_en_audio": False,
+            "use_ja_audio": False,
+        },
+        "translation_engines": ["marian"],
+        "compare_all_pairs": False,
+    })
+
+    original_audio = list(_SYNTH_MEDIA.audio_streams)
+    original_subs = list(_SYNTH_MEDIA.subtitle_streams)
+    _SYNTH_MEDIA.audio_streams = []
+    _SYNTH_MEDIA.subtitle_streams = [
+        SubtitleStream(index=22, codec="pgssub", language="en", raw_language="eng", is_bitmap=True),
+        SubtitleStream(index=23, codec="pgssub", language="ja", raw_language="jpn", is_bitmap=True),
+    ]
+    try:
+        dummy_video = Path("temp/test_video_bitmap_only.mkv")
+        dummy_video.parent.mkdir(parents=True, exist_ok=True)
+        dummy_video.write_bytes(b"00")
+
+        with pytest.raises(RuntimeError, match="OCR backend is not configured"):
+            bm.run_benchmark(str(dummy_video), cfg, use_llm=False, ocr_backend=None)
+    finally:
+        _SYNTH_MEDIA.audio_streams = original_audio
+        _SYNTH_MEDIA.subtitle_streams = original_subs
+
+
 def run_all_generalized_tests():
     print("Running generalized benchmark tests...\n")
     test_generalized_generation_and_reference()
@@ -359,4 +462,4 @@ def run_all_generalized_tests():
 
 if __name__ == "__main__":
     os.environ.setdefault("TRACING_ENABLED", "false")
-    run_all_generalized
+    run_all_generalized_tests()

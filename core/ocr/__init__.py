@@ -1,29 +1,19 @@
-"""core.ocr — bitmap subtitle → text.
-
-Converts bitmap subtitle tracks (PGS, VOBSUB, XSUB) to timed text segments.
-
-Status: **not yet implemented**.  ``subtitle_utils.extract_subtitle_track``
-currently raises ``RuntimeError`` for bitmap codecs.  That is the correct
-stopgap behaviour; it must not be silently swallowed.
-
-Planned public API
-------------------
-OCRBackend       Abstract base class for OCR engine adapters.
-ocr_subtitle_track(path, stream_index, backend) → SubtitleCandidate
-
-Design notes
-------------
-- The OCR engine must be swappable via the ``OCRBackend`` interface.
-- Confidence scores must be surfaced per segment so ``core.policy`` can
-  route low-confidence results to ``core.review``.
-- Language-specific OCR model selection belongs in language packs, not here.
-"""
+"""core.ocr — bitmap subtitle OCR interfaces and factory helpers."""
 
 from __future__ import annotations
 
+import importlib
+import inspect
+import logging
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
 from core.subtitles import SubtitleCandidate
+
+if TYPE_CHECKING:
+    from config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class OCRBackend(ABC):
@@ -55,6 +45,84 @@ class OCRBackend(ABC):
         SubtitleCandidate
             Extracted segments with ``meta["ocr_confidence"]`` set per segment.
         """
+
+
+def _resolve_backend_class(spec: str) -> type[OCRBackend]:
+    if ":" in spec:
+        module_name, class_name = spec.split(":", 1)
+    elif "." in spec:
+        module_name, class_name = spec.rsplit(".", 1)
+    else:
+        raise ValueError(
+            "OCR backend must be '<module>:<Class>' or '<module>.<Class>'"
+        )
+
+    module = importlib.import_module(module_name)
+    backend_cls: Any = getattr(module, class_name)
+    if not inspect.isclass(backend_cls):
+        raise TypeError(f"OCR backend target '{spec}' is not a class")
+    if not issubclass(backend_cls, OCRBackend):
+        raise TypeError(
+            f"OCR backend '{spec}' must inherit from core.ocr.OCRBackend"
+        )
+    return backend_cls
+
+
+def create_backend(cfg: "Config") -> OCRBackend | None:
+    """Create OCR backend from config, or return None when unavailable."""
+    if not bool(cfg.get("ocr", "enabled", default=False)):
+        return None
+
+    spec = str(cfg.get("ocr", "backend", default="")).strip()
+    if not spec:
+        logger.warning(
+            "OCR is enabled but ocr.backend is empty; bitmap OCR sources will be skipped"
+        )
+        return None
+
+    language_models = cfg.get("ocr", "language_models", default={}) or {}
+    confidence_warn_below = float(
+        cfg.get("ocr", "confidence_warn_below", default=0.70)
+    )
+
+    try:
+        backend_cls = _resolve_backend_class(spec)
+    except Exception as exc:
+        logger.warning("Failed to resolve OCR backend '%s': %s", spec, exc)
+        return None
+
+    ctor_kwargs: dict[str, Any] = {
+        "config": cfg,
+        "language_models": language_models,
+        "confidence_warn_below": confidence_warn_below,
+    }
+    try:
+        signature = inspect.signature(backend_cls.__init__)
+        accepts_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
+        if accepts_kwargs:
+            init_kwargs = ctor_kwargs
+        else:
+            init_kwargs = {
+                key: value
+                for key, value in ctor_kwargs.items()
+                if key in signature.parameters
+            }
+        try:
+            backend = backend_cls(**init_kwargs)
+        except TypeError:
+            if init_kwargs:
+                backend = backend_cls()
+            else:
+                raise
+    except Exception as exc:
+        logger.warning("Failed to initialize OCR backend '%s': %s", spec, exc)
+        return None
+
+    logger.info("OCR backend initialized: %s", spec)
+    return backend
 
 
 def ocr_subtitle_track(
@@ -104,4 +172,4 @@ def ocr_subtitle_track(
     return candidate
 
 
-__all__ = ["OCRBackend", "ocr_subtitle_track"]
+__all__ = ["OCRBackend", "create_backend", "ocr_subtitle_track"]
