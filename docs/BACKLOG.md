@@ -1,125 +1,155 @@
-# Backlog — anime-subtitle-pipeline
+# Backlog tracker — ordered Subtitle Intelligence Platform roadmap
 
-Generated: 2026-04-25. Based on full code review + security scan.
+## Purpose
+This is the repository-side copy of the top-level roadmap tracker expanding `anime-subtitle-pipeline` into a local-first subtitle intelligence platform for anime, JAV, and later multi-language media.
 
----
+## Goals
+- establish the platform architecture
+- harden persistence, generate mode, and benchmark mode
+- capture code-review cleanup work as actionable maintenance tickets
+- add OCR and review workflows
+- add anime and JAV domain packs
+- add queue/batch automation
+- introduce language-pack architecture for non-Japanese expansion
 
-## Already Fixed (this session)
+## Epic checklist
+- [x] beckmt4/anime-subtitle-pipeline#16
+- [x] beckmt4/anime-subtitle-pipeline#17
+- [x] beckmt4/anime-subtitle-pipeline#18
+- [x] beckmt4/anime-subtitle-pipeline#106
+- [x] beckmt4/anime-subtitle-pipeline#19
+- [x] beckmt4/anime-subtitle-pipeline#20
+- [x] beckmt4/anime-subtitle-pipeline#73
+- [ ] beckmt4/anime-subtitle-pipeline#21
+- [ ] beckmt4/anime-subtitle-pipeline#22
+- [ ] beckmt4/anime-subtitle-pipeline#23
+- [ ] beckmt4/anime-subtitle-pipeline#24
+- [ ] beckmt4/anime-subtitle-pipeline#25
+- [ ] beckmt4/anime-subtitle-pipeline#26
+- [ ] beckmt4/anime-subtitle-pipeline#27
 
-- **[SECURITY]** `anime-subtitle-pipeline/.gitignore` was missing `.env`, `*.backup`, artifact JSON files.  Added all of these.
-- **[SECURITY]** Revoked GitHub token string was still sitting in `Anime_subtiltes/japanese-subtitle-generator/.env`. Replaced with placeholder.
-- **[SECURITY]** `subtitle_corrector.py` had `OLLAMA_BASE_URL` hardcoded as `"http://localhost:11434"` with no escape hatch. Fixed to read `os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")`, matching how `MODEL` is already handled in the same file.
-- **[CODE]** `asr.py` used a `setattr` hack to attach `_build_candidate_from_segments` to the class from outside the class body. Moved it to a proper instance method.
-- **[NOISE]** `llm_polish.py` emitted a `WARNING: Non-localhost LLM endpoint` on every API call when running against Unraid Ollama (`192.168.x.x`). Removed — non-localhost is valid for production.
-- **[PERSISTENCE]** Artifact registry migrations now run automatically through `core.artifacts.schema.init_db()` and migration files are documented in `docs/migrations/README.md`.
-- **[PERSISTENCE]** `process_video()` now writes media assets, pipeline runs, subtitle candidates, output SRTs, muxed MKVs, and failure status to `ArtifactRegistry`.
-- **[PERSISTENCE]** `ArtifactRegistry` and `ProcessingLedger` now expose read APIs for pipeline run history, latest artifacts, and candidate lineage.
-- **[CONFIG]** `LLM_BASE_URL` now overrides `llm.base_url`, so Docker/Unraid deployments can point at a LAN Ollama endpoint without editing `config.yaml`.
-- **[CLI]** `subtitle_corrector.py` now exposes `--timeout` and validates it as a positive integer.
-- **[QC]** `subtitle_corrector.py` drift detection now handles all-caps names and case-only output changes.
+## Current ordered backlog — work in this order
 
----
+Treat epics as planning/tracking containers and child issues as executable work. Closed issues stay visible here as completed history, but the active queue starts at the first unchecked item.
 
-## P0 — Fix Before Next Run
+### Phase 0 — Persistence, deployment, and maintenance hardening
 
-### ~~P0-1: Remove tracked build artifacts from git history~~ ✅ RESOLVED
+Goal: finish the near-term registry/deployment foundation and clear actionable code-review cleanup before pulling more feature complexity forward.
 
-None of the listed artifacts (`error_log.txt`, `benchmark.py.backup`, `comparison*.json`,
-`benchmark_results.json`, `debug_test.py`, `__pycache__`) are tracked in git. Already cleaned up.
+1. [x] beckmt4/anime-subtitle-pipeline#85 — Add DB auto-migration runner on pipeline startup
+2. [x] beckmt4/anime-subtitle-pipeline#82 — Wire ArtifactRegistry into `main.py` and orchestrator pipeline
+3. [x] beckmt4/anime-subtitle-pipeline#86 — Add query API to ArtifactRegistry
+4. [x] beckmt4/anime-subtitle-pipeline#87 — Surface `registry_run_id` in CLI output and Streamlit
+5. [x] beckmt4/anime-subtitle-pipeline#83 — Expose pipeline run history via ProcessingLedger
+6. [x] beckmt4/anime-subtitle-pipeline#107 — Allow `LLM_BASE_URL` env override for deployment configs
+7. [x] beckmt4/anime-subtitle-pipeline#89 — Add `--timeout` flag to `subtitle_corrector.py` CLI
+8. [x] beckmt4/anime-subtitle-pipeline#110 — Make subtitle_corrector drift noun detection case-insensitive
+9. [x] beckmt4/anime-subtitle-pipeline#108 — Deprecate or remove legacy ASR-segment polish API in `llm_polish.py`
+10. [x] beckmt4/anime-subtitle-pipeline#109 — Decide whether `subtitle_pipeline.py` is superseded and retire if unused
+11. [x] beckmt4/anime-subtitle-pipeline#112 — Add `attic/README.md` explaining retired code policy
+12. [x] beckmt4/anime-subtitle-pipeline#111 — Consolidate root documentation sprawl into `docs/`
+13. [x] beckmt4/anime-subtitle-pipeline#84 — Track burned-in MKV artifacts in ArtifactRegistry
 
-### ~~P0-2: `ConcurrentPolisher` is missing CJK guard and drift check~~ ✅ RESOLVED (commit 675bd7b)
+Parent epics for this phase:
+- beckmt4/anime-subtitle-pipeline#18 — Add persistent state, artifact registry, and processing ledger
+- beckmt4/anime-subtitle-pipeline#106 — Code review cleanup and deployment hardening backlog
 
-`ConcurrentPolisher` and its `polish_segments_concurrent` method were deleted from `llm_polish.py`.
-The class had zero callers, skipped the drift check and stock-phrase collapse guard, and its concurrent
-design conflicted with the inherently sequential per-batch collapse check.
+### Phase 1 — Generate-mode hardening
 
----
+Goal: make the current one-file workflow explainable, testable, and safe to trust before adding more model complexity.
 
-## P1 — Fix Soon (before Unraid deploy)
+14. [x] beckmt4/anime-subtitle-pipeline#52 — Add explainable source-selection report to generate mode
+15. [x] beckmt4/anime-subtitle-pipeline#53 — Add generate-mode dry-run / inspect-only flow
+16. [x] beckmt4/anime-subtitle-pipeline#54 — Add candidate confidence scoring and low-confidence thresholds to generate mode
+17. [x] beckmt4/anime-subtitle-pipeline#80 — Add ASR confidence handling for difficult Japanese audio
 
-### ~~P1-1: Root-level test files are orphaned — pytest never runs them~~ ✅ RESOLVED (commit 1818d787)
+Parent epic for this phase:
+- beckmt4/anime-subtitle-pipeline#19 — Harden generate mode into a production-grade source selection engine
 
-All 9 root-level test files migrated: 8 moved to `tests/`, `test_pipeline.py` moved to `attic/`
-(it was a CLI smoke script, not a real pytest module). `norecursedirs = attic` added to `pytest.ini`
-to prevent `attic/debug_test.py` from being collected. No regressions introduced.
+### Phase 2 — Translation-quality engine upgrade
 
-### ~~P1-2: `subtitle_corrector.py` timeout is hardcoded~~ ✅ RESOLVED (commit b6f1a62)
+Goal: remove MarianMT as the quality ceiling while keeping it as a baseline/fallback.
 
-`subtitle_corrector.py` now exposes `--timeout` and rejects zero, negative, and
-non-integer values before runtime. Tests cover parser defaults, custom values,
-invalid values, and timeout forwarding to the Ollama call.
+18. [ ] beckmt4/anime-subtitle-pipeline#74 — Add direct context-aware LLM translation engine
+19. [x] beckmt4/anime-subtitle-pipeline#75 — Add translation engine selector and hybrid routing
+20. [ ] beckmt4/anime-subtitle-pipeline#76 — Add literal-first and natural-subtitle second-pass workflow
+21. [ ] beckmt4/anime-subtitle-pipeline#79 — Add translation QC judge for omissions, drift, and register changes
+22. [ ] beckmt4/anime-subtitle-pipeline#78 — Add translation benchmark corpus and model comparison reports
+23. [ ] beckmt4/anime-subtitle-pipeline#77 — Add live-action and adult-dialogue translation profile
+24. [ ] beckmt4/anime-subtitle-pipeline#81 — Add local model and hardware evaluation matrix for translation quality
 
-### ~~P1-3: `llm_polish.py` legacy import of `asr.Segment`~~ ✅ RESOLVED
+Parent epic for this phase:
+- beckmt4/anime-subtitle-pipeline#73 — Improve translation quality for anime, live-action, and difficult Japanese dialogue
 
-Removed `from asr import Segment`, `LLMPolisher.polish_segments()`, `polish_english_subtitles_with_llm()`,
-`enforce_subtitle_constraints_on_segments()`, and `BatchPolisher` (entire class, no callers).
-`example_usage.py` rewritten to use the candidate-based API throughout. Dead legacy imports
-(`polish_english_subtitles_with_llm`, `enforce_subtitle_constraints_on_segments`) also removed from `main.py`.
-`__all__` in `llm_polish.py` updated to only export modern symbols.
+### Phase 3 — Benchmark hardening and review routing
 
-### ~~P1-4: `subtitle_pipeline.py` — status unclear~~ ✅ RESOLVED (keep)
+Goal: turn weak-output detection into actionable review tasks and repeatable quality reporting.
 
-`subtitle_pipeline.py` has unique functionality distinct from `main.py`: it batch-processes existing SRT
-files through `subtitle_corrector` with skip-if-newer logic, SHA-256 change detection, and a per-file
-JSON pipeline log. `main.py` handles video → SRT generation from scratch. Both tools are valid.
+25. [x] beckmt4/anime-subtitle-pipeline#20 — Harden benchmark mode into a core product capability
+26. [ ] beckmt4/anime-subtitle-pipeline#56 — Create review-task generation rules for low-confidence generate and benchmark results
+27. [ ] beckmt4/anime-subtitle-pipeline#22 — Build human review queue and local review UI
 
-### ~~P1-5: `llm.base_url` in `config.yaml` is `http://localhost:11434`~~ ✅ RESOLVED (commit b6f1a62)
+### Phase 4 — Subtitle source completeness
 
-`Config.llm_base_url` now checks `LLM_BASE_URL` before the YAML value, with tests
-for YAML fallback and environment override behavior. README documents the
-Docker/Unraid usage pattern.
+Goal: expand source support beyond ideal embedded text and ASR paths.
 
-### ~~P1-6: 17 orchestrator tests fail in sandbox due to `temp/` unlink permission~~ ✅ RESOLVED
+28. [ ] beckmt4/anime-subtitle-pipeline#21 — Add OCR and complete subtitle source support
 
-All `audio_path.unlink(missing_ok=True)` and `probe_path.unlink(missing_ok=True)` calls in
-`orchestrator.py` are now wrapped with `except PermissionError` (option 1). 533 tests pass.
+### Phase 5 — Domain packs
 
-### ~~P1-7: 3 benchmark tests fail due to missing `jiwer`/`sacrebleu` in CI~~ ✅ RESOLVED (commit 802a975)
+Goal: move anime/live-action/JAV behavior out of generic core and into explicit opt-in profiles/packs.
 
-`pytest.importorskip("jiwer")` and `pytest.importorskip("sacrebleu")` added at the top of both
-`tests/test_benchmark.py` and `tests/test_benchmark_generalized.py`. Files are skipped gracefully
-when optional metric libraries are absent.
+29. [ ] beckmt4/anime-subtitle-pipeline#23 — Create Anime domain pack v1
+30. [ ] beckmt4/anime-subtitle-pipeline#24 — Create JAV domain pack v1 with privacy-aware operation
 
----
+### Phase 6 — Library-scale automation
 
-## P2 — Improvements
+Goal: make the platform useful for batches and large media libraries after quality/review controls exist.
 
-### ~~P2-1: `config.py` `_apply_profile` leaves dev/prod sub-dicts in place~~ ✅ RESOLVED (commit 3a46a86)
+31. [ ] beckmt4/anime-subtitle-pipeline#25 — Add queue, batch processing, and library-scale automation
 
-`_apply_profile()` now pops both `"dev"` and `"prod"` keys from `asr` and `llm` sections after merging.
-`_PROFILE_KEYS = ("dev", "prod")` constant added to document the known keys.
+### Phase 7 — Multi-language architecture and expansion
 
-### ~~P2-2: Protect against silent regression in `generate` config key placement~~ ✅ RESOLVED
+Goal: generalize the platform after the Japanese workflow is reliable.
 
-Three regression-guard tests added to `tests/test_config.py`: assert `prefer_subtitles`,
-`prefer_audio_language`, and `use_llm_polish` are not `None` when loaded from the default config.
+32. [ ] beckmt4/anime-subtitle-pipeline#55 — Refactor Japanese-only generate orchestration into language-pack routing hooks
+33. [ ] beckmt4/anime-subtitle-pipeline#26 — Introduce language-pack architecture for multi-language expansion
+34. [ ] beckmt4/anime-subtitle-pipeline#27 — Add first non-Japanese language expansions
 
-### ~~P2-3: `asr.py` — `transcribe_audio_to_candidate` reads instance attribute as return value~~ ✅ RESOLVED
+## Near-term next 10 issues
 
-`transcribe_audio_to_segments()` now returns `(List[Segment], SubtitleCandidate)` as a tuple.
-All call sites updated to unpack the tuple; no more side-effect `last_candidate` attribute reads.
-Module-level `transcribe_audio_to_candidate()` uses `_, cand = asr.transcribe_audio_to_segments(...)`.
+Start here unless there is a blocking bug:
 
-### ~~P2-4: `subtitle_corrector.py` `check_drift` noun detection is case-sensitive~~ ✅ RESOLVED (commit b6f1a62)
+1. beckmt4/anime-subtitle-pipeline#74 — Direct context-aware LLM translation engine
+2. beckmt4/anime-subtitle-pipeline#76 — Literal-first and natural-subtitle second-pass workflow
+3. beckmt4/anime-subtitle-pipeline#79 — Translation QC judge
+4. beckmt4/anime-subtitle-pipeline#78 — Translation benchmark corpus and model comparison reports
+5. beckmt4/anime-subtitle-pipeline#77 — Live-action and adult-dialogue translation profile
+6. beckmt4/anime-subtitle-pipeline#81 — Local model and hardware evaluation matrix
+7. beckmt4/anime-subtitle-pipeline#20 — Harden benchmark mode into a core product capability
+8. beckmt4/anime-subtitle-pipeline#56 — Review-task generation rules
+9. beckmt4/anime-subtitle-pipeline#22 — Build human review queue and local review UI
+10. beckmt4/anime-subtitle-pipeline#21 — Add OCR and complete subtitle source support
 
-`_extract_nouns()` now includes all-caps proper nouns, excludes common
-single-letter words (`A`, `I`), and checks noun preservation case-insensitively.
-Tests cover all-caps extraction, missing and preserved all-caps names, case-only
-changes, and lowercased output.
+## Recently completed
+- beckmt4/anime-subtitle-pipeline#85 — DB migration runner, completed in 04ad3c8
+- beckmt4/anime-subtitle-pipeline#82, beckmt4/anime-subtitle-pipeline#86, beckmt4/anime-subtitle-pipeline#87, beckmt4/anime-subtitle-pipeline#83, beckmt4/anime-subtitle-pipeline#107, beckmt4/anime-subtitle-pipeline#89, and beckmt4/anime-subtitle-pipeline#110 — completed in 8bbd4f0
+- beckmt4/anime-subtitle-pipeline#108 — legacy ASR-segment polish cleanup, completed in a999067
+- beckmt4/anime-subtitle-pipeline#109, beckmt4/anime-subtitle-pipeline#111, and beckmt4/anime-subtitle-pipeline#112 — cleanup/docs work completed before this update
+- beckmt4/anime-subtitle-pipeline#84 — MKV artifact registration acceptance coverage, completed in 7abbcf4
+- beckmt4/anime-subtitle-pipeline#52 — explainable source-selection report acceptance mapping, completed in 7ceb66e
+- beckmt4/anime-subtitle-pipeline#53 — generate inspect-only flow, completed in 8a40309
+- beckmt4/anime-subtitle-pipeline#80 — ASR quality diagnostics and warning propagation, completed in e1f4304
+- beckmt4/anime-subtitle-pipeline#75 — translation engine selector and hybrid routing, completed in e052084
+- Runtime cleanup and core module wrappers — completed in b05155e and f0da0d2
+- beckmt4/anime-subtitle-pipeline#54 — candidate confidence scoring, ASR warning-density review routing, and SRT overlap prevention, completed in dc8f59d
+- beckmt4/anime-subtitle-pipeline#19 — generate-mode hardening epic, closed after beckmt4/anime-subtitle-pipeline#52, beckmt4/anime-subtitle-pipeline#53, beckmt4/anime-subtitle-pipeline#54, and beckmt4/anime-subtitle-pipeline#80 completion
 
-### ~~P2-5: Doc sprawl in `anime-subtitle-pipeline` root~~ ✅ RESOLVED
-
-Root Markdown is now limited to `README.md`, `CHANGELOG.md`, `SECURITY.md`,
-and `CONTRIBUTING.md`. Extended guides now live under `docs/`.
-
----
-
-## P3 — Nice to Have
-
-### ~~P3-1: `Anime_subtiltes/japanese-subtitle-generator` repo is superseded~~ ✅ N/A
-
-Directory does not exist in this repository; already removed or never committed.
-
-### ~~P3-2: `attic/` directory has no README~~ ✅ RESOLVED
-
-`attic/README.md` created, explaining the graveyard purpose and listing retired files with reasons.
+## Definition of done
+A milestone is done only when:
+- code is merged
+- tests pass
+- acceptance criteria pass
+- docs are updated
+- benchmark or validation artifacts exist where applicable
+- generated outputs include enough metadata to explain what happened and why
