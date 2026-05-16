@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 VALID_TRANSLATION_ENGINES = {"marian", "llm_direct", "hybrid"}
+VALID_DIALOGUE_PROFILES = {"default", "live_action_adult"}
 
 
 _PROPAGATED_ASR_META_KEYS = (
@@ -61,6 +62,7 @@ def _translation_config(config: Config) -> Dict[str, Any]:
         "fallback_engine": _get("translation", "fallback_engine", default="marian"),
         "context_window_segments": _get("translation", "context_window_segments", default=4),
         "mode": _get("translation", "mode", default="accuracy_first"),
+        "dialogue_profile": _get("translation", "dialogue_profile", default="default"),
         "timeout": _get("translation", "timeout", default=getattr(config, "llm_timeout", 30)),
     }
 
@@ -75,12 +77,26 @@ def _validate_engine(engine: str) -> str:
     return normalized
 
 
+def _validate_dialogue_profile(profile: str) -> str:
+    normalized = (profile or "").strip().lower() or "default"
+    if normalized not in VALID_DIALOGUE_PROFILES:
+        valid = ", ".join(sorted(VALID_DIALOGUE_PROFILES))
+        logger.warning(
+            "Unknown translation dialogue_profile=%r; expected one of: %s. Falling back to 'default'.",
+            profile,
+            valid,
+        )
+        return "default"
+    return normalized
+
+
 def _with_translation_meta(
     candidate: SubtitleCandidate,
     *,
     engine: str,
     model: str,
     mode: str,
+    dialogue_profile: str,
     fallback: bool = False,
     fallback_engine: Optional[str] = None,
     fallback_reason: Optional[str] = None,
@@ -90,6 +106,7 @@ def _with_translation_meta(
         "translation_engine": engine,
         "translation_model": model,
         "translation_mode": mode,
+        "translation_dialogue_profile": dialogue_profile,
         "translation_fallback": fallback,
         "fallback_engine": fallback_engine,
         "fallback_reason": fallback_reason,
@@ -346,6 +363,9 @@ class MarianTranslator:
                         engine="marian",
                         model=self.config.mt_model_name,
                         mode=_translation_config(self.config)["mode"],
+                        dialogue_profile=_validate_dialogue_profile(
+                            _translation_config(self.config)["dialogue_profile"]
+                        ),
                     ),
                 },
             )
@@ -368,9 +388,15 @@ class MarianTranslator:
             logger.debug(f"Translating batch {i // batch_size + 1}/{num_batches}")
             translations.extend(self.translate_batch(batch_texts))
         new_segments = [
-            GenericSegment(start=s.start, end=s.end, text=t if t else "", meta=dict(s.meta))
+            GenericSegment(
+                start=s.start,
+                end=s.end,
+                text=t if t else "",
+                meta={"source_text_ja": s.text, **dict(s.meta)},
+            )
             for s, t in zip(candidate.segments, translations)
         ]
+        tcfg = _translation_config(self.config)
         return SubtitleCandidate(
             id=f"{candidate.id}_mt",
             language=target_language,
@@ -383,7 +409,8 @@ class MarianTranslator:
                     candidate,
                     engine="marian",
                     model=self.config.mt_model_name,
-                    mode=_translation_config(self.config)["mode"],
+                    mode=tcfg["mode"],
+                    dialogue_profile=_validate_dialogue_profile(tcfg["dialogue_profile"]),
                 ),
             },
         )
@@ -411,23 +438,32 @@ class LLMDirectTranslator:
         self.model_name = config.llm_model_name
         self.base_url = config.llm_base_url.rstrip("/")
         self.mode = tcfg["mode"]
+        self.dialogue_profile = _validate_dialogue_profile(tcfg["dialogue_profile"])
         self.context_window_segments = int(tcfg["context_window_segments"])
         self.timeout = int(tcfg["timeout"])
 
         logger.info("Initializing LLM direct translator")
         logger.info("  Model: %s", self.model_name)
         logger.info("  Mode: %s", self.mode)
+        logger.info("  Dialogue profile: %s", self.dialogue_profile)
         logger.info("  Context window: %d segment(s)", self.context_window_segments)
 
     def _mode_instruction(self) -> str:
         if self.mode == "literal":
-            return "Translate literally and preserve all meaning, names, register, and implied subjects."
-        if self.mode == "natural_subtitle":
-            return "Translate into concise, natural English subtitle lines while preserving meaning."
-        return (
+            instruction = "Translate literally and preserve all meaning, names, register, and implied subjects."
+        elif self.mode == "natural_subtitle":
+            instruction = "Translate into concise, natural English subtitle lines while preserving meaning."
+        else:
+            instruction = (
             "Translate for maximum accuracy first, then make the English subtitle natural. "
             "Do not omit, soften, sanitize, or add meaning."
         )
+        if self.dialogue_profile == "live_action_adult":
+            instruction += (
+                " For live-action/adult dialogue, preserve explicit sexual/profane wording and register; "
+                "do not euphemize or sanitize direct content."
+            )
+        return instruction
 
     def _context_for_index(self, candidate: SubtitleCandidate, index: int) -> str:
         radius = max(self.context_window_segments, 0)
@@ -454,6 +490,7 @@ class LLMDirectTranslator:
         return (
             "You are translating Japanese dialogue into English subtitles.\n"
             f"Mode: {self.mode}\n"
+            f"Dialogue profile: {self.dialogue_profile}\n"
             f"Instruction: {self._mode_instruction()}\n\n"
             "Context segments. Translate only the line marked with >>.\n"
             f"{self._context_for_index(candidate, index)}\n"
@@ -511,7 +548,12 @@ class LLMDirectTranslator:
             translations.append(self._generate_text(prompt))
 
         new_segments = [
-            GenericSegment(start=s.start, end=s.end, text=t, meta=dict(s.meta))
+            GenericSegment(
+                start=s.start,
+                end=s.end,
+                text=t,
+                meta={"source_text_ja": s.text, **dict(s.meta)},
+            )
             for s, t in zip(candidate.segments, translations)
         ]
         extra = {
@@ -537,6 +579,7 @@ class LLMDirectTranslator:
                     engine=engine_name,
                     model=self.model_name,
                     mode=self.mode,
+                    dialogue_profile=self.dialogue_profile,
                     extra=extra,
                 ),
             },

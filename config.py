@@ -176,6 +176,10 @@ class Config:
     @property
     def translation_mode(self) -> str:
         return self.get("translation", "mode", default="accuracy_first")
+
+    @property
+    def translation_dialogue_profile(self) -> str:
+        return self.get("translation", "dialogue_profile", default="default")
     
     @property
     def llm_enabled(self) -> bool:

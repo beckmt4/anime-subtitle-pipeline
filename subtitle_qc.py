@@ -24,6 +24,9 @@ Checks
    ``max_line_chars`` characters.
 8. **line-count violations** – No cue contains more than ``max_lines``
    display lines.
+9. **translation judge heuristics** – When candidate metadata is supplied,
+   flags likely untranslated output, omissions, added meaning, and softened
+   explicit dialogue under the live-action/adult profile.
 
 Default thresholds
 ------------------
@@ -93,6 +96,38 @@ _ASS_NEWLINE_RE = re.compile(r"\\[nNh]")
 
 # HTML elements (including self-closing).
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
+
+_ADULT_JA_MARKERS = (
+    "セックス",
+    "チン",
+    "まんこ",
+    "乳首",
+    "フェラ",
+    "中出し",
+    "挿入",
+    "勃起",
+    "射精",
+    "オナニー",
+    "エロ",
+    "犯す",
+    "やる",
+)
+_ADULT_EN_MARKERS = (
+    "fuck",
+    "fucking",
+    "sex",
+    "cock",
+    "dick",
+    "pussy",
+    "cum",
+    "blowjob",
+    "masturbat",
+    "penis",
+    "vagina",
+    "horny",
+    "nipple",
+)
 
 # ---------------------------------------------------------------------------
 # Severity constants
@@ -186,6 +221,81 @@ def _build_summary(
         "warning_count": warning_count,
         "pass_qc": parsed_ok and error_count == 0,
     }
+
+
+def _add_translation_judge_warnings(
+    candidate: SubtitleCandidate,
+    cue_count: int,
+    violations: List[Dict[str, Any]],
+) -> None:
+    dialogue_profile = str(candidate.meta.get("translation_dialogue_profile", "default"))
+    for idx, seg in enumerate(candidate.segments[:cue_count], start=1):
+        source_text = ""
+        if isinstance(seg.meta, dict):
+            source_text = str(
+                seg.meta.get("source_text_ja")
+                or seg.meta.get("source_text")
+                or ""
+            )
+        source_text = source_text.strip()
+        translated_text = seg.text.strip()
+
+        if translated_text and _CJK_RE.search(translated_text):
+            violations.append(
+                _make_violation(
+                    "translation_possible_untranslated",
+                    _SEVERITY_WARNING,
+                    idx,
+                    "Output still contains CJK characters; translation may have failed",
+                )
+            )
+
+        if not source_text or not translated_text:
+            continue
+
+        source_len = len(source_text)
+        translated_len = len(translated_text)
+        length_ratio = translated_len / max(source_len, 1)
+        if source_len >= 10 and length_ratio < 0.30:
+            violations.append(
+                _make_violation(
+                    "translation_possible_omission",
+                    _SEVERITY_WARNING,
+                    idx,
+                    (
+                        f"Translated cue is much shorter than source "
+                        f"(ratio={length_ratio:.2f}); possible omission"
+                    ),
+                )
+            )
+        if source_len <= 8 and translated_len >= 40 and length_ratio > 3.5:
+            violations.append(
+                _make_violation(
+                    "translation_possible_added_meaning",
+                    _SEVERITY_WARNING,
+                    idx,
+                    (
+                        f"Translated cue is much longer than source "
+                        f"(ratio={length_ratio:.2f}); possible added meaning"
+                    ),
+                )
+            )
+
+        if dialogue_profile == "live_action_adult":
+            if any(token in source_text for token in _ADULT_JA_MARKERS):
+                lowered = translated_text.lower()
+                if not any(token in lowered for token in _ADULT_EN_MARKERS):
+                    violations.append(
+                        _make_violation(
+                            "translation_possible_softened_adult_dialogue",
+                            _SEVERITY_WARNING,
+                            idx,
+                            (
+                                "Live-action/adult profile source appears explicit, "
+                                "but translation may be softened or euphemized"
+                            ),
+                        )
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +502,8 @@ def run_qc(
 
     # 9. ASR-origin warning passthrough
     if candidate is not None:
+        _add_translation_judge_warnings(candidate, cue_count, violations)
+
         for idx, seg in enumerate(candidate.segments[:cue_count], start=1):
             asr_meta = seg.meta.get("asr") if isinstance(seg.meta, dict) else None
             if not asr_meta:
