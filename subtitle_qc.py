@@ -387,6 +387,7 @@ def run_qc(
     max_line_chars: int = 42,
     max_lines: int = 2,
     min_cues: int = 1,
+    ocr_confidence_warn_below: float = 0.70,
 ) -> Dict[str, Any]:
     """Run all subtitle QC checks and return a machine-readable summary dict.
 
@@ -401,6 +402,8 @@ def run_qc(
         max_line_chars: Maximum characters per display line (default 42).
         max_lines: Maximum number of display lines per cue (default 2).
         min_cues: Minimum required number of cues (default 1).
+        ocr_confidence_warn_below: OCR confidence threshold below which cues
+            are flagged as warning-level low-confidence OCR output.
 
     Returns:
         A JSON-serialisable QC summary dict.  See module docstring for the
@@ -581,19 +584,38 @@ def run_qc(
         for idx, seg in enumerate(candidate.segments[:cue_count], start=1):
             asr_meta = seg.meta.get("asr") if isinstance(seg.meta, dict) else None
             if not asr_meta:
-                continue
-            for warning in asr_meta.get("warnings", []):
-                violations.append(
-                    _make_violation(
-                        "asr_low_confidence",
-                        _SEVERITY_WARNING,
-                        idx,
-                        (
-                            f"ASR warning {warning.get('type', 'unknown')}: "
-                            f"{warning.get('detail', 'low confidence source segment')}"
-                        ),
+                asr_meta = None
+            if asr_meta:
+                for warning in asr_meta.get("warnings", []):
+                    violations.append(
+                        _make_violation(
+                            "asr_low_confidence",
+                            _SEVERITY_WARNING,
+                            idx,
+                            (
+                                f"ASR warning {warning.get('type', 'unknown')}: "
+                                f"{warning.get('detail', 'low confidence source segment')}"
+                            ),
+                        )
                     )
-                )
+
+            if isinstance(seg.meta, dict) and "ocr_confidence" in seg.meta:
+                try:
+                    conf = float(seg.meta.get("ocr_confidence"))
+                except (TypeError, ValueError):
+                    conf = 0.0
+                if conf < ocr_confidence_warn_below:
+                    violations.append(
+                        _make_violation(
+                            "ocr_low_confidence",
+                            _SEVERITY_WARNING,
+                            idx,
+                            (
+                                f"OCR confidence {conf:.2f} is below threshold "
+                                f"{ocr_confidence_warn_below:.2f}"
+                            ),
+                        )
+                    )
 
         for warning in candidate.meta.get("asr_source_warnings", []):
             violations.append(

@@ -204,6 +204,10 @@ generate:
   prefer_audio_language: "auto"   # "en" | "ja" | "auto" (auto chooses EN if available else JA)
   use_llm_polish: true            # Apply LLM polishing when path involves MT
 
+# OCR subtitle handling (bitmap subtitle tracks)
+ocr:
+  confidence_warn_below: 0.70     # QC warning threshold for per-cue OCR confidence
+
 # Benchmark mode candidate generation.
 benchmark:
   translation_engines: ["marian"] # compare e.g. ["marian", "llm_direct", "hybrid"]
@@ -231,6 +235,7 @@ policy:
     review_score_threshold: 60   # Route to review when score < this value
     reject_score_threshold: 20   # Route to reject when score < this value
     asr_warning_review_density: 0.10  # Review when ASR warnings affect >=10% of cues
+    ocr_warning_review_density: 0.30  # Review when OCR warnings affect >=30% of cues
 
 # Subtitle QC validation
 # Applied automatically after generate mode writes the output SRT.
