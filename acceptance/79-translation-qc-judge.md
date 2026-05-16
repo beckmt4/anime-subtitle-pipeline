@@ -36,6 +36,29 @@ Generate mode now includes `translation_qc` metadata for translated outputs.
 Benchmark candidate metadata now includes `translation_qc` summaries for
 JP-source translated candidates.
 
+Generate-mode QC sidecar (`*.en.qc.json`) now persists both subtitle and
+translation QC under a versioned schema:
+
+- `schema_version: 2`
+- `subtitle_qc`
+- `translation_qc`
+- `overall_qc_status`
+
+Routing integration with downstream review dependencies now includes translation
+QC status/counts:
+
+- `translation_qc.warn` can trigger REVIEW (Issue #56 dependency)
+- `translation_qc.fail` can trigger REJECT (Issue #22/#56 dependency)
+- `candidate_score` includes translation QC status + warning/fail counts, and
+  routing `triggered_by` records translation-QC drivers.
+
+## Epic/dependency mapping update
+
+- Parent epic `beckmt4/anime-subtitle-pipeline#73`: translation QC findings are
+  now persisted and enforced in generate-mode routing.
+- Review-routing dependencies `#22` and `#56`: translation-QC-driven REVIEW/REJECT
+  triggers are now available in policy routing output.
+
 ## Tests
 
 - `tests/test_translation_qc.py`

@@ -3,6 +3,7 @@
 Uses monkeypatching to avoid heavy I/O / model calls. Focuses purely on
 decision logic given different MediaInfo configurations.
 """
+import json
 from pathlib import Path
 from typing import List
 
@@ -833,6 +834,27 @@ def test_score_candidate_grade_thresholds():
     )
 
 
+def test_score_candidate_includes_translation_qc_summary_fields():
+    """candidate_score should carry translation QC status + warning/fail counts."""
+    cand = _make_candidate(segment_count=10)
+    qc_clean = _make_qc_summary(cue_count=10, error_count=0)
+    translation_qc = {
+        "qc_status": "warn",
+        "summary": {"warning_count": 2, "fail_count": 0, "review_required_segments": 1},
+    }
+    result = orch.score_candidate(
+        "embedded_jp_mt",
+        cand,
+        qc_clean,
+        translation_qc_summary=translation_qc,
+    )
+    assert result["translation_qc_status"] == "warn", result
+    assert result["translation_qc_warning_count"] == 2, result
+    assert result["translation_qc_fail_count"] == 0, result
+    factor_names = {f["name"] for f in result["factors"]}
+    assert "translation_qc_status" in factor_names, result
+
+
 # ---------------------------------------------------------------------------
 # _compare_candidates unit tests
 # ---------------------------------------------------------------------------
@@ -1435,6 +1457,46 @@ def test_policy_engine_custom_thresholds():
     print("✓ PolicyEngine: custom thresholds respected")
 
 
+def test_policy_engine_translation_qc_warn_and_fail_thresholds():
+    """Translation QC warn/fail status should drive REVIEW/REJECT decisions."""
+    from core.policy import PolicyEngine
+
+    cfg = Config()
+    cfg._config.setdefault("policy", {})
+    cfg._config["policy"]["routing"] = {
+        "review_score_threshold": 60,
+        "reject_score_threshold": 20,
+        "translation_qc_review_statuses": ["warn"],
+        "translation_qc_warn_review_min_count": 1,
+        "translation_qc_reject_statuses": ["fail"],
+        "translation_qc_fail_reject_min_count": 1,
+    }
+    engine = PolicyEngine(cfg)
+    report = {"review_recommended": False, "review_reason": None}
+
+    warn_score = {
+        "total_score": 95.0,
+        "grade": "A",
+        "translation_qc_status": "warn",
+        "translation_qc_warning_count": 2,
+        "translation_qc_fail_count": 0,
+    }
+    warn_result = engine.route(warn_score, report)
+    assert warn_result["decision"] == "review", warn_result
+    assert "translation_qc_warn" in warn_result["triggered_by"], warn_result
+
+    fail_score = {
+        "total_score": 95.0,
+        "grade": "A",
+        "translation_qc_status": "fail",
+        "translation_qc_warning_count": 0,
+        "translation_qc_fail_count": 1,
+    }
+    fail_result = engine.route(fail_score, report)
+    assert fail_result["decision"] == "reject", fail_result
+    assert "translation_qc_fail" in fail_result["triggered_by"], fail_result
+
+
 # ---------------------------------------------------------------------------
 # Routing decision integration tests (run_generate metadata)
 # ---------------------------------------------------------------------------
@@ -1479,6 +1541,51 @@ def test_routing_decision_review_for_mt_strategies():
         )
         assert "review_recommended" in rd["triggered_by"], rd
     print("✓ MT strategies (embedded_jp_mt, ja_audio_asr_mt) → routing decision REVIEW")
+
+
+def test_routing_decision_not_pass_when_translation_qc_warn(monkeypatch):
+    """Translation QC warn must prevent PASS for JP-source strategy outputs."""
+    def _warn_translation_qc(*args, **kwargs):
+        return {
+            "candidate_id": "embedded_jp_mt_s10",
+            "qc_status": "warn",
+            "score": 0.72,
+            "findings": [{"segment_index": 1, "severity": "warning", "code": "possible_omission"}],
+            "segment_results": [{"segment_index": 1, "review_required": True, "status": "warn", "finding_count": 1}],
+            "summary": {"warning_count": 1, "fail_count": 0, "review_required_segments": 1},
+        }
+
+    monkeypatch.setattr(orch, "run_translation_qc", _warn_translation_qc)
+    cfg = Config()
+    media = _media(jp_sub=True)
+    meta = orch.run_generate(media, cfg)
+    rd = meta["routing_decision"]
+    assert rd["decision"] in ("review", "reject"), rd
+    assert "translation_qc_warn" in rd["triggered_by"], rd
+
+
+def test_qc_json_contains_subtitle_and_translation_qc(monkeypatch):
+    """QC sidecar should persist both subtitle_qc and translation_qc with schema_version=2."""
+    def _warn_translation_qc(*args, **kwargs):
+        return {
+            "candidate_id": "embedded_jp_mt_s10",
+            "qc_status": "warn",
+            "score": 0.72,
+            "findings": [{"segment_index": 1, "severity": "warning", "code": "possible_omission"}],
+            "segment_results": [{"segment_index": 1, "review_required": True, "status": "warn", "finding_count": 1}],
+            "summary": {"warning_count": 1, "fail_count": 0, "review_required_segments": 1},
+        }
+
+    monkeypatch.setattr(orch, "run_translation_qc", _warn_translation_qc)
+    cfg = Config()
+    media = _media(jp_sub=True)
+    meta = orch.run_generate(media, cfg)
+    qc_payload = json.loads(Path(meta["qc_json"]).read_text(encoding="utf-8"))
+    assert qc_payload["schema_version"] == 2, qc_payload
+    assert "subtitle_qc" in qc_payload, qc_payload
+    assert "translation_qc" in qc_payload, qc_payload
+    assert qc_payload["translation_qc"]["qc_status"] == "warn", qc_payload
+    assert qc_payload["overall_qc_status"] == "warn", qc_payload
 
 
 def test_routing_decision_review_for_untagged_audio_fallback():
