@@ -327,6 +327,7 @@ def score_candidate(
     strategy: str,
     candidate: SubtitleCandidate,
     qc_summary: Dict[str, Any] | None = None,
+    translation_qc_summary: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Score a subtitle candidate and expose the contributing factors.
 
@@ -432,7 +433,7 @@ def score_candidate(
         "contribution": yield_contribution,
     })
 
-    # --- Factor 4: ASR warning density penalty ---
+    # --- Factor 4: ASR/OCR warning density penalties ---
     _MAX_ASR_PENALTY = 25
     _FULL_ASR_PENALTY_DENSITY = 0.25
     asr_warning_count = 0
@@ -480,6 +481,31 @@ def score_candidate(
             "contribution": ocr_penalty,
         })
 
+    translation_qc_status = "pass"
+    translation_qc_warning_count = 0
+    translation_qc_fail_count = 0
+    if translation_qc_summary:
+        translation_qc_status = str(translation_qc_summary.get("qc_status", "pass"))
+        tqc_counts = translation_qc_summary.get("summary", {})
+        translation_qc_warning_count = int(tqc_counts.get("warning_count", 0) or 0)
+        translation_qc_fail_count = int(tqc_counts.get("fail_count", 0) or 0)
+        translation_penalty = 0.0
+        if translation_qc_status == "fail" or translation_qc_fail_count > 0:
+            translation_penalty = -20.0
+        elif translation_qc_status == "warn" or translation_qc_warning_count > 0:
+            translation_penalty = -8.0
+        if translation_penalty:
+            factors.append({
+                "name": "translation_qc_status",
+                "description": (
+                    "Penalty for translation-faithfulness QC findings; "
+                    "warn/fail states require additional review"
+                ),
+                "raw_value": translation_qc_status,
+                "max_contribution": 0,
+                "contribution": translation_penalty,
+            })
+
     total = round(sum(f["contribution"] for f in factors), 2)
     total = min(max(total, 0.0), 100.0)
 
@@ -497,6 +523,9 @@ def score_candidate(
         "asr_warning_density": round(asr_warning_density, 4),
         "ocr_warning_count": ocr_warning_count,
         "ocr_warning_density": round(ocr_warning_density, 4),
+        "translation_qc_status": translation_qc_status,
+        "translation_qc_warning_count": translation_qc_warning_count,
+        "translation_qc_fail_count": translation_qc_fail_count,
     }
 
 
@@ -515,6 +544,39 @@ def _log_candidate_score(score: Dict[str, Any]) -> None:
             f["max_contribution"],
             f["description"],
         )
+
+
+def _status_rank(status: str) -> int:
+    return {"pass": 0, "warn": 1, "fail": 2}.get(status, 2)
+
+
+def _subtitle_qc_status(qc_summary: Dict[str, Any]) -> str:
+    if not qc_summary.get("parsed_ok", False):
+        return "fail"
+    if int(qc_summary.get("error_count", 0) or 0) > 0:
+        return "fail"
+    if int(qc_summary.get("warning_count", 0) or 0) > 0:
+        return "warn"
+    return "pass"
+
+
+def _build_qc_payload(
+    subtitle_qc_summary: Dict[str, Any],
+    translation_qc_summary: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    subtitle_status = _subtitle_qc_status(subtitle_qc_summary)
+    translation_status = (
+        str(translation_qc_summary.get("qc_status", "pass"))
+        if translation_qc_summary is not None
+        else "pass"
+    )
+    overall_status = max((subtitle_status, translation_status), key=_status_rank)
+    return {
+        "schema_version": 2,
+        "subtitle_qc": subtitle_qc_summary,
+        "translation_qc": translation_qc_summary,
+        "overall_qc_status": overall_status,
+    }
 
 
 def _build_selection_report(
@@ -2070,6 +2132,7 @@ def run_generate(
                 candidate_metadata=candidate.meta,
                 config=cfg,
             )
+            candidate.meta["translation_qc"] = translation_qc_summary
 
         asr_quality = _asr_quality_summary(candidate)
         low_confidence_count = asr_quality.get("low_confidence_segment_count", 0)
@@ -2083,14 +2146,20 @@ def run_generate(
         # Write machine-readable QC summary alongside the SRT
         import json
         qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
-        qc_path.write_text(json.dumps(qc_summary, indent=2), encoding="utf-8")
+        qc_payload = _build_qc_payload(qc_summary, translation_qc_summary)
+        qc_path.write_text(json.dumps(qc_payload, indent=2), encoding="utf-8")
         logger.info("QC summary written: %s", qc_path.name)
         _reg_store_artifact(registry, media_hash, ARTIFACT_TYPE_QC_JSON, qc_path,
                             candidate_db_id=_final_db_id, run_db_id=_run_db_id)
 
         # Score the selected candidate and log an explainable breakdown
         with start_span("score_candidate"):
-            candidate_score = score_candidate(strategy, candidate, qc_summary)
+            candidate_score = score_candidate(
+                strategy,
+                candidate,
+                qc_summary,
+                translation_qc_summary=translation_qc_summary,
+            )
         _log_candidate_score(candidate_score)
 
         # Determine routing decision (PASS / REVIEW / REJECT) based on score
@@ -2118,6 +2187,7 @@ def run_generate(
             "output_srt": str(out_srt),
             "qc": qc_summary,
             "translation_qc": translation_qc_summary,
+            "overall_qc_status": qc_payload["overall_qc_status"],
             "qc_json": str(qc_path),
             "selection_report": selection_report,
             "candidate_score": candidate_score,

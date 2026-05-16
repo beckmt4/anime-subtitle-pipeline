@@ -236,6 +236,10 @@ policy:
     reject_score_threshold: 20   # Route to reject when score < this value
     asr_warning_review_density: 0.10  # Review when ASR warnings affect >=10% of cues
     ocr_warning_review_density: 0.30  # Review when OCR warnings affect >=30% of cues
+    translation_qc_review_statuses: ["warn"]  # Review when translation QC status matches
+    translation_qc_warn_review_min_count: 1    # Minimum warning_count to trigger review
+    translation_qc_reject_statuses: ["fail"]  # Reject when translation QC status matches
+    translation_qc_fail_reject_min_count: 1    # Minimum fail_count to trigger reject
 
 # Subtitle QC validation
 # Applied automatically after generate mode writes the output SRT.

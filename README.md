@@ -357,6 +357,21 @@ Translation-faithfulness QC (`translation_qc.run_translation_qc`) returns
 `possible_added_meaning`, `final_literal_entity_drift`, and `register_softened`.
 Generate-mode metadata includes this summary for translated outputs, and benchmark
 candidate metadata includes `translation_qc` summaries for JP-source candidates.
+Generate mode also writes a versioned QC sidecar (`*.en.qc.json`) with:
+
+```json
+{
+  "schema_version": 2,
+  "subtitle_qc": { "...": "subtitle_qc.run_qc output" },
+  "translation_qc": { "...": "translation_qc.run_translation_qc output or null" },
+  "overall_qc_status": "pass|warn|fail"
+}
+```
+
+Routing decisions consider translation QC findings in addition to score, ASR/OCR
+warning density, and strategy review flags. By default, `translation_qc.warn`
+routes to REVIEW and `translation_qc.fail` routes to REJECT; thresholds are
+configurable under `policy.routing`.
 
 Japanese-source translation is selected by `translation.engine`. `marian` is the
 offline baseline, `llm_direct` sends each source cue plus nearby context to the
