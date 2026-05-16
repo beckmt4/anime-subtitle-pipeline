@@ -21,7 +21,7 @@ from media_inspect import inspect_media, MediaInfo
 from audio_utils import extract_audio_with_ffmpeg
 from subtitle_utils import extract_subtitle_track
 from asr import FasterWhisperASR, build_candidate_from_segments
-from mt import translate_candidate_jp_to_en
+from mt import translate_candidate_jp_to_en_workflow
 from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candidate
 from models import SubtitleCandidate
 from compare_core import compare_candidates
@@ -137,6 +137,9 @@ def run_benchmark(
         media = inspect_media(str(video_path_obj))
 
     translation_engines = bc.translation_engines
+    allow_post_two_pass_llm = bool(
+        config.get("benchmark", "allow_post_two_pass_llm", default=False)
+    )
 
     logger.info("\n[Discovery Phase] Finding all JP/EN audio and subtitle tracks...")
 
@@ -199,8 +202,14 @@ def run_benchmark(
         for engine in translation_engines:
             logger.info("  Translating JP subtitle candidate with engine=%s", engine)
             with start_span("mt_embedded_jp", engine=engine):
-                mt_cand = translate_candidate_jp_to_en(ja_cand, config, engine=engine)
-            if use_llm and config.llm_enabled:
+                mt_cand = translate_candidate_jp_to_en_workflow(
+                    ja_cand, config, engine=engine, ja_candidate=ja_cand
+                )
+            run_post_mt_llm = use_llm and config.llm_enabled and (
+                mt_cand.meta.get("translation_workflow") != "literal_then_natural"
+                or allow_post_two_pass_llm
+            )
+            if run_post_mt_llm:
                 with start_span("llm_polish_embedded_jp"):
                     polished = polish_candidate_with_llm(mt_cand, config)
                     final_cand = enforce_constraints_on_candidate(polished, config)
@@ -224,6 +233,7 @@ def run_benchmark(
                 "translation_engine": final_cand.meta.get("translation_engine", engine),
                 "translation_model": final_cand.meta.get("translation_model") or final_cand.meta.get("model"),
                 "translation_mode": final_cand.meta.get("translation_mode"),
+                "translation_workflow": final_cand.meta.get("translation_workflow", "single_pass"),
                 "translation_fallback": final_cand.meta.get("translation_fallback", False),
                 "translation_qc": translation_qc,
             })
@@ -276,8 +286,14 @@ def run_benchmark(
         for engine in translation_engines:
             logger.info("  Translating JP audio candidate with engine=%s", engine)
             with start_span("mt_ja_audio", engine=engine):
-                mt_cand = translate_candidate_jp_to_en(ja_asr_candidate, config, engine=engine)
-            if use_llm and config.llm_enabled:
+                mt_cand = translate_candidate_jp_to_en_workflow(
+                    ja_asr_candidate, config, engine=engine, ja_candidate=ja_asr_candidate
+                )
+            run_post_mt_llm = use_llm and config.llm_enabled and (
+                mt_cand.meta.get("translation_workflow") != "literal_then_natural"
+                or allow_post_two_pass_llm
+            )
+            if run_post_mt_llm:
                 with start_span("llm_polish_ja_audio"):
                     polished = polish_candidate_with_llm(mt_cand, config)
                     final_cand = enforce_constraints_on_candidate(polished, config)
@@ -301,6 +317,7 @@ def run_benchmark(
                 "translation_engine": final_cand.meta.get("translation_engine", engine),
                 "translation_model": final_cand.meta.get("translation_model") or final_cand.meta.get("model"),
                 "translation_mode": final_cand.meta.get("translation_mode"),
+                "translation_workflow": final_cand.meta.get("translation_workflow", "single_pass"),
                 "translation_fallback": final_cand.meta.get("translation_fallback", False),
                 "translation_qc": translation_qc,
             })

@@ -31,6 +31,11 @@ Parent epic: beckmt4/anime-subtitle-pipeline#73
   - Records `translation_workflow`, `literal_pass_candidate_id` in final meta.
   - Stores `literal_pass_segments` when `save_intermediate=True`.
   - Timing is never changed; segment `start`/`end` always come from the source.
+- Added `translate_candidate_jp_to_en_workflow(candidate, config, engine=None, ...)`
+  selector helper used by production generate/benchmark paths.
+  - `single_pass` preserves existing `translate_candidate_jp_to_en(...)` behaviour.
+  - `literal_then_natural` runs `run_two_pass_translation(...)`.
+  - Benchmark engine overrides remain supported (`engine=` is forwarded).
 
 ### Natural adaptation — `llm_polish.py`
 
@@ -97,11 +102,23 @@ All three passes are traceable in the final candidate:
 - `docs/two-pass-translation-workflow.md` — explains single-pass vs two-pass,
   when to use each, config reference, candidate metadata, and API usage.
 
-## Deferred
+## Orchestrator + benchmark wiring (completed)
 
-- Wiring `translation.workflow` into `orchestrator.run_generate` so the pipeline
-  auto-selects two-pass when configured (currently `run_two_pass_translation` must
-  be called explicitly).
+- `orchestrator.run_generate(...)` JP-source branches now use
+  `translate_candidate_jp_to_en_workflow(...)`, so `translation.workflow` is honored
+  in normal CLI generate runs.
+- `benchmark.run_benchmark(...)` JP candidate generation also uses the same selector.
+- Double-polish prevention: when workflow is `literal_then_natural`, the generic
+  post-MT LLM polish pass is skipped by default in both generate and benchmark.
+  It can be explicitly re-enabled with:
+  - `generate.allow_post_two_pass_llm: true`
+  - `benchmark.allow_post_two_pass_llm: true`
+- Benchmark candidate metadata now records `translation_workflow` for JP-derived
+  candidates so reports clearly distinguish single-pass vs two-pass outputs.
+
+## Epic #73 acceptance mapping update
+
+- Parent epic `beckmt4/anime-subtitle-pipeline#73` mapping is now updated to mark
+  orchestrator/benchmark workflow selector wiring as implemented (no longer deferred).
 - Human review UI for surfacing `two_pass_qc_warning` segments.
 - Optional Pass 3 QC comparison (Japanese vs literal vs final scoring).
-- Per-profile workflow selection (e.g. `live_action_adult` auto-enables two-pass).

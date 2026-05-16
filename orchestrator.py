@@ -41,7 +41,7 @@ from media_inspect import MediaInfo
 from subtitle_utils import extract_subtitle_track, discover_sidecar_subtitles
 from audio_utils import extract_audio_with_ffmpeg
 from asr import FasterWhisperASR, build_candidate_from_segments
-from mt import translate_candidate_jp_to_en
+from mt import translate_candidate_jp_to_en_workflow
 from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candidate
 from srt_writer import write_candidate_srt
 from models import SubtitleCandidate
@@ -1312,6 +1312,21 @@ def run_generate(
         and cfg.llm_enabled
         and not no_llm
     )
+    allow_post_two_pass_llm = bool(
+        cfg.get("generate", "allow_post_two_pass_llm", default=False)
+    )
+
+    def _should_apply_post_mt_llm(mt_candidate: SubtitleCandidate) -> bool:
+        if not use_llm_polish:
+            return False
+        workflow = str(mt_candidate.meta.get("translation_workflow", "single_pass")).strip().lower()
+        if workflow == "literal_then_natural" and not allow_post_two_pass_llm:
+            logger.info(
+                "Skipping generic LLM polish for %s because two-pass workflow already produced natural output",
+                mt_candidate.id,
+            )
+            return False
+        return True
     if no_llm:
         logger.info("LLM polish disabled via --no-llm (CLI override)")
     if inspect_only:
@@ -1689,7 +1704,9 @@ def run_generate(
                 registry, media_hash, ja_candidate, source="embedded",
             )
             with start_span("mt_sidecar_jp"):
-                mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
+                mt_candidate = translate_candidate_jp_to_en_workflow(
+                    ja_candidate, cfg, ja_candidate=ja_candidate
+                )
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
@@ -1697,7 +1714,7 @@ def run_generate(
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
-            if use_llm_polish:
+            if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_sidecar_jp"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
                     candidate = enforce_constraints_on_candidate(polished, cfg)
@@ -1721,7 +1738,9 @@ def run_generate(
                 registry, media_hash, ja_candidate, source="embedded",
             )
             with start_span("mt_embedded_jp"):
-                mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
+                mt_candidate = translate_candidate_jp_to_en_workflow(
+                    ja_candidate, cfg, ja_candidate=ja_candidate
+                )
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
@@ -1730,7 +1749,7 @@ def run_generate(
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
-            if use_llm_polish:
+            if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_embedded_jp"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
                     # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
@@ -1760,7 +1779,9 @@ def run_generate(
                 registry, media_hash, ja_candidate, source="embedded", model_version="ocr",
             )
             with start_span("mt_bitmap_jp_ocr"):
-                mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
+                mt_candidate = translate_candidate_jp_to_en_workflow(
+                    ja_candidate, cfg, ja_candidate=ja_candidate
+                )
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
@@ -1768,7 +1789,7 @@ def run_generate(
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
-            if use_llm_polish:
+            if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_bitmap_jp_ocr"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
                     candidate = enforce_constraints_on_candidate(polished, cfg)
@@ -1835,7 +1856,9 @@ def run_generate(
                 model_version=cfg.asr_model_name,
             )
             with start_span("mt_ja_audio"):
-                mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
+                mt_candidate = translate_candidate_jp_to_en_workflow(
+                    ja_asr_candidate, cfg, ja_candidate=ja_asr_candidate
+                )
                 _propagate_asr_meta(ja_asr_candidate, mt_candidate)
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
@@ -1845,7 +1868,7 @@ def run_generate(
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
-            if use_llm_polish:
+            if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_ja_audio"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
                     # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
@@ -1955,7 +1978,9 @@ def run_generate(
                 model_version=cfg.asr_model_name,
             )
             with start_span("mt_untagged_audio"):
-                mt_candidate = translate_candidate_jp_to_en(ja_asr_candidate, cfg)
+                mt_candidate = translate_candidate_jp_to_en_workflow(
+                    ja_asr_candidate, cfg, ja_candidate=ja_asr_candidate
+                )
                 _propagate_asr_meta(ja_asr_candidate, mt_candidate)
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
@@ -1965,7 +1990,7 @@ def run_generate(
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
-            if use_llm_polish:
+            if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_untagged_audio"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
                     # polish_candidate_with_llm already appends "_llm".
@@ -2102,6 +2127,7 @@ def run_generate(
             "translation_engine": candidate.meta.get("translation_engine"),
             "translation_model": candidate.meta.get("translation_model") or candidate.meta.get("model"),
             "translation_mode": candidate.meta.get("translation_mode"),
+            "translation_workflow": candidate.meta.get("translation_workflow"),
             "translation_fallback": candidate.meta.get("translation_fallback", False),
         }
         if polish_stats is not None:
