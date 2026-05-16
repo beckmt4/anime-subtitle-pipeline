@@ -322,3 +322,6 @@ class TestDefaultConfigTranslationPlacement:
 
     def test_translation_mode_is_present(self, default_cfg):
         assert default_cfg.translation_mode == "accuracy_first"
+
+    def test_translation_dialogue_profile_is_present(self, default_cfg):
+        assert default_cfg.translation_dialogue_profile == "default"

@@ -274,6 +274,7 @@ translation:
   fallback_engine: "marian"
   context_window_segments: 4
   mode: "accuracy_first"          # literal | natural_subtitle | accuracy_first
+  dialogue_profile: "default"     # default | live_action_adult
 
 generate:
   prefer_subtitles: true          # Prefer existing EN subs
@@ -311,15 +312,19 @@ ASR-derived candidates carry `asr_quality` metadata with a clean/warn/fail
 status, low-confidence segment counts, threshold values, and per-segment
 `meta.asr.warnings`. The metadata is preserved through MT and LLM polish so QC
 can report `asr_low_confidence` findings for translated lines that started from
-weak transcription. ASR warning density also reduces the candidate score and
-routes outputs to review at the configured policy threshold. SRT writing clamps
-adjacent cue timings to keep at least `subtitles.min_gap_sec` between cues.
+weak transcription. QC also includes translation-judge warnings for likely
+untranslated output, omissions, added meaning, and softened explicit dialogue
+under the `live_action_adult` profile. ASR warning density also reduces the
+candidate score and routes outputs to review at the configured policy threshold.
+SRT writing clamps adjacent cue timings to keep at least `subtitles.min_gap_sec`
+between cues.
 
 Japanese-source translation is selected by `translation.engine`. `marian` is the
 offline baseline, `llm_direct` sends each source cue plus nearby context to the
 local Ollama-compatible LLM endpoint, and `hybrid` runs MarianMT first, then asks
 the LLM to translate with the Marian baseline available as context. Candidate
-metadata records engine, model, mode, fallback status, and baseline details.
+metadata records engine, model, mode, dialogue profile, fallback status, and
+baseline details.
 
 Benchmark metrics:
 - **WER** – Word Error Rate (lower better)

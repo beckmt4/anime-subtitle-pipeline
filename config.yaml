@@ -76,6 +76,7 @@ translation:
   fallback_engine: "marian"       # used when llm_direct/hybrid fails
   context_window_segments: 4      # previous/next source segments in LLM prompt
   mode: "accuracy_first"          # literal | natural_subtitle | accuracy_first
+  dialogue_profile: "default"     # default | live_action_adult
   timeout: 60                     # seconds for LLM direct translation calls
 
 # LLM Polishing (Optional)
