@@ -38,7 +38,7 @@ from typing import Dict, Any
 
 from config import Config
 from media_inspect import MediaInfo
-from subtitle_utils import extract_subtitle_track
+from subtitle_utils import extract_subtitle_track, discover_sidecar_subtitles
 from audio_utils import extract_audio_with_ffmpeg
 from asr import FasterWhisperASR, build_candidate_from_segments
 from mt import translate_candidate_jp_to_en
@@ -64,6 +64,7 @@ from core.artifacts import (
 )
 from core.artifacts.pipeline_wiring import open_registry, compute_media_hash  # noqa: F401  (re-exported)
 from core.policy import PolicyEngine
+from core.ocr import OCRBackend
 
 
 logger = logging.getLogger(__name__)
@@ -81,9 +82,13 @@ _PROBE_FAILED: str = "probe_failed"
 # introduces.  Higher-tier sources require less lossy transformation and are
 # expected to be more accurate out of the box.
 _STRATEGY_CONFIDENCE_TIER: Dict[str, str] = {
+    "sidecar_en": "high",
     "embedded_en": "high",
+    "bitmap_en_ocr": "medium",
     "en_audio_asr": "medium",
+    "sidecar_jp_mt": "low",
     "embedded_jp_mt": "low",
+    "bitmap_jp_ocr_mt": "low",
     "ja_audio_asr_mt": "low",
     "untagged_audio_asr_mt": "very_low",
 }
@@ -98,9 +103,13 @@ _STRATEGY_CONFIDENCE_TIER: Dict[str, str] = {
 #   ja_audio_asr_mt     — Japanese audio → ASR → MT (two lossy steps)            → 30
 #   untagged_audio_asr_mt — unknown audio → ASR → MT + source uncertainty        → 15
 _STRATEGY_BASE_SCORE: Dict[str, int] = {
+    "sidecar_en": 70,
     "embedded_en": 70,
+    "bitmap_en_ocr": 48,
     "en_audio_asr": 55,
+    "sidecar_jp_mt": 40,
     "embedded_jp_mt": 40,
+    "bitmap_jp_ocr_mt": 32,
     "ja_audio_asr_mt": 30,
     "untagged_audio_asr_mt": 15,
 }
@@ -115,7 +124,13 @@ _SCORE_GRADE_THRESHOLDS = [
 
 # Strategies that involve machine translation or an untagged fallback should
 # be flagged for human review because accuracy cannot be guaranteed.
-_REVIEW_RECOMMENDED_STRATEGIES = {"embedded_jp_mt", "ja_audio_asr_mt", "untagged_audio_asr_mt"}
+_REVIEW_RECOMMENDED_STRATEGIES = {
+    "sidecar_jp_mt",
+    "embedded_jp_mt",
+    "bitmap_jp_ocr_mt",
+    "ja_audio_asr_mt",
+    "untagged_audio_asr_mt",
+}
 
 
 # ISO-639-1 → common ISO-639-2 / localized variants that should all be treated
@@ -167,6 +182,16 @@ def _first_text_sub(media: MediaInfo, lang: str) -> int | None:
     return None
 
 
+def _first_bitmap_sub(media: MediaInfo, lang: str) -> int | None:
+    for s in media.subtitle_streams:
+        if not s.is_bitmap:
+            continue
+        raw = s.language or s.raw_language
+        if _lang_matches(raw, lang):
+            return s.index
+    return None
+
+
 def _first_audio_order(media: MediaInfo, lang: str) -> int | None:
     for order, stream in enumerate(media.audio_streams):
         raw = stream.language or stream.raw_language
@@ -180,6 +205,13 @@ def _first_audio_order(media: MediaInfo, lang: str) -> int | None:
             "  audio stream order=%d idx=%d (codec=%s lang=%s): rejected — does not match target '%s'",
             order, stream.index, stream.codec, raw or "?", lang,
         )
+    return None
+
+
+def _first_sidecar(sidecars: list[SubtitleCandidate], lang: str) -> SubtitleCandidate | None:
+    for cand in sidecars:
+        if _lang_matches(cand.language, lang):
+            return cand
     return None
 
 
@@ -405,6 +437,8 @@ def score_candidate(
     _FULL_ASR_PENALTY_DENSITY = 0.25
     asr_warning_count = 0
     asr_warning_density = 0.0
+    ocr_warning_count = 0
+    ocr_warning_density = 0.0
     if qc_summary is not None:
         cue_count = qc_summary.get("cue_count", 0)
         violations = qc_summary.get("violations", [])
@@ -412,8 +446,13 @@ def score_candidate(
             1 for v in violations
             if v.get("type") in {"asr_low_confidence", "asr_source_warning"}
         )
+        ocr_warning_count = sum(
+            1 for v in violations
+            if v.get("type") in {"ocr_low_confidence"}
+        )
         if cue_count > 0:
             asr_warning_density = asr_warning_count / cue_count
+            ocr_warning_density = ocr_warning_count / cue_count
     if asr_warning_count:
         penalty_ratio = min(asr_warning_density / _FULL_ASR_PENALTY_DENSITY, 1.0)
         asr_penalty = round(-penalty_ratio * _MAX_ASR_PENALTY, 2)
@@ -426,6 +465,19 @@ def score_candidate(
             "raw_value": round(asr_warning_density, 4),
             "max_contribution": 0,
             "contribution": asr_penalty,
+        })
+    if ocr_warning_count:
+        penalty_ratio = min(ocr_warning_density / _FULL_ASR_PENALTY_DENSITY, 1.0)
+        ocr_penalty = round(-penalty_ratio * _MAX_ASR_PENALTY, 2)
+        factors.append({
+            "name": "ocr_warning_density",
+            "description": (
+                "Penalty for OCR-origin warning density; high density means "
+                "subtitle text should be manually reviewed"
+            ),
+            "raw_value": round(ocr_warning_density, 4),
+            "max_contribution": 0,
+            "contribution": ocr_penalty,
         })
 
     total = round(sum(f["contribution"] for f in factors), 2)
@@ -443,6 +495,8 @@ def score_candidate(
         "factors": factors,
         "asr_warning_count": asr_warning_count,
         "asr_warning_density": round(asr_warning_density, 4),
+        "ocr_warning_count": ocr_warning_count,
+        "ocr_warning_density": round(ocr_warning_density, 4),
     }
 
 
@@ -465,10 +519,15 @@ def _log_candidate_score(score: Dict[str, Any]) -> None:
 
 def _build_selection_report(
     strategy: str,
+    orig_en_sidecar: str | None,
+    orig_ja_sidecar: str | None,
     orig_en_sub_idx: int | None,
     orig_ja_sub_idx: int | None,
+    orig_en_bitmap_idx: int | None,
+    orig_ja_bitmap_idx: int | None,
     orig_en_audio_order: int | None,
     orig_ja_audio_order: int | None,
+    ocr_enabled: bool,
     prefer_subtitles: bool,
     prefer_audio_language: str,
     skip_embedded_en: bool,
@@ -503,7 +562,15 @@ def _build_selection_report(
 
     if audio_track_override is not None:
         overrides_active.append(f"audio_track_override={audio_track_override}")
-        for src in ("embedded_en", "en_audio_asr", "embedded_jp_mt"):
+        for src in (
+            "sidecar_en",
+            "embedded_en",
+            "bitmap_en_ocr",
+            "en_audio_asr",
+            "sidecar_jp_mt",
+            "embedded_jp_mt",
+            "bitmap_jp_ocr_mt",
+        ):
             sources_evaluated.append({
                 "source": src,
                 "stream": None,
@@ -531,6 +598,37 @@ def _build_selection_report(
     else:
         if skip_embedded_en:
             overrides_active.append("skip_embedded_en")
+
+        # --- sidecar_en ---
+        en_sidecar_detected = orig_en_sidecar is not None
+        if not en_sidecar_detected:
+            en_sidecar_status = "not_available"
+            en_sidecar_reason = "No English sidecar subtitle discovered"
+        elif skip_embedded_en:
+            en_sidecar_status = "skipped"
+            en_sidecar_reason = (
+                "skip_embedded_en override active (--extract-en-subs); "
+                "bypassed so generation pipeline produces an independent SRT"
+            )
+        elif not prefer_subtitles:
+            en_sidecar_status = "skipped"
+            en_sidecar_reason = "prefer_subtitles=False in config"
+        elif strategy == "sidecar_en":
+            en_sidecar_status = "selected"
+            en_sidecar_reason = (
+                f"Highest-priority source (sidecar:{orig_en_sidecar}); "
+                "direct English sidecar subtitles require no processing"
+            )
+        else:
+            en_sidecar_status = "skipped"
+            en_sidecar_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "sidecar_en",
+            "stream": f"sidecar:{orig_en_sidecar}" if en_sidecar_detected else None,
+            "detected": en_sidecar_detected,
+            "status": en_sidecar_status,
+            "reason": en_sidecar_reason,
+        })
 
         # --- embedded_en ---
         en_sub_detected = orig_en_sub_idx is not None
@@ -561,6 +659,31 @@ def _build_selection_report(
             "detected": en_sub_detected,
             "status": en_sub_status,
             "reason": en_sub_reason,
+        })
+
+        # --- bitmap_en_ocr ---
+        en_bitmap_detected = orig_en_bitmap_idx is not None
+        if not en_bitmap_detected:
+            en_bitmap_status = "not_available"
+            en_bitmap_reason = "No English bitmap subtitle stream detected in container"
+        elif not ocr_enabled:
+            en_bitmap_status = "skipped"
+            en_bitmap_reason = "OCR backend not configured"
+        elif strategy == "bitmap_en_ocr":
+            en_bitmap_status = "selected"
+            en_bitmap_reason = (
+                f"English bitmap subtitle stream (sub:{orig_en_bitmap_idx}) selected; "
+                "processed through OCR to text"
+            )
+        else:
+            en_bitmap_status = "skipped"
+            en_bitmap_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "bitmap_en_ocr",
+            "stream": f"sub:{orig_en_bitmap_idx}" if en_bitmap_detected else None,
+            "detected": en_bitmap_detected,
+            "status": en_bitmap_status,
+            "reason": en_bitmap_reason,
         })
 
         # --- en_audio_asr ---
@@ -632,6 +755,28 @@ def _build_selection_report(
             "reason": en_audio_reason,
         })
 
+        # --- sidecar_jp_mt ---
+        ja_sidecar_detected = orig_ja_sidecar is not None
+        if not ja_sidecar_detected:
+            ja_sidecar_status = "not_available"
+            ja_sidecar_reason = "No Japanese sidecar subtitle discovered"
+        elif strategy == "sidecar_jp_mt":
+            ja_sidecar_status = "selected"
+            ja_sidecar_reason = (
+                f"Japanese sidecar subtitle (sidecar:{orig_ja_sidecar}) selected; "
+                "fed through MT pipeline → English"
+            )
+        else:
+            ja_sidecar_status = "skipped"
+            ja_sidecar_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "sidecar_jp_mt",
+            "stream": f"sidecar:{orig_ja_sidecar}" if ja_sidecar_detected else None,
+            "detected": ja_sidecar_detected,
+            "status": ja_sidecar_status,
+            "reason": ja_sidecar_reason,
+        })
+
         # --- embedded_jp_mt ---
         ja_sub_detected = orig_ja_sub_idx is not None
         if not ja_sub_detected:
@@ -652,6 +797,31 @@ def _build_selection_report(
             "detected": ja_sub_detected,
             "status": ja_sub_status,
             "reason": ja_sub_reason,
+        })
+
+        # --- bitmap_jp_ocr_mt ---
+        ja_bitmap_detected = orig_ja_bitmap_idx is not None
+        if not ja_bitmap_detected:
+            ja_bitmap_status = "not_available"
+            ja_bitmap_reason = "No Japanese bitmap subtitle stream detected in container"
+        elif not ocr_enabled:
+            ja_bitmap_status = "skipped"
+            ja_bitmap_reason = "OCR backend not configured"
+        elif strategy == "bitmap_jp_ocr_mt":
+            ja_bitmap_status = "selected"
+            ja_bitmap_reason = (
+                f"Japanese bitmap subtitle stream (sub:{orig_ja_bitmap_idx}) selected; "
+                "processed through OCR then MT → English"
+            )
+        else:
+            ja_bitmap_status = "skipped"
+            ja_bitmap_reason = f"Lower priority than selected source ({strategy})"
+        sources_evaluated.append({
+            "source": "bitmap_jp_ocr_mt",
+            "stream": f"sub:{orig_ja_bitmap_idx}" if ja_bitmap_detected else None,
+            "detected": ja_bitmap_detected,
+            "status": ja_bitmap_status,
+            "reason": ja_bitmap_reason,
         })
 
         # --- ja_audio_asr_mt ---
@@ -1095,6 +1265,7 @@ def run_generate(
     media_hash: Optional[str] = None,
     inspect_only: bool = False,
     source_language: str = "auto",
+    ocr_backend: OCRBackend | None = None,
 ) -> Dict[str, Any]:
     """Production generation flow selecting best available source for EN subtitles.
 
@@ -1112,6 +1283,8 @@ def run_generate(
             regardless of container metadata.  This overrides the language probe and
             re-routes audio to the appropriate ASR path (e.g. 'ja' → ja_audio_asr_mt,
             'en' → en_audio_asr).  Mirrors the CLI --source-language flag.
+        ocr_backend: Optional OCR backend used to process bitmap subtitle
+            streams as first-class sources.
         skip_embedded_en: When True, ignore any embedded English subtitle tracks and
             force the pipeline through ASR → MT (→ LLM). Used with --extract-en-subs
             so the extracted embedded subs and the freshly generated subs can be
@@ -1149,8 +1322,13 @@ def run_generate(
     logger.info("=" * 70)
 
     # Detect available sources
+    sidecar_candidates = discover_sidecar_subtitles(video_path)
+    en_sidecar = _first_sidecar(sidecar_candidates, "en")
+    ja_sidecar = _first_sidecar(sidecar_candidates, "ja")
     en_sub_idx = _first_text_sub(media, "en")
     ja_sub_idx = _first_text_sub(media, "ja")
+    en_bitmap_sub_idx = _first_bitmap_sub(media, "en")
+    ja_bitmap_sub_idx = _first_bitmap_sub(media, "ja")
     en_audio_order = _first_audio_order(media, "en")
     ja_audio_order = _first_audio_order(media, "ja")
 
@@ -1158,6 +1336,10 @@ def run_generate(
     # so the selection report can explain what was originally seen in the container.
     orig_en_sub_idx = en_sub_idx
     orig_ja_sub_idx = ja_sub_idx
+    orig_en_sidecar = en_sidecar.origin_stream.replace("sidecar:", "") if en_sidecar else None
+    orig_ja_sidecar = ja_sidecar.origin_stream.replace("sidecar:", "") if ja_sidecar else None
+    orig_en_bitmap_sub_idx = en_bitmap_sub_idx
+    orig_ja_bitmap_sub_idx = ja_bitmap_sub_idx
     orig_en_audio_order = en_audio_order
     orig_ja_audio_order = ja_audio_order
     probed_lang: str | None = None
@@ -1172,7 +1354,16 @@ def run_generate(
     selected_untagged_audio_order: int | None = None
 
     logger.info(
-        f"Sources detected: en_sub={en_sub_idx} ja_sub={ja_sub_idx} en_audio={en_audio_order} ja_audio={ja_audio_order}"
+        "Sources detected: en_sidecar=%s ja_sidecar=%s en_sub=%s ja_sub=%s "
+        "en_bitmap=%s ja_bitmap=%s en_audio=%s ja_audio=%s",
+        orig_en_sidecar,
+        orig_ja_sidecar,
+        en_sub_idx,
+        ja_sub_idx,
+        en_bitmap_sub_idx,
+        ja_bitmap_sub_idx,
+        en_audio_order,
+        ja_audio_order,
     )
 
     # --- CLI --source-language override ---
@@ -1326,6 +1517,12 @@ def run_generate(
             "forcing generation pipeline for comparison output."
         )
         en_sub_idx = None
+    if skip_embedded_en and en_sidecar is not None:
+        logger.info(
+            "skip_embedded_en=True: bypassing sidecar EN subtitles, "
+            "forcing generation pipeline for comparison output."
+        )
+        en_sidecar = None
 
     # CLI --audio-track override: if set, short-circuit the decision tree and
     # force the chosen track through the ja_audio_asr → MT (→ LLM) path. This
@@ -1342,17 +1539,29 @@ def run_generate(
         )
         ja_audio_order = audio_track_override
         # Zero out the upstream branches so the decision tree can't pick them.
+        en_sidecar = None
+        ja_sidecar = None
         en_sub_idx = None
         ja_sub_idx = None
+        en_bitmap_sub_idx = None
+        ja_bitmap_sub_idx = None
         en_audio_order = None
 
     if inspect_only:
-        if prefer_subtitles and en_sub_idx is not None:
+        if prefer_subtitles and en_sidecar is not None:
+            strategy = "sidecar_en"
+        elif prefer_subtitles and en_sub_idx is not None:
             strategy = "embedded_en"
+        elif prefer_subtitles and en_bitmap_sub_idx is not None and ocr_backend is not None:
+            strategy = "bitmap_en_ocr"
         elif prefer_audio_language == "en" and en_audio_order is not None:
             strategy = "en_audio_asr"
+        elif ja_sidecar is not None:
+            strategy = "sidecar_jp_mt"
         elif ja_sub_idx is not None:
             strategy = "embedded_jp_mt"
+        elif ja_bitmap_sub_idx is not None and ocr_backend is not None:
+            strategy = "bitmap_jp_ocr_mt"
         elif prefer_audio_language in ["ja", "auto"] and ja_audio_order is not None:
             strategy = "ja_audio_asr_mt"
         elif en_audio_order is not None:
@@ -1369,10 +1578,15 @@ def run_generate(
 
         selection_report = _build_selection_report(
             strategy=strategy,
+            orig_en_sidecar=orig_en_sidecar,
+            orig_ja_sidecar=orig_ja_sidecar,
             orig_en_sub_idx=orig_en_sub_idx,
             orig_ja_sub_idx=orig_ja_sub_idx,
+            orig_en_bitmap_idx=orig_en_bitmap_sub_idx,
+            orig_ja_bitmap_idx=orig_ja_bitmap_sub_idx,
             orig_en_audio_order=orig_en_audio_order,
             orig_ja_audio_order=orig_ja_audio_order,
+            ocr_enabled=ocr_backend is not None,
             prefer_subtitles=prefer_subtitles,
             prefer_audio_language=prefer_audio_language,
             skip_embedded_en=skip_embedded_en,
@@ -1410,7 +1624,14 @@ def run_generate(
         translation_qc_summary: Dict[str, Any] | None = None
 
         # Decision tree
-        if prefer_subtitles and en_sub_idx is not None:
+        if prefer_subtitles and en_sidecar is not None:
+            strategy = "sidecar_en"
+            logger.info("Strategy: Use sidecar English subtitles")
+            candidate = en_sidecar
+            _final_db_id = _reg_store_candidate(
+                registry, media_hash, candidate, source="embedded",
+            )
+        elif prefer_subtitles and en_sub_idx is not None:
             strategy = "embedded_en"
             logger.info("Strategy: Use embedded English subtitles")
             with start_span("extract_embedded_en"):
@@ -1418,6 +1639,21 @@ def run_generate(
                                                    output_dir=Path(cfg.get_path("temp")))
             _final_db_id = _reg_store_candidate(
                 registry, media_hash, candidate, source="embedded",
+            )
+        elif prefer_subtitles and en_bitmap_sub_idx is not None and ocr_backend is not None:
+            strategy = "bitmap_en_ocr"
+            logger.info("Strategy: English bitmap subtitles → OCR")
+            with start_span("extract_embedded_en_bitmap_ocr"):
+                candidate = extract_subtitle_track(
+                    video_path,
+                    en_bitmap_sub_idx,
+                    language="en",
+                    output_dir=Path(cfg.get_path("temp")),
+                    ocr_backend=ocr_backend,
+                )
+            _final_db_id = _reg_store_candidate(
+                registry, media_hash, candidate, source="embedded",
+                model_version="ocr",
             )
         elif prefer_audio_language == "en" and en_audio_order is not None:
             strategy = "en_audio_asr"
@@ -1444,6 +1680,36 @@ def run_generate(
                 registry, media_hash, candidate, source="asr",
                 model_version=cfg.asr_model_name,
             )
+        elif ja_sidecar is not None:
+            strategy = "sidecar_jp_mt"
+            logger.info("Strategy: Japanese sidecar subtitles → MT → EN")
+            ja_candidate = ja_sidecar
+            translation_source_candidate = ja_candidate
+            _ja_db_id = _reg_store_candidate(
+                registry, media_hash, ja_candidate, source="embedded",
+            )
+            with start_span("mt_sidecar_jp"):
+                mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
+            _mt_db_id = _reg_store_candidate(
+                registry, media_hash, mt_candidate, source="mt",
+                model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
+            )
+            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            write_candidate_srt(mt_candidate, str(raw_srt), cfg)
+            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
+            if use_llm_polish:
+                with start_span("llm_polish_sidecar_jp"):
+                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
+                    candidate = enforce_constraints_on_candidate(polished, cfg)
+                polish_stats = _compare_candidates(mt_candidate, candidate)
+                _log_polish_stats(polish_stats)
+                _final_db_id = _reg_store_candidate(
+                    registry, media_hash, candidate, source="mt_llm",
+                    model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                )
+            else:
+                candidate = mt_candidate
+                _final_db_id = _mt_db_id
         elif ja_sub_idx is not None:
             strategy = "embedded_jp_mt"
             logger.info("Strategy: Japanese subtitles → MT → EN")
@@ -1468,6 +1734,43 @@ def run_generate(
                 with start_span("llm_polish_embedded_jp"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
                     # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
+                    candidate = enforce_constraints_on_candidate(polished, cfg)
+                polish_stats = _compare_candidates(mt_candidate, candidate)
+                _log_polish_stats(polish_stats)
+                _final_db_id = _reg_store_candidate(
+                    registry, media_hash, candidate, source="mt_llm",
+                    model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                )
+            else:
+                candidate = mt_candidate
+                _final_db_id = _mt_db_id
+        elif ja_bitmap_sub_idx is not None and ocr_backend is not None:
+            strategy = "bitmap_jp_ocr_mt"
+            logger.info("Strategy: Japanese bitmap subtitles → OCR → MT → EN")
+            with start_span("extract_embedded_jp_bitmap_ocr"):
+                ja_candidate = extract_subtitle_track(
+                    video_path,
+                    ja_bitmap_sub_idx,
+                    language="ja",
+                    output_dir=Path(cfg.get_path("temp")),
+                    ocr_backend=ocr_backend,
+                )
+            translation_source_candidate = ja_candidate
+            _ja_db_id = _reg_store_candidate(
+                registry, media_hash, ja_candidate, source="embedded", model_version="ocr",
+            )
+            with start_span("mt_bitmap_jp_ocr"):
+                mt_candidate = translate_candidate_jp_to_en(ja_candidate, cfg)
+            _mt_db_id = _reg_store_candidate(
+                registry, media_hash, mt_candidate, source="mt",
+                model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
+            )
+            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            write_candidate_srt(mt_candidate, str(raw_srt), cfg)
+            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
+            if use_llm_polish:
+                with start_span("llm_polish_bitmap_jp_ocr"):
+                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
                     candidate = enforce_constraints_on_candidate(polished, cfg)
                 polish_stats = _compare_candidates(mt_candidate, candidate)
                 _log_polish_stats(polish_stats)
@@ -1687,10 +1990,15 @@ def run_generate(
         # Build and log the explainable source-selection report
         selection_report = _build_selection_report(
             strategy=strategy,
+            orig_en_sidecar=orig_en_sidecar,
+            orig_ja_sidecar=orig_ja_sidecar,
             orig_en_sub_idx=orig_en_sub_idx,
             orig_ja_sub_idx=orig_ja_sub_idx,
+            orig_en_bitmap_idx=orig_en_bitmap_sub_idx,
+            orig_ja_bitmap_idx=orig_ja_bitmap_sub_idx,
             orig_en_audio_order=orig_en_audio_order,
             orig_ja_audio_order=orig_ja_audio_order,
+            ocr_enabled=ocr_backend is not None,
             prefer_subtitles=prefer_subtitles,
             prefer_audio_language=prefer_audio_language,
             skip_embedded_en=skip_embedded_en,
@@ -1719,9 +2027,18 @@ def run_generate(
                 max_cps=cfg.qc_max_cps,
                 max_line_chars=cfg.llm_max_chars_per_line,
                 max_lines=cfg.llm_max_lines,
+                ocr_confidence_warn_below=cfg.get(
+                    "ocr", "confidence_warn_below", default=0.70
+                ),
             )
 
-        if strategy in {"embedded_jp_mt", "ja_audio_asr_mt", "untagged_audio_asr_mt"}:
+        if strategy in {
+            "sidecar_jp_mt",
+            "embedded_jp_mt",
+            "bitmap_jp_ocr_mt",
+            "ja_audio_asr_mt",
+            "untagged_audio_asr_mt",
+        }:
             translation_qc_summary = run_translation_qc(
                 candidate,
                 source_candidate=translation_source_candidate,

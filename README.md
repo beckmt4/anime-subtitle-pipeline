@@ -328,9 +328,13 @@ benchmark:
 - `run_benchmark(media, cfg)` – Delegates to generalized benchmark engine, producing comparison JSON.
 
 Source candidate types:
+- `sidecar_en_*` – Direct English sidecar subtitle file discovered next to media
 - `embedded_en_sX` – Direct English subtitle track
+- `bitmap_en_ocr` – English bitmap subtitle track processed via OCR
 - `en_audio_asr_aN` – English audio ASR
+- `sidecar_jp_mt[_llm]_` – Japanese sidecar subtitle translated (optional LLM)
 - `embedded_jp_mt[_llm]_sY` – Japanese subtitle translated (optional LLM)
+- `bitmap_jp_ocr_mt[_llm]_` – Japanese bitmap subtitle OCR → MT (optional LLM)
 - `ja_audio_asr_mt[_llm]_aM` – Japanese audio → ASR → MT (optional LLM)
 
 ASR-derived candidates carry `asr_quality` metadata with a clean/warn/fail
@@ -342,6 +346,8 @@ untranslated output, omissions, added meaning, and softened explicit dialogue
 under the `live_action_adult` profile, plus low-confidence (`[LOW_CONFIDENCE]`)
 and high-risk (`[REVIEW_HIGH_RISK]`) review flags. ASR warning density also reduces the
 candidate score and routes outputs to review at the configured policy threshold.
+OCR-derived candidates carry per-segment `meta.ocr_confidence`; low-confidence OCR
+density is also surfaced in QC/scoring and can route outputs to review.
 SRT writing clamps adjacent cue timings to keep at least `subtitles.min_gap_sec`
 between cues.
 

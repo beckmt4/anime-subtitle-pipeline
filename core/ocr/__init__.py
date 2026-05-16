@@ -57,4 +57,51 @@ class OCRBackend(ABC):
         """
 
 
-__all__ = ["OCRBackend"]
+def ocr_subtitle_track(
+    video_path: str,
+    stream_index: int,
+    backend: OCRBackend,
+    *,
+    language_hint: str | None = None,
+    low_confidence_threshold: float = 0.70,
+) -> SubtitleCandidate:
+    """Extract a bitmap subtitle stream via a swappable OCR backend."""
+    candidate = backend.extract(video_path, stream_index, language_hint=language_hint)
+    if not isinstance(candidate, SubtitleCandidate):
+        raise TypeError("OCR backend must return SubtitleCandidate")
+
+    low_confidence_count = 0
+    confidence_values: list[float] = []
+
+    for seg in candidate.segments:
+        raw = seg.meta.get("ocr_confidence")
+        if raw is None:
+            raw = candidate.meta.get("ocr_confidence")
+        try:
+            conf = float(raw)
+        except (TypeError, ValueError):
+            conf = 0.0
+        seg.meta["ocr_confidence"] = conf
+        confidence_values.append(conf)
+        if conf < low_confidence_threshold:
+            low_confidence_count += 1
+
+    seg_count = len(candidate.segments)
+    avg_confidence = round(sum(confidence_values) / seg_count, 4) if seg_count else 0.0
+    low_ratio = round(low_confidence_count / seg_count, 4) if seg_count else 0.0
+
+    candidate.meta.setdefault("ocr", {})
+    candidate.meta["ocr"].update({
+        "segment_count": seg_count,
+        "low_confidence_threshold": low_confidence_threshold,
+        "low_confidence_segment_count": low_confidence_count,
+        "low_confidence_ratio": low_ratio,
+        "average_confidence": avg_confidence,
+    })
+    candidate.meta["ocr_average_confidence"] = avg_confidence
+    candidate.meta["ocr_low_confidence_segment_count"] = low_confidence_count
+
+    return candidate
+
+
+__all__ = ["OCRBackend", "ocr_subtitle_track"]

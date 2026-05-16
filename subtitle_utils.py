@@ -14,14 +14,30 @@ from typing import List
 
 import pysubs2
 
+from core.ocr import OCRBackend, ocr_subtitle_track
 from models import Segment, SubtitleCandidate
 from media_inspect import inspect_media, MediaInfo, SubtitleStream
 
 logger = logging.getLogger(__name__)
 
 
-def parse_srt(path: Path) -> List[Segment]:
-    """Parse an SRT file into a list of generic `Segment` objects.
+_SIDECAR_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt")
+_LANG_TOKENS = {
+    "en": "en",
+    "eng": "en",
+    "english": "en",
+    "ja": "ja",
+    "jpn": "ja",
+    "japanese": "ja",
+}
+
+
+def _normalize_subtitle_text(text: str) -> str:
+    return text.replace("\\N", "\n").strip()
+
+
+def parse_subtitle_file(path: Path) -> List[Segment]:
+    """Parse a subtitle file into generic `Segment` objects.
 
     Uses pysubs2 to handle timing conversion. Milliseconds converted to seconds.
     Empty/whitespace-only lines are skipped.
@@ -29,13 +45,60 @@ def parse_srt(path: Path) -> List[Segment]:
     subs = pysubs2.load(str(path), encoding="utf-8")
     segments: List[Segment] = []
     for line in subs:
-        text = (line.text or "").strip()
+        text = _normalize_subtitle_text(line.text or "")
         if not text:
             continue
         start = line.start / 1000.0
         end = line.end / 1000.0
         segments.append(Segment(start=start, end=end, text=text))
     return segments
+
+
+def parse_srt(path: Path) -> List[Segment]:
+    return parse_subtitle_file(path)
+
+
+def _infer_sidecar_language(sidecar_path: Path) -> str:
+    tokens = sidecar_path.stem.lower().replace("-", ".").replace("_", ".").split(".")
+    for token in reversed(tokens):
+        if token in _LANG_TOKENS:
+            return _LANG_TOKENS[token]
+    return "und"
+
+
+def discover_sidecar_subtitles(video: Path | str) -> List[SubtitleCandidate]:
+    """Discover sidecar subtitle files next to *video* and normalize them."""
+    video_path = Path(video).resolve()
+    if not video_path.exists():
+        return []
+
+    candidates: List[SubtitleCandidate] = []
+    seen: set[Path] = set()
+    for ext in _SIDECAR_EXTENSIONS:
+        for file_path in sorted(video_path.parent.glob(f"{video_path.stem}*{ext}")):
+            if file_path in seen:
+                continue
+            seen.add(file_path)
+            segments = parse_subtitle_file(file_path)
+            if not segments:
+                continue
+            language = _infer_sidecar_language(file_path)
+            candidates.append(
+                SubtitleCandidate(
+                    id=f"sidecar_{language}_{file_path.stem}",
+                    language=language,
+                    source="sidecar",
+                    origin_stream=f"sidecar:{file_path.name}",
+                    segments=segments,
+                    meta={
+                        "file": str(file_path),
+                        "format": file_path.suffix.lower().lstrip("."),
+                        "normalization": "pysubs2",
+                    },
+                )
+            )
+
+    return candidates
 
 
 def _subtitle_order_from_global(media: MediaInfo, global_index: int) -> int:
@@ -51,6 +114,7 @@ def extract_subtitle_track(
     sub_index: int,
     language: str,
     output_dir: Path | None = None,
+    ocr_backend: OCRBackend | None = None,
 ) -> SubtitleCandidate:
     """Demux a subtitle track and return as `SubtitleCandidate`.
 
@@ -81,9 +145,20 @@ def extract_subtitle_track(
     order_index = _subtitle_order_from_global(media, sub_index)
 
     if stream.is_bitmap:
-        raise RuntimeError(
-            f"Subtitle stream {sub_index} is bitmap codec '{stream.codec}' (OCR not implemented)"
+        if ocr_backend is None:
+            raise RuntimeError(
+                f"Subtitle stream {sub_index} is bitmap codec '{stream.codec}' "
+                "(OCR backend not configured)"
+            )
+        candidate = ocr_subtitle_track(
+            str(video_path),
+            sub_index,
+            ocr_backend,
+            language_hint=language,
         )
+        candidate.meta.setdefault("codec", stream.codec)
+        candidate.meta.setdefault("global_index", sub_index)
+        return candidate
 
     # Derive output path
     out_dir = output_dir or video_path.parent
@@ -115,7 +190,7 @@ def extract_subtitle_track(
     if not out_srt.exists():
         raise RuntimeError("Demux completed but SRT file missing")
 
-    segments = parse_srt(out_srt)
+    segments = parse_subtitle_file(out_srt)
     if not segments:
         logger.warning("Extracted subtitle track produced no segments: %s", out_srt.name)
 
@@ -135,4 +210,9 @@ def extract_subtitle_track(
     return candidate
 
 
-__all__ = ["extract_subtitle_track", "parse_srt"]
+__all__ = [
+    "extract_subtitle_track",
+    "parse_srt",
+    "parse_subtitle_file",
+    "discover_sidecar_subtitles",
+]
