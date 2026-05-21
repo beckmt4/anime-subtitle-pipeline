@@ -38,7 +38,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from core.artifacts.models import (
     ArtifactRecord,
@@ -315,8 +315,8 @@ class ArtifactRegistry:
             cur = self._conn.execute(
                 """
                 INSERT INTO review_tasks
-                    (media_hash, candidate_id, status, reprocess_reason, reviewer_notes)
-                VALUES (?, ?, ?, ?, ?)
+                    (media_hash, candidate_id, status, reprocess_reason, reviewer_notes, history_json)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.media_hash,
@@ -324,6 +324,7 @@ class ArtifactRegistry:
                     record.status,
                     record.reprocess_reason,
                     record.reviewer_notes,
+                    json.dumps(record.history, ensure_ascii=False),
                 ),
             )
         row = self._conn.execute(
@@ -369,6 +370,34 @@ class ArtifactRegistry:
             )
         if cur.rowcount == 0:
             raise LookupError(f"No review task with id={task_id}")
+
+    def append_review_task_history(self, task_id: int, event: Dict[str, object]) -> None:
+        """Append one structured event to ``review_tasks.history_json``.
+
+        Raises:
+            LookupError: If no task with *task_id* exists.
+        """
+        row = self._conn.execute(
+            "SELECT history_json FROM review_tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"No review task with id={task_id}")
+
+        history = json.loads(row["history_json"] or "[]")
+        if not isinstance(history, list):
+            history = []
+        history.append(dict(event))
+
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE review_tasks
+                SET history_json = ?, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (json.dumps(history, ensure_ascii=False), task_id),
+            )
 
     def list_review_tasks(
         self,
@@ -659,6 +688,10 @@ def _row_to_benchmark_run(row: sqlite3.Row) -> BenchmarkRunRecord:
 
 
 def _row_to_review_task(row: sqlite3.Row) -> ReviewTaskRecord:
+    history_raw = row["history_json"] if "history_json" in row.keys() else "[]"
+    history = json.loads(history_raw or "[]")
+    if not isinstance(history, list):
+        history = []
     return ReviewTaskRecord(
         id=row["id"],
         media_hash=row["media_hash"],
@@ -666,6 +699,7 @@ def _row_to_review_task(row: sqlite3.Row) -> ReviewTaskRecord:
         status=row["status"],
         reprocess_reason=row["reprocess_reason"],
         reviewer_notes=row["reviewer_notes"],
+        history=history,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

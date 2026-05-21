@@ -28,7 +28,10 @@ from models import SubtitleCandidate
 from compare_core import compare_candidates
 from translation_qc import run_translation_qc
 from tracing import start_span
-from core.review import route_benchmark_review_task
+from core.review import (
+    create_review_task_from_benchmark_output,
+    route_benchmark_review_task,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -577,6 +580,21 @@ def run_benchmark(
         results=results,
         cfg=config,
     )
+    try:
+        persisted_review_task = create_review_task_from_benchmark_output(
+            registry,
+            media_hash=_media_hash or None,
+            routing=results["review_task_routing"],
+            results=results,
+        )
+    except Exception as exc:
+        logger.warning("ArtifactRegistry: failed to persist benchmark review task — %s", exc)
+        persisted_review_task = None
+    if (
+        persisted_review_task is not None
+        and isinstance(results["review_task_routing"].get("review_task"), dict)
+    ):
+        results["review_task_routing"]["review_task"]["registry_task_id"] = persisted_review_task.id
 
     if not results["comparisons"]:
         logger.warning(

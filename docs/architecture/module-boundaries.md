@@ -314,7 +314,7 @@ metadata about those files.
 
 **Does not belong here:** The review UI itself (that's a separate layer on top), domain-specific review protocols (those are pack-injected).
 
-**Current state:** Not implemented. Target for Issue #22.
+**Current state:** Implemented with routing + queue persistence + local HTML review UI workflow.
 
 **Dependencies:** `core/artifacts`, `core/policy`, `core/subtitles`.
 

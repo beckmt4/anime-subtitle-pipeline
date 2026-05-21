@@ -542,13 +542,47 @@ Examples:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["subtitle", "generate", "benchmark"],
+        choices=["subtitle", "generate", "benchmark", "review"],
         default="generate",
         help=(
             "Run mode: 'generate' (production EN subs, default), "
             "'benchmark' (compare all candidate sources, writes benchmark_results.json), "
+            "'review' (local review queue and approval workflow), "
             "'subtitle' (legacy JP→EN pipeline)"
         )
+    )
+
+    parser.add_argument(
+        "--review-action",
+        type=str,
+        choices=["queue", "render", "approve"],
+        default="queue",
+        help="In review mode: queue (list tasks), render (build local HTML UI), approve (apply edits).",
+    )
+    parser.add_argument(
+        "--task-id",
+        type=int,
+        help="In review mode: review task id for render/approve actions.",
+    )
+    parser.add_argument(
+        "--compare-candidate-id",
+        type=int,
+        help="In review mode render action: optional candidate id for side-by-side comparison.",
+    )
+    parser.add_argument(
+        "--review-ui-output",
+        type=str,
+        help="In review mode render action: output path for the local review UI HTML file.",
+    )
+    parser.add_argument(
+        "--review-edits-json",
+        type=str,
+        help="In review mode approve action: path to JSON payload exported from the review UI.",
+    )
+    parser.add_argument(
+        "--review-notes",
+        type=str,
+        help="In review mode approve action: reviewer notes to persist with approval.",
     )
     
     parser.add_argument(
@@ -589,7 +623,7 @@ Examples:
     # Initialize tracing (respect TRACING_ENABLED env var)
     setup_tracing(service_name="anime-subtitle-pipeline")
     
-    logger.info(f"Anime Subtitle Pipeline v1.0")
+    logger.info("Anime Subtitle Pipeline v1.0")
     logger.info(f"Profile: {config.profile}")
     logger.info(f"Configuration loaded from: {config.config_path}")
     
@@ -683,7 +717,62 @@ Examples:
 
     # Dispatch to appropriate mode
     try:
-        if args.mode == "benchmark":
+        if args.mode == "review":
+            from core.review import approve_review_task, list_review_queue, render_local_review_ui
+
+            logger.info("Running in REVIEW mode")
+            registry = open_registry(config)
+            if registry is None:
+                logger.error("Artifact registry unavailable; review mode requires a writable registry.")
+                sys.exit(1)
+            try:
+                if args.review_action == "queue":
+                    tasks = list_review_queue(registry)
+                    if not tasks:
+                        logger.info("No pending review tasks.")
+                    for task in tasks:
+                        logger.info(
+                            "Task #%s media=%s candidate_id=%s status=%s",
+                            task.id,
+                            task.media_hash,
+                            task.candidate_id,
+                            task.status,
+                        )
+                elif args.review_action == "render":
+                    if args.task_id is None:
+                        logger.error("--task-id is required for --review-action render")
+                        sys.exit(2)
+                    ui_path = args.review_ui_output or str(
+                        Path(config.get_path("outbox")) / f"review_task_{args.task_id}.html"
+                    )
+                    rendered = render_local_review_ui(
+                        registry,
+                        task_id=args.task_id,
+                        output_path=ui_path,
+                        compare_candidate_id=args.compare_candidate_id,
+                    )
+                    logger.info("Review UI written: %s", rendered)
+                else:  # approve
+                    if args.task_id is None:
+                        logger.error("--task-id is required for --review-action approve")
+                        sys.exit(2)
+                    edits = {}
+                    if args.review_edits_json:
+                        edits = json.loads(Path(args.review_edits_json).read_text(encoding="utf-8"))
+                    out_path = str(Path(config.get_path("outbox")) / f"review_task_{args.task_id}.approved.srt")
+                    approved = approve_review_task(
+                        registry,
+                        task_id=args.task_id,
+                        edited_segments=edits,
+                        reviewer_notes=args.review_notes,
+                        output_srt_path=out_path,
+                    )
+                    logger.info("Approved candidate id: %s", approved["approved_candidate_id"])
+                    logger.info("Stored approved output: %s", approved["output_srt_path"])
+            finally:
+                registry.close()
+            sys.exit(0)
+        elif args.mode == "benchmark":
             from benchmark import run_benchmark
             logger.info("Running in BENCHMARK mode (compare all candidate sources)")
             ocr_backend = create_ocr_backend(config)

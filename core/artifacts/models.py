@@ -154,6 +154,7 @@ class ReviewTaskRecord:
         status:           One of :data:`REVIEW_STATUSES`.
         reprocess_reason: Free-text reason if status is ``'reprocess'``.
         reviewer_notes:   Free-text notes from the reviewer.
+        history:          Ordered list of structured review events.
         id:               Auto-assigned surrogate key (``None`` before INSERT).
         created_at:       ISO-8601 timestamp string (set by the database).
         updated_at:       ISO-8601 timestamp string (set by the database).
@@ -163,6 +164,7 @@ class ReviewTaskRecord:
     status: str = REVIEW_STATUS_PENDING
     reprocess_reason: Optional[str] = None
     reviewer_notes: Optional[str] = None
+    history: List[Dict[str, Any]] = field(default_factory=list)
     id: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None

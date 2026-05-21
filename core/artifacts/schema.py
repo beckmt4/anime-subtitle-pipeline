@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS review_tasks (
         -- 'pending' | 'approved' | 'rejected' | 'reprocess'
     reprocess_reason  TEXT,
     reviewer_notes    TEXT,
+    history_json      TEXT    NOT NULL DEFAULT '[]',
     created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -143,6 +144,7 @@ _INDEXES = [
 # is not supported in SQLite < 3.37, so we use a try/except approach).
 _MIGRATIONS = [
     "ALTER TABLE subtitle_candidates ADD COLUMN parent_candidate_id INTEGER REFERENCES subtitle_candidates(id);",
+    "ALTER TABLE review_tasks ADD COLUMN history_json TEXT NOT NULL DEFAULT '[]';",
 ]
 
 _ALL_DDL = [
