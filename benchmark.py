@@ -28,6 +28,7 @@ from models import SubtitleCandidate
 from compare_core import compare_candidates
 from translation_qc import run_translation_qc
 from tracing import start_span
+from core.review import route_benchmark_review_task
 
 logger = logging.getLogger(__name__)
 
@@ -571,6 +572,11 @@ def run_benchmark(
     # Build per-candidate scorecards and attach to results
     from core.benchmark.html_report import build_scorecards, render_html_report
     results["scorecards"] = build_scorecards(results)
+    results["review_task_routing"] = route_benchmark_review_task(
+        video=str(video_path_obj.name),
+        results=results,
+        cfg=config,
+    )
 
     if not results["comparisons"]:
         logger.warning(

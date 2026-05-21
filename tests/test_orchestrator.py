@@ -1511,6 +1511,11 @@ def test_routing_decision_in_metadata():
     assert "decision" in rd, rd
     assert "reasons" in rd, rd
     assert "triggered_by" in rd, rd
+    assert "review_task_routing" in meta, "review_task_routing key missing from metadata"
+    rr = meta["review_task_routing"]
+    assert "status" in rr, rr
+    assert "reason_codes" in rr, rr
+    assert "review_task" in rr, rr
     print("✓ routing_decision present in run_generate metadata")
 
 
