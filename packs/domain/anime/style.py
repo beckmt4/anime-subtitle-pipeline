@@ -26,6 +26,7 @@ from typing import Any, Dict
 _DEFAULT_STYLE: Dict[str, Any] = {
     # Honorifics: keep Japanese honorifics in the English output.
     "preserve_honorifics": True,
+    "honorific_mode": "preserve",
     "honorific_list": [
         "san", "kun", "chan", "sama", "senpai", "sensei",
         "dono", "shi", "hakase",
@@ -33,16 +34,18 @@ _DEFAULT_STYLE: Dict[str, Any] = {
 
     # OP/ED handling: pass through without polishing (lyrics are intentional).
     "skip_op_ed_segments": True,
+    "op_ed_handling_policy": "skip_translation",
 
     # On-screen text: include translated signs as subtitle cues.
     "translate_on_screen_text": True,
+    "signs_song_policy": "translate_signs_preserve_song_lyrics",
 
     # Character limit per line (anime typically allows slightly shorter lines).
     "max_chars_per_line": 42,
     "max_lines_per_segment": 2,
 
     # LLM style profile for the ja_en language pack prompts.
-    "llm_style": "natural",
+    "llm_style": "anime_natural",
 }
 
 

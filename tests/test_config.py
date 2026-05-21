@@ -208,6 +208,52 @@ class TestConfigProperties:
         # config sets device: cpu — no torch import triggered
         assert cfg.asr_device == "cpu"
 
+    def test_domain_pack_explicit_selection(self, tmp_path):
+        p = write_config(tmp_path, extra={"domain": {"pack": "anime"}})
+        cfg = Config(str(p))
+        assert cfg.domain_pack == "anime"
+
+    def test_domain_pack_policy_auto_select_for_japanese(self, tmp_path):
+        p = write_config(tmp_path, extra={"domain": {"policy": {"auto_select_anime_for_ja_content": True}}})
+        cfg = Config(str(p))
+        assert cfg.domain_pack == "anime"
+
+    def test_domain_pack_none_when_policy_disabled(self, tmp_path):
+        p = write_config(tmp_path, extra={"domain": {"policy": {"auto_select_anime_for_ja_content": False}}})
+        cfg = Config(str(p))
+        assert cfg.domain_pack is None
+
+    def test_anime_prompt_includes_domain_policy_and_glossary(self, tmp_path):
+        extra = {
+            "domain": {
+                "pack": "anime",
+                "anime": {
+                    "glossary_overrides": [{"source": "先輩", "target": "senpai"}],
+                },
+            },
+            "llm": {
+                "enabled": False,
+                "base_url": "http://localhost:11434",
+                "dev": {"model_name": "test-llm"},
+                "prod": {"model_name": "test-llm"},
+                "style": "natural",
+                "max_lines": 2,
+                "max_chars_per_line": 42,
+                "timeout": 30,
+                "temperature": 0.3,
+                "prompts": {
+                    "natural": "You are a test polisher. Max {max_lines} lines, {max_chars_per_line} chars.",
+                    "literal": "You are literal.",
+                    "anime_natural": "Anime style. Max {max_lines}, {max_chars_per_line}.",
+                },
+            },
+        }
+        p = write_config(tmp_path, extra=extra)
+        cfg = Config(str(p))
+        prompt = cfg.get_llm_prompt()
+        assert "Anime domain policy:" in prompt
+        assert "先輩 -> senpai" in prompt
+
 
 # ---------------------------------------------------------------------------
 # Path resolution

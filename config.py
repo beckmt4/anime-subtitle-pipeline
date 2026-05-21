@@ -8,7 +8,7 @@ configuration values throughout the application.
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -114,6 +114,41 @@ class Config:
         if p.is_absolute():
             return str(p)
         return str((self.config_path.parent / p).resolve())
+
+    @property
+    def domain_pack(self) -> Optional[str]:
+        """Return active domain pack ID from explicit config or policy fallback."""
+        explicit = self.get("domain", "pack", default=None)
+        if explicit in {"anime", "jav"}:
+            return explicit
+        auto_select_anime = bool(
+            self.get("domain", "policy", "auto_select_anime_for_ja_content", default=False)
+        )
+        if not auto_select_anime:
+            return None
+        preferred_audio = str(
+            self.get("generate", "prefer_audio_language", default="auto")
+        ).lower()
+        asr_lang = str(self.get("asr", "language", default="ja")).lower()
+        if asr_lang == "ja" and preferred_audio in {"auto", "ja"}:
+            return "anime"
+        return None
+
+    def get_domain_style_config(self) -> Dict[str, Any]:
+        """Return active domain style config (or empty dict when not configured)."""
+        if self.domain_pack == "anime":
+            from packs.domain.anime.style import get_style_config
+            return get_style_config()
+        return {}
+
+    def get_domain_glossary_terms(self) -> List[Dict[str, str]]:
+        """Return active domain glossary terms with config override support."""
+        if self.domain_pack != "anime":
+            return []
+        from packs.domain.anime.glossary import load_glossary_terms
+        glossary_path = self.get("domain", "anime", "glossary_path", default=None)
+        overrides = self.get("domain", "anime", "glossary_overrides", default=[])
+        return load_glossary_terms(glossary_path=glossary_path, overrides=overrides)
     
     # Convenient property accessors for common settings
     
@@ -203,6 +238,9 @@ class Config:
     
     @property
     def llm_style(self) -> str:
+        domain_style = self.get_domain_style_config().get("llm_style")
+        if isinstance(domain_style, str) and domain_style:
+            return domain_style
         return self.get("llm", "style", default="natural")
     
     @property
@@ -271,12 +309,38 @@ class Config:
         """
         style = style or self.llm_style
         prompt_template = self.get("llm", "prompts", style, default="")
+        if not prompt_template and style == "anime_natural":
+            prompt_template = self.get("llm", "prompts", "natural", default="")
         
         try:
-            return prompt_template.format(
+            prompt = prompt_template.format(
                 max_lines=self.llm_max_lines,
                 max_chars_per_line=self.llm_max_chars_per_line,
             )
+            if self.domain_pack == "anime":
+                domain_style = self.get_domain_style_config()
+                domain_lines = ["Anime domain policy:"]
+                if domain_style.get("preserve_honorifics"):
+                    domain_lines.append(
+                        "- Preserve Japanese honorifics (e.g., san/kun/chan/senpai/sensei)."
+                    )
+                if domain_style.get("skip_op_ed_segments"):
+                    domain_lines.append(
+                        "- For OP/ED lyrics, preserve intent and avoid creative rewrites."
+                    )
+                if domain_style.get("translate_on_screen_text"):
+                    domain_lines.append(
+                        "- Translate plot-relevant signs and on-screen text naturally."
+                    )
+                terms = self.get_domain_glossary_terms()
+                if terms:
+                    domain_lines.append("- Preferred glossary translations:")
+                    domain_lines.extend(
+                        f"  - {term['source']} -> {term['target']}"
+                        for term in terms
+                    )
+                prompt = f"{prompt}\n\n" + "\n".join(domain_lines)
+            return prompt
         except (KeyError, IndexError, ValueError) as exc:
             raise ValueError(
                 f"LLM prompt template for style '{style}' has an unexpected placeholder: {exc}. "

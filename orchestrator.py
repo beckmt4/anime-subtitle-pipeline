@@ -1373,6 +1373,21 @@ def run_generate(
     video_path = media.path
     prefer_subtitles = cfg.get("generate", "prefer_subtitles", default=True)
     prefer_audio_language = cfg.get("generate", "prefer_audio_language", default="auto")
+    active_domain_pack = cfg.domain_pack
+    if active_domain_pack == "anime":
+        prefer_subtitles = cfg.get(
+            "domain", "anime", "source_preferences", "prefer_subtitles", default=prefer_subtitles
+        )
+        prefer_audio_language = cfg.get(
+            "domain", "anime", "source_preferences", "prefer_audio_language",
+            default=prefer_audio_language,
+        )
+        logger.info(
+            "Domain pack 'anime' active: source preferences -> prefer_subtitles=%s, "
+            "prefer_audio_language=%s",
+            prefer_subtitles,
+            prefer_audio_language,
+        )
     use_llm_polish = (
         cfg.get("generate", "use_llm_polish", default=True)
         and cfg.llm_enabled
@@ -1684,6 +1699,7 @@ def run_generate(
         return {
             "video": str(video_path.name),
             "strategy": strategy,
+            "domain_pack": active_domain_pack,
             "inspect_only": True,
             "executed": False,
             "planned_output_srt": str(out_srt),
@@ -2217,6 +2233,7 @@ def run_generate(
         metadata = {
             "video": str(video_path.name),
             "strategy": strategy,
+            "domain_pack": active_domain_pack,
             "candidate_id": candidate.id,
             "segment_count": candidate.segment_count,
             "output_srt": str(out_srt),

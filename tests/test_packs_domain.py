@@ -30,12 +30,19 @@ class TestAnimePack:
 
     def test_style_config_llm_style_is_natural(self):
         from packs.domain.anime.style import get_style_config
-        assert get_style_config()["llm_style"] == "natural"
+        assert get_style_config()["llm_style"] == "anime_natural"
 
     def test_style_config_preserve_honorifics(self):
         from packs.domain.anime.style import get_style_config
         cfg = get_style_config()
         assert cfg.get("preserve_honorifics") is True
+
+    def test_style_config_contains_signs_song_and_op_ed_policy(self):
+        from packs.domain.anime.style import get_style_config
+        cfg = get_style_config()
+        assert cfg.get("honorific_mode") == "preserve"
+        assert cfg.get("op_ed_handling_policy") == "skip_translation"
+        assert cfg.get("signs_song_policy") == "translate_signs_preserve_song_lyrics"
 
     def test_style_config_max_chars_per_line_is_int(self):
         from packs.domain.anime.style import get_style_config
@@ -56,6 +63,21 @@ class TestAnimePack:
         import packs.domain.anime as anime_pack
         opt_in = getattr(anime_pack, "REQUIRES_OPT_IN", False)
         assert opt_in is False
+
+    def test_glossary_loader_accepts_overrides(self):
+        from packs.domain.anime.glossary import load_glossary_terms
+        terms = load_glossary_terms(
+            overrides=[{"source": "先輩", "target": "senpai"}]
+        )
+        assert {"source": "先輩", "target": "senpai"} in terms
+
+    def test_anime_benchmark_fixtures_exist(self):
+        from pathlib import Path
+
+        fixture_dir = Path(__file__).parent.parent / "fixtures" / "benchmark_translation" / "anime"
+        assert (fixture_dir / "source.ja.srt").exists()
+        assert (fixture_dir / "reference.en.srt").exists()
+        assert (fixture_dir / "expected.json").exists()
 
 
 # ---------------------------------------------------------------------------
