@@ -93,6 +93,14 @@ class TestJavPack:
         from packs.domain.jav import REQUIRES_OPT_IN
         assert REQUIRES_OPT_IN is True
 
+    def test_style_config_required_keys(self):
+        from packs.domain.jav.style import get_style_config
+        cfg = get_style_config()
+        assert cfg["llm_style"] == "jav_conversational"
+        assert cfg["dialogue_profile"] == "live_action_adult"
+        assert cfg["review_mode"] == "adult"
+        assert cfg["preserve_adult_register"] is True
+
     def test_assert_opt_in_passes_when_true(self):
         from packs.domain.jav.privacy import assert_opt_in
         assert_opt_in(True)  # should not raise
@@ -135,3 +143,38 @@ class TestJavPack:
     def test_redact_metadata_empty_dict(self):
         from packs.domain.jav.privacy import redact_metadata
         assert redact_metadata({}) == {}
+
+    def test_redact_report_redacts_paths_but_preserves_source_labels(self):
+        from packs.domain.jav.privacy import redact_report
+
+        report = {
+            "video": "IPX-987 sample.mkv",
+            "output_srt": "/tmp/IPX-987.en.srt",
+            "selection_report": {
+                "sources_evaluated": [
+                    {"source": "sidecar_en", "stream": "sidecar:IPX-987.en.srt"},
+                ]
+            },
+        }
+
+        redacted = redact_report(report)
+
+        assert redacted["video"] == "<redacted>"
+        assert redacted["output_srt"] == "<redacted>"
+        assert redacted["selection_report"]["sources_evaluated"][0]["source"] == "sidecar_en"
+        assert redacted["selection_report"]["sources_evaluated"][0]["stream"] == "sidecar:<redacted>"
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("ABP-123 Amazing Title.mp4", "ABP-123"),
+            ("ipx_987_uncensored.srt", "IPX-987"),
+            ("FC2-PPV-2538074.mp4", "FC2-PPV-2538074"),
+            ("carib-010123-001.mkv", "CARIB-010123-001"),
+            ("heyzo_1234 sample.mp4", "HEYZO-1234"),
+        ],
+    )
+    def test_extract_jav_id_on_representative_samples(self, name, expected):
+        from packs.domain.jav.parser import extract_jav_id
+
+        assert extract_jav_id(name) == expected

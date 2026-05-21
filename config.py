@@ -139,6 +139,9 @@ class Config:
         if self.domain_pack == "anime":
             from packs.domain.anime.style import get_style_config
             return get_style_config()
+        if self.domain_pack == "jav":
+            from packs.domain.jav.style import get_style_config
+            return get_style_config()
         return {}
 
     def get_domain_glossary_terms(self) -> List[Dict[str, str]]:
@@ -235,6 +238,10 @@ class Config:
     @property
     def llm_model_name(self) -> str:
         return self.get("llm", "model_name", default="qwen2.5:7b")
+
+    @property
+    def domain_adult_content_opt_in(self) -> bool:
+        return bool(self.get("domain", "adult_content_opt_in", default=False))
     
     @property
     def llm_style(self) -> str:
@@ -309,7 +316,7 @@ class Config:
         """
         style = style or self.llm_style
         prompt_template = self.get("llm", "prompts", style, default="")
-        if not prompt_template and style == "anime_natural":
+        if not prompt_template and style in {"anime_natural", "jav_conversational"}:
             prompt_template = self.get("llm", "prompts", "natural", default="")
         
         try:
@@ -339,6 +346,24 @@ class Config:
                         f"  - {term['source']} -> {term['target']}"
                         for term in terms
                     )
+                prompt = f"{prompt}\n\n" + "\n".join(domain_lines)
+            elif self.domain_pack == "jav":
+                domain_style = self.get_domain_style_config()
+                domain_lines = ["JAV domain policy:"]
+                if domain_style.get("dialogue_profile") == "live_action_adult":
+                    domain_lines.append(
+                        "- Use the live_action_adult dialogue profile for direct conversational speech."
+                    )
+                if domain_style.get("preserve_adult_register"):
+                    domain_lines.append(
+                        "- Preserve explicit/adult register when present; do not euphemize or sanitize."
+                    )
+                if self.get("domain", "jav", "privacy", "redact_reports", default=False):
+                    domain_lines.append(
+                        "- Treat filenames and local paths as sensitive; use redacted labels in reports."
+                    )
+                if domain_style.get("review_mode"):
+                    domain_lines.append(f"- Review mode: {domain_style['review_mode']}.")
                 prompt = f"{prompt}\n\n" + "\n".join(domain_lines)
             return prompt
         except (KeyError, IndexError, ValueError) as exc:

@@ -78,6 +78,19 @@ def _translation_config(config: Config) -> Dict[str, Any]:
         "workflow": _get("translation", "workflow", default="single_pass"),
         "save_intermediate": bool(_get("translation", "save_intermediate", default=False)),
     }
+    domain_pack = getattr(config, "domain_pack", None)
+    domain_style_getter = getattr(config, "get_domain_style_config", None)
+    domain_style = domain_style_getter() if callable(domain_style_getter) else {}
+    if domain_pack == "jav" and isinstance(domain_style, dict):
+        if domain_style.get("dialogue_profile"):
+            settings["dialogue_profile"] = domain_style["dialogue_profile"]
+        for key in (
+            "preserve_adult_register",
+            "flag_low_confidence",
+            "flag_high_risk_content",
+        ):
+            if key in domain_style:
+                settings[key] = bool(domain_style[key])
     settings["dialogue_profile"] = _validate_dialogue_profile(settings["dialogue_profile"])
     profile = settings["dialogue_profile"]
     profile_preset = _get("translation", "profiles", profile, default={})

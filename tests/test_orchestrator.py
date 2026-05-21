@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import List
 
+import pytest
+
 from models import SubtitleCandidate, Segment
 from media_inspect import MediaInfo, AudioStream, SubtitleStream
 from config import Config
@@ -239,6 +241,68 @@ def test_anime_domain_source_preferences_apply_in_inspect_mode():
     meta = orch.run_generate(media, cfg, inspect_only=True)
     assert meta["domain_pack"] == "anime"
     assert meta["strategy"] == "ja_audio_asr_mt", meta
+
+
+def test_jav_domain_requires_explicit_opt_in():
+    from packs.domain.jav.privacy import ContentGateError
+
+    cfg = Config()
+    cfg._config.setdefault("domain", {})
+    cfg._config["domain"].update({"pack": "jav", "adult_content_opt_in": False})
+    media = _media(en_sub=True, en_audio=True, jp_audio=True)
+
+    with pytest.raises(ContentGateError):
+        orch.run_generate(media, cfg, inspect_only=True)
+
+
+def test_jav_domain_redacts_inspect_report_and_uses_jav_preferences(monkeypatch):
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_subtitles"] = True
+    cfg._config["generate"]["prefer_audio_language"] = "en"
+    cfg._config["domain"] = {
+        "pack": "jav",
+        "adult_content_opt_in": True,
+        "jav": {
+            "source_preferences": {
+                "prefer_subtitles": False,
+                "prefer_audio_language": "ja",
+            },
+            "privacy": {
+                "redact_logs": True,
+                "redact_reports": True,
+            },
+        },
+    }
+    media = _media(en_sub=True, en_audio=True, jp_audio=True)
+    media.path = Path("IPX-987 sample.mkv")
+
+    monkeypatch.setattr(
+        orch,
+        "discover_sidecar_subtitles",
+        lambda _path: [
+            SubtitleCandidate(
+                id="sidecar_en_ipx987",
+                language="en",
+                source="sidecar",
+                origin_stream="sidecar:IPX-987.en.srt",
+                segments=make_segments("sidecar-en"),
+                meta={},
+            )
+        ],
+    )
+
+    meta = orch.run_generate(media, cfg, inspect_only=True)
+
+    assert meta["domain_pack"] == "jav"
+    assert meta["strategy"] == "ja_audio_asr_mt", meta
+    assert meta["video"] == "<redacted>"
+    assert meta["planned_output_srt"] == "<redacted>"
+    assert meta["jav_media_id"] == "IPX-987"
+    assert meta["review_mode"] == "adult"
+    sources = meta["selection_report"]["sources_evaluated"]
+    sidecar_entry = next(source for source in sources if source["source"] == "sidecar_en")
+    assert sidecar_entry["stream"] == "sidecar:<redacted>"
 
 
 def test_strategy_embedded_jp_mt():
@@ -729,7 +793,7 @@ def test_score_candidate_qc_penalises_errors():
     clean_qc = next(f for f in clean_score["factors"] if f["name"] == "qc_pass_rate")
     dirty_qc = next(f for f in dirty_score["factors"] if f["name"] == "qc_pass_rate")
     assert clean_qc["contribution"] > dirty_qc["contribution"], (
-        f"qc_pass_rate contribution should be lower when errors present"
+        "qc_pass_rate contribution should be lower when errors present"
     )
     print(
         f"✓ QC errors reduce score: clean={clean_score['total_score']:.1f} "
