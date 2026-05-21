@@ -472,6 +472,7 @@ class TestReviewTask:
         assert task.id is not None
         assert task.status == REVIEW_STATUS_PENDING
         assert task.candidate_id == cand.id
+        assert task.history == []
 
     def test_get_review_task_by_id(self, registry):
         cand = self._store_cand(registry)
@@ -506,6 +507,19 @@ class TestReviewTask:
         updated = registry.get_review_task(task.id)
         assert updated.status == REVIEW_STATUS_REPROCESS
         assert updated.reprocess_reason == "too many gaps in timing"
+
+    def test_append_review_task_history(self, registry):
+        cand = self._store_cand(registry)
+        task = registry.create_review_task(
+            ReviewTaskRecord(media_hash="h1", candidate_id=cand.id)
+        )
+        registry.append_review_task_history(
+            task.id,
+            {"action": "task_created", "details": {"mode": "generate"}},
+        )
+        updated = registry.get_review_task(task.id)
+        assert len(updated.history) == 1
+        assert updated.history[0]["action"] == "task_created"
 
     def test_update_review_task_invalid_status_raises(self, registry):
         cand = self._store_cand(registry)

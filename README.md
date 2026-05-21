@@ -7,6 +7,7 @@ A **production-quality**, **local-only** pipeline for generating English subtitl
 ## Features
 
 - 🎬 **Generation & Evaluation**: Production generate mode (best EN subtitles) + benchmark mode (compare all candidate sources)
+- 👀 **Human Review Workflow**: Local review queue with side-by-side HTML UI, segment edits, and approval history
 - 🎬 **Complete Pipeline**: Video → Audio → Japanese ASR → English Translation → LLM Polishing → SRT Subtitles
 - 🚀 **State-of-the-Art Models**:
   - Whisper Large V3 Turbo for Japanese ASR
@@ -209,6 +210,11 @@ python main.py video.mkv --mode subtitle
 
 # Benchmark all sources
 python main.py video.mkv --mode benchmark
+
+# Review queue and local review UI
+python main.py video.mkv --mode review --review-action queue
+python main.py video.mkv --mode review --review-action render --task-id 12
+python main.py video.mkv --mode review --review-action approve --task-id 12 --review-edits-json edits.json
 
 
 ```bash

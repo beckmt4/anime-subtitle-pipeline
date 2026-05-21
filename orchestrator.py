@@ -65,7 +65,10 @@ from core.artifacts import (
 from core.artifacts.pipeline_wiring import open_registry, compute_media_hash  # noqa: F401  (re-exported)
 from core.policy import PolicyEngine
 from core.ocr import OCRBackend
-from core.review import route_generate_review_task
+from core.review import (
+    create_review_task_from_generate_output,
+    route_generate_review_task,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -2195,6 +2198,21 @@ def run_generate(
             ),
             cfg=cfg,
         )
+        try:
+            persisted_review_task = create_review_task_from_generate_output(
+                registry,
+                media_hash=media_hash,
+                candidate_db_id=_final_db_id,
+                routing=review_task_routing,
+            )
+        except Exception as exc:
+            logger.warning("ArtifactRegistry: failed to persist review task — %s", exc)
+            persisted_review_task = None
+        if (
+            persisted_review_task is not None
+            and isinstance(review_task_routing.get("review_task"), dict)
+        ):
+            review_task_routing["review_task"]["registry_task_id"] = persisted_review_task.id
 
         metadata = {
             "video": str(video_path.name),
