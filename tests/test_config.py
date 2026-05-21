@@ -213,6 +213,12 @@ class TestConfigProperties:
         cfg = Config(str(p))
         assert cfg.domain_pack == "anime"
 
+    def test_domain_pack_explicit_jav_selection(self, tmp_path):
+        p = write_config(tmp_path, extra={"domain": {"pack": "jav", "adult_content_opt_in": True}})
+        cfg = Config(str(p))
+        assert cfg.domain_pack == "jav"
+        assert cfg.domain_adult_content_opt_in is True
+
     def test_domain_pack_policy_auto_select_for_japanese(self, tmp_path):
         p = write_config(tmp_path, extra={"domain": {"policy": {"auto_select_anime_for_ja_content": True}}})
         cfg = Config(str(p))
@@ -253,6 +259,41 @@ class TestConfigProperties:
         prompt = cfg.get_llm_prompt()
         assert "Anime domain policy:" in prompt
         assert "先輩 -> senpai" in prompt
+
+    def test_jav_prompt_uses_domain_style_and_privacy_policy(self, tmp_path):
+        extra = {
+            "domain": {
+                "pack": "jav",
+                "adult_content_opt_in": True,
+                "jav": {
+                    "privacy": {"redact_reports": True},
+                },
+            },
+            "llm": {
+                "enabled": False,
+                "base_url": "http://localhost:11434",
+                "dev": {"model_name": "test-llm"},
+                "prod": {"model_name": "test-llm"},
+                "style": "natural",
+                "max_lines": 2,
+                "max_chars_per_line": 42,
+                "timeout": 30,
+                "temperature": 0.3,
+                "prompts": {
+                    "natural": "You are a test polisher. Max {max_lines} lines, {max_chars_per_line} chars.",
+                    "literal": "You are literal.",
+                    "jav_conversational": "JAV style. Max {max_lines}, {max_chars_per_line}.",
+                },
+            },
+        }
+        p = write_config(tmp_path, extra=extra)
+        cfg = Config(str(p))
+        prompt = cfg.get_llm_prompt()
+        assert cfg.llm_style == "jav_conversational"
+        assert cfg.get_domain_style_config()["dialogue_profile"] == "live_action_adult"
+        assert "JAV domain policy:" in prompt
+        assert "Treat filenames and local paths as sensitive" in prompt
+        assert "Review mode: adult." in prompt
 
 
 # ---------------------------------------------------------------------------

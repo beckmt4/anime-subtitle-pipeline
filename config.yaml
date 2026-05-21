@@ -14,6 +14,7 @@ runtime:
 # Domain pack selection and policy routing.
 domain:
   pack: null                            # "anime" | "jav" | null
+  adult_content_opt_in: false           # Required for JAV domain pack
   policy:
     auto_select_anime_for_ja_content: false
   anime:
@@ -22,6 +23,15 @@ domain:
       prefer_audio_language: "ja"       # anime prefers JP audio when generation is required
     glossary_path: "./packs/domain/anime/glossary.yaml"
     glossary_overrides: []              # Optional list of {"source": "...", "target": "..."}
+  jav:
+    source_preferences:
+      prefer_subtitles: false
+      prefer_audio_language: "ja"
+    privacy:
+      redact_logs: true
+      redact_reports: true
+    review:
+      mode: "adult"
 
 # Directory paths
 paths:
@@ -167,6 +177,17 @@ llm:
       5. Translate plot-relevant signs naturally and succinctly.
       6. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances.
       7. ONLY return the improved English subtitle text, nothing else.
+
+    jav_conversational: |
+      You are a professional subtitle editor for live-action Japanese dialogue. Your task is to improve machine-translated English subtitles so they read naturally while preserving the exact meaning and register.
+
+      Rules:
+      1. DO NOT euphemize, sanitize, intensify, or add explicit content.
+      2. Keep direct conversational phrasing suitable for live-action performances.
+      3. Keep it to {max_lines} lines maximum, ~{max_chars_per_line} characters per line.
+      4. Preserve blunt, sexual, or profane wording when it is present in the source.
+      5. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances.
+      6. ONLY return the improved English subtitle text, nothing else.
 
     literal: |
       You are a professional subtitle editor. Your task is to clean up machine-translated English subtitles while staying as close to the Japanese phrasing as possible.

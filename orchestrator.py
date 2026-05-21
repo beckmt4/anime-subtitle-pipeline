@@ -1374,6 +1374,19 @@ def run_generate(
     prefer_subtitles = cfg.get("generate", "prefer_subtitles", default=True)
     prefer_audio_language = cfg.get("generate", "prefer_audio_language", default="auto")
     active_domain_pack = cfg.domain_pack
+    privacy_redact_logs = False
+    privacy_redact_reports = False
+    jav_media_id: str | None = None
+
+    def _display_name(path: Path) -> str:
+        return "<redacted>" if privacy_redact_logs else path.name
+
+    def _maybe_redact_report(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if active_domain_pack == "jav" and privacy_redact_reports:
+            from packs.domain.jav.privacy import redact_report
+            return redact_report(payload)
+        return payload
+
     if active_domain_pack == "anime":
         prefer_subtitles = cfg.get(
             "domain", "anime", "source_preferences", "prefer_subtitles", default=prefer_subtitles
@@ -1387,6 +1400,36 @@ def run_generate(
             "prefer_audio_language=%s",
             prefer_subtitles,
             prefer_audio_language,
+        )
+    elif active_domain_pack == "jav":
+        from packs.domain.jav.parser import extract_jav_id
+        from packs.domain.jav.privacy import assert_opt_in
+
+        assert_opt_in(cfg.domain_adult_content_opt_in)
+        prefer_subtitles = cfg.get(
+            "domain", "jav", "source_preferences", "prefer_subtitles", default=prefer_subtitles
+        )
+        prefer_audio_language = cfg.get(
+            "domain", "jav", "source_preferences", "prefer_audio_language",
+            default=prefer_audio_language,
+        )
+        privacy_redact_logs = bool(
+            cfg.get("domain", "jav", "privacy", "redact_logs", default=True)
+        )
+        privacy_redact_reports = bool(
+            cfg.get(
+                "domain", "jav", "privacy", "redact_reports", default=privacy_redact_logs
+            )
+        )
+        jav_media_id = extract_jav_id(video_path.name)
+        logger.info(
+            "Domain pack 'jav' active: source preferences -> prefer_subtitles=%s, "
+            "prefer_audio_language=%s, redact_logs=%s, redact_reports=%s, media_id=%s",
+            prefer_subtitles,
+            prefer_audio_language,
+            privacy_redact_logs,
+            privacy_redact_reports,
+            jav_media_id or "<unknown>",
         )
     use_llm_polish = (
         cfg.get("generate", "use_llm_polish", default=True)
@@ -1414,7 +1457,7 @@ def run_generate(
         logger.info("Inspect-only mode enabled: planning generate flow without execution")
 
     logger.info("=" * 70)
-    logger.info(f"GENERATE MODE: {video_path.name}")
+    logger.info(f"GENERATE MODE: {_display_name(video_path)}")
     logger.info("=" * 70)
 
     # Detect available sources
@@ -1692,11 +1735,11 @@ def run_generate(
             source_language=source_language,
             source_language_rerouted_order=source_language_rerouted_order,
         )
-        _log_selection_report(selection_report)
+        _log_selection_report(_maybe_redact_report(selection_report))
 
         out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
         qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
-        return {
+        metadata = {
             "video": str(video_path.name),
             "strategy": strategy,
             "domain_pack": active_domain_pack,
@@ -1707,6 +1750,12 @@ def run_generate(
             "selection_report": selection_report,
             "registry_run_id": None,
         }
+        if jav_media_id:
+            metadata["jav_media_id"] = jav_media_id
+        if active_domain_pack == "jav":
+            metadata["review_mode"] = "adult"
+            metadata["privacy_redacted"] = privacy_redact_reports
+        return _maybe_redact_report(metadata)
 
     # --- Registry: start pipeline run record ---
     _run_id = uuid.uuid4().hex
@@ -1795,7 +1844,7 @@ def run_generate(
             )
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
+            logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_sidecar_jp"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
@@ -1830,7 +1879,7 @@ def run_generate(
             # Always write raw MT output regardless of whether LLM polish runs.
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
+            logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_embedded_jp"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
@@ -1870,7 +1919,7 @@ def run_generate(
             )
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
+            logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_bitmap_jp_ocr"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
@@ -1949,7 +1998,7 @@ def run_generate(
             # Always write raw MT output regardless of whether LLM polish runs.
             raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
-            logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
+            logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_ja_audio"):
                     polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
@@ -2093,6 +2142,11 @@ def run_generate(
             )
 
         assert candidate is not None, "Generation strategy produced no candidate"
+        candidate.meta["domain_pack"] = active_domain_pack
+        if jav_media_id:
+            candidate.meta["jav_media_id"] = jav_media_id
+            candidate.meta["review_mode"] = "adult"
+            candidate.meta["privacy_redacted"] = privacy_redact_reports
 
         # Build and log the explainable source-selection report
         selection_report = _build_selection_report(
@@ -2115,7 +2169,7 @@ def run_generate(
             source_language=source_language,
             source_language_rerouted_order=source_language_rerouted_order,
         )
-        _log_selection_report(selection_report)
+        _log_selection_report(_maybe_redact_report(selection_report))
 
         # Write SRT
         out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
@@ -2168,7 +2222,7 @@ def run_generate(
         qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
         qc_payload = _build_qc_payload(qc_summary, translation_qc_summary)
         qc_path.write_text(json.dumps(qc_payload, indent=2), encoding="utf-8")
-        logger.info("QC summary written: %s", qc_path.name)
+        logger.info("QC summary written: %s", _display_name(qc_path))
         _reg_store_artifact(registry, media_hash, ARTIFACT_TYPE_QC_JSON, qc_path,
                             candidate_db_id=_final_db_id, run_db_id=_run_db_id)
 
@@ -2200,7 +2254,7 @@ def run_generate(
             logger.info("✓ Routing decision: PASS")
 
         review_task_routing = route_generate_review_task(
-            video=video_path.name,
+            video="<redacted>" if privacy_redact_reports else video_path.name,
             candidate_id=candidate.id,
             strategy=strategy,
             qc_summary=qc_summary,
@@ -2229,6 +2283,8 @@ def run_generate(
             and isinstance(review_task_routing.get("review_task"), dict)
         ):
             review_task_routing["review_task"]["registry_task_id"] = persisted_review_task.id
+        if active_domain_pack == "jav" and isinstance(review_task_routing.get("review_task"), dict):
+            review_task_routing["review_task"]["review_mode"] = "adult"
 
         metadata = {
             "video": str(video_path.name),
@@ -2253,6 +2309,11 @@ def run_generate(
             "translation_workflow": candidate.meta.get("translation_workflow"),
             "translation_fallback": candidate.meta.get("translation_fallback", False),
         }
+        if jav_media_id:
+            metadata["jav_media_id"] = jav_media_id
+        if active_domain_pack == "jav":
+            metadata["review_mode"] = "adult"
+            metadata["privacy_redacted"] = privacy_redact_reports
         if polish_stats is not None:
             metadata.update(polish_stats)
         _reg_finish_run(registry, _run_id, status=PIPELINE_STATUS_COMPLETED)
@@ -2265,7 +2326,7 @@ def run_generate(
             error_message=str(_exc),
         )
         raise
-    return metadata
+    return _maybe_redact_report(metadata)
 
 
 __all__ = ["run_generate", "score_candidate"]

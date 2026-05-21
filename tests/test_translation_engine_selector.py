@@ -162,6 +162,27 @@ def test_live_action_adult_profile_updates_prompt_and_metadata(monkeypatch):
     assert "[REVIEW_HIGH_RISK]" in captured["prompt"]
 
 
+def test_jav_domain_pack_applies_live_action_profile_defaults(monkeypatch):
+    captured = {}
+
+    def fake_generate(self, prompt):
+        captured["prompt"] = prompt
+        return "direct translation"
+
+    monkeypatch.setattr(mt.LLMDirectTranslator, "_generate_text", fake_generate)
+
+    cfg = _cfg(dialogue_profile="default")
+    cfg._config["domain"] = {"pack": "jav", "adult_content_opt_in": True}
+
+    translated = mt.translate_candidate_jp_to_en(_candidate(), cfg)
+
+    assert translated.meta["translation_dialogue_profile"] == "live_action_adult"
+    assert translated.meta["translation_engine"] == "llm_direct"
+    assert translated.meta["translation_preserve_adult_register"] is True
+    assert translated.meta["translation_flag_high_risk_content"] is True
+    assert "Dialogue profile: live_action_adult" in captured["prompt"]
+
+
 def test_llm_direct_prompt_includes_context_and_accepts_only_current_output(monkeypatch):
     prompts = []
 
