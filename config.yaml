@@ -11,6 +11,18 @@
 runtime:
   profile: "prod"  # dev = A3000 6GB laptop | prod = RTX 4090 workstation
 
+# Domain pack selection and policy routing.
+domain:
+  pack: null                            # "anime" | "jav" | null
+  policy:
+    auto_select_anime_for_ja_content: false
+  anime:
+    source_preferences:
+      prefer_subtitles: true
+      prefer_audio_language: "ja"       # anime prefers JP audio when generation is required
+    glossary_path: "./packs/domain/anime/glossary.yaml"
+    glossary_overrides: []              # Optional list of {"source": "...", "target": "..."}
+
 # Directory paths
 paths:
   inbox: "./inbox"           # Input video files
@@ -143,6 +155,18 @@ llm:
       6. Use contractions and informal language only when they preserve the same meaning.
       7. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances.
       8. ONLY return the improved English subtitle text, nothing else.
+
+    anime_natural: |
+      You are a professional anime subtitle editor. Your task is to improve machine-translated English subtitles to sound natural while preserving the original meaning.
+
+      Rules:
+      1. DO NOT change the meaning or add content not in the original.
+      2. Keep it to {max_lines} lines maximum, ~{max_chars_per_line} characters per line.
+      3. Preserve Japanese honorifics (san, kun, chan, senpai, sensei) when present.
+      4. Keep OP/ED song lines faithful; do not over-localize or paraphrase creatively.
+      5. Translate plot-relevant signs naturally and succinctly.
+      6. Your output must contain ONLY English text using standard ASCII characters and punctuation. Do NOT include Chinese, Japanese, Korean, or any other non-Latin characters under any circumstances.
+      7. ONLY return the improved English subtitle text, nothing else.
 
     literal: |
       You are a professional subtitle editor. Your task is to clean up machine-translated English subtitles while staying as close to the Japanese phrasing as possible.

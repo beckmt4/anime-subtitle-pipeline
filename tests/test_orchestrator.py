@@ -221,6 +221,26 @@ def test_strategy_en_audio_when_no_en_sub_and_en_audio_preferred():
     print("✓ en_audio_asr strategy chosen correctly")
 
 
+def test_anime_domain_source_preferences_apply_in_inspect_mode():
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_subtitles"] = True
+    cfg._config["generate"]["prefer_audio_language"] = "en"
+    cfg._config["domain"] = {
+        "pack": "anime",
+        "anime": {
+            "source_preferences": {
+                "prefer_subtitles": False,
+                "prefer_audio_language": "ja",
+            }
+        },
+    }
+    media = _media(en_sub=True, en_audio=True, jp_audio=True)
+    meta = orch.run_generate(media, cfg, inspect_only=True)
+    assert meta["domain_pack"] == "anime"
+    assert meta["strategy"] == "ja_audio_asr_mt", meta
+
+
 def test_strategy_embedded_jp_mt():
     cfg = Config()
     media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=True)
