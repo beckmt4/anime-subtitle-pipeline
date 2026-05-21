@@ -65,6 +65,7 @@ from core.artifacts import (
 from core.artifacts.pipeline_wiring import open_registry, compute_media_hash  # noqa: F401  (re-exported)
 from core.policy import PolicyEngine
 from core.ocr import OCRBackend
+from core.review import route_generate_review_task
 
 
 logger = logging.getLogger(__name__)
@@ -2179,6 +2180,22 @@ def run_generate(
         else:
             logger.info("✓ Routing decision: PASS")
 
+        review_task_routing = route_generate_review_task(
+            video=video_path.name,
+            candidate_id=candidate.id,
+            strategy=strategy,
+            qc_summary=qc_summary,
+            candidate_score=candidate_score,
+            selection_report=selection_report,
+            routing_decision=routing_decision,
+            polish_change_rate=(
+                float(polish_stats["polish_change_rate"])
+                if polish_stats and "polish_change_rate" in polish_stats
+                else None
+            ),
+            cfg=cfg,
+        )
+
         metadata = {
             "video": str(video_path.name),
             "strategy": strategy,
@@ -2192,6 +2209,7 @@ def run_generate(
             "selection_report": selection_report,
             "candidate_score": candidate_score,
             "routing_decision": routing_decision,
+            "review_task_routing": review_task_routing,
             "asr_quality": asr_quality,
             "asr_low_confidence_segment_count": low_confidence_count,
             "translation_engine": candidate.meta.get("translation_engine"),

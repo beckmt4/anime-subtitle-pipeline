@@ -245,6 +245,17 @@ policy:
     translation_qc_warn_review_min_count: 1    # Minimum warning_count to trigger review
     translation_qc_reject_statuses: ["fail"]  # Reject when translation QC status matches
     translation_qc_fail_reject_min_count: 1    # Minimum fail_count to trigger reject
+  review_task:
+    generate:
+      review_high_cps_min_count: 3
+      review_duration_violation_min_count: 2
+      review_readability_violation_min_count: 3
+      review_polish_change_rate_threshold: 0.35
+    benchmark:
+      wer_max: 0.45
+      bleu_min: 25.0
+      chrf_min: 45.0
+      review_min_weak_comparisons: 1
 
 # Subtitle QC validation
 # Applied automatically after generate mode writes the output SRT.

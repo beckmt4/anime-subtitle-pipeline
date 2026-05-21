@@ -227,6 +227,8 @@ def test_generalized_generation_and_reference():
     # 1 embedded EN + 1 embedded JP->MT + 2 EN audio ASR + 1 JP audio ASR->MT = 5
     assert len(results["candidates"]) == 5, f"Unexpected candidate count: {len(results['candidates'])}" 
     assert results["reference_id"].startswith("embedded_en"), "Embedded EN should be reference"
+    assert "review_task_routing" in results
+    assert "status" in results["review_task_routing"]
     # Reference comparisons only (N-1)
     assert len([c for c in results["comparisons"] if c["ref_id"] == results["reference_id"]]) == 4
 

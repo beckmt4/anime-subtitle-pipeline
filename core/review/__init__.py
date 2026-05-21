@@ -1,24 +1,21 @@
-"""core.review — review task model and queue.
-
-Status: **not yet implemented** (Issue #22).
-
-Planned responsibilities
-------------------------
-- Maintain a review queue for low-confidence or policy-flagged candidates.
-- Define the review task model (segment-level flagging, side-by-side
-  comparison, approval state).
-- Expose an interface for a local UI to consume review tasks.
-- Record review history.
-
-Planned public API
-------------------
-ReviewTask         A review unit: flagged candidate + context.
-ReviewQueue        FIFO queue of pending review tasks.
-enqueue(task)      Add a task to the review queue.
-dequeue()          Retrieve the next pending task.
-approve(task, …)   Mark a task as approved (with optional edits).
-"""
+"""Review-task routing primitives."""
 
 from __future__ import annotations
 
-__all__: list = []  # Empty until Issue #22 is implemented.
+from .routing import (
+    REVIEW_STATUS_FAILED,
+    REVIEW_STATUS_OK,
+    REVIEW_STATUS_REVIEW_REQUIRED,
+    REVIEW_STATUS_WARNING,
+    route_benchmark_review_task,
+    route_generate_review_task,
+)
+
+__all__ = [
+    "REVIEW_STATUS_OK",
+    "REVIEW_STATUS_WARNING",
+    "REVIEW_STATUS_REVIEW_REQUIRED",
+    "REVIEW_STATUS_FAILED",
+    "route_generate_review_task",
+    "route_benchmark_review_task",
+]
