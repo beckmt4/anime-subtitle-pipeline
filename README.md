@@ -503,6 +503,15 @@ python main.py movie.mkv --mode subtitle --no-llm
 - `outbox/benchmark_results.json` – Comparison metrics & diffs.
 - `logs/<video>.json` – Candidate chain (legacy pipeline) when enabled.
 
+## Review correction exports
+
+Approved review edits can be exported from local translation memory into
+benchmark/training JSONL datasets. See `docs/review_dataset_exports.md` and run:
+
+```bash
+python scripts/export_review_corrections.py --memory-path outbox/translation_memory.jsonl
+```
+
 ## Next Steps & Extensibility
 
 - Add HTML report renderer for benchmark results.
