@@ -22,7 +22,12 @@ from transformers import MarianMTModel, MarianTokenizer
 from asr import Segment  # legacy Segment (for backward compatibility wrappers)
 from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
-from core.translation import build_prompt_glossary_block, load_active_glossary_data
+from core.translation import (
+    TranslationMemoryStore,
+    build_prompt_glossary_block,
+    build_prompt_memory_block,
+    load_active_glossary_data,
+)
 from packs.language.ja_en.cjk_filter import has_cjk_leak
 
 logger = logging.getLogger(__name__)
@@ -78,6 +83,12 @@ def _translation_config(config: Config) -> Dict[str, Any]:
         "timeout": _get("translation", "timeout", default=getattr(config, "llm_timeout", 30)),
         "workflow": _get("translation", "workflow", default="single_pass"),
         "save_intermediate": bool(_get("translation", "save_intermediate", default=False)),
+        "memory_enabled": bool(_get("translation", "memory", "enabled", default=False)),
+        "memory_path": _get("translation", "memory", "path", default=""),
+        "memory_max_matches": int(_get("translation", "memory", "max_matches", default=3)),
+        "memory_max_entries_in_prompt": int(
+            _get("translation", "memory", "max_entries_in_prompt", default=3)
+        ),
     }
     domain_pack = getattr(config, "domain_pack", None)
     domain_style_getter = getattr(config, "get_domain_style_config", None)
@@ -504,12 +515,53 @@ class LLMDirectTranslator:
         self.context_window_segments = int(tcfg["context_window_segments"])
         self.timeout = int(tcfg["timeout"])
         self.glossary_data = load_active_glossary_data(config)
+        self.memory_max_matches = max(0, int(tcfg["memory_max_matches"]))
+        self.memory_max_entries_in_prompt = max(0, int(tcfg["memory_max_entries_in_prompt"]))
+        self.translation_memory = self._init_translation_memory(
+            enabled=bool(tcfg["memory_enabled"]),
+            configured_path=str(tcfg["memory_path"] or "").strip(),
+        )
 
         logger.info("Initializing LLM direct translator")
         logger.info("  Model: %s", self.model_name)
         logger.info("  Mode: %s", self.mode)
         logger.info("  Dialogue profile: %s", self.dialogue_profile)
         logger.info("  Context window: %d segment(s)", self.context_window_segments)
+
+    def _init_translation_memory(
+        self,
+        *,
+        enabled: bool,
+        configured_path: str,
+    ) -> Optional[TranslationMemoryStore]:
+        if not enabled:
+            return None
+        try:
+            memory_path = configured_path
+            if not memory_path:
+                memory_path = f"{self.config.get_path('outbox')}/translation_memory.jsonl"
+            return TranslationMemoryStore(memory_path)
+        except Exception as exc:
+            logger.warning("Translation memory disabled due to initialization error: %s", exc)
+            return None
+
+    def _memory_prompt_block(self, source_text: str, source_lang: str, target_lang: str) -> str:
+        if self.translation_memory is None:
+            return ""
+        domain_pack = self.glossary_data.get("domain_pack")
+        language_pack = self.glossary_data.get("language_pack")
+        entries = self.translation_memory.query(
+            source_text=source_text,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            domain=domain_pack,
+            language_pack=language_pack,
+            limit=self.memory_max_matches,
+        )
+        return build_prompt_memory_block(
+            entries,
+            max_entries=self.memory_max_entries_in_prompt,
+        )
 
     def _mode_instruction(self) -> str:
         if self.mode == "literal":
@@ -558,6 +610,11 @@ class LLMDirectTranslator:
     ) -> str:
         source_text = candidate.segments[index].text
         glossary_block = build_prompt_glossary_block(source_text, self.glossary_data)
+        memory_block = self._memory_prompt_block(
+            source_text,
+            source_lang=str(candidate.language or "ja").strip().lower() or "ja",
+            target_lang="en",
+        )
         baseline_block = (
             f"\nBaseline MarianMT translation:\n{baseline_text}\n"
             if baseline_text is not None
@@ -578,6 +635,7 @@ class LLMDirectTranslator:
             f"{baseline_block}\n"
             f"{previous_english_block}\n"
             f"{glossary_block}\n\n"
+            f"{memory_block}\n\n"
             "Return only the English translation for this one subtitle cue.\n"
             f"Japanese cue:\n{source_text}"
         )

@@ -18,6 +18,7 @@ from core.artifacts import (
     ReviewTaskRecord,
     SubtitleCandidateRecord,
 )
+from core.translation import TranslationMemoryStore
 
 
 def _utcnow_iso() -> str:
@@ -328,6 +329,59 @@ def _write_simple_srt(segments: List[Dict[str, Any]], output_path: Path) -> None
     output_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
 
+def _source_context_text(segment: Dict[str, Any]) -> str:
+    meta = segment.get("meta", {}) if isinstance(segment, dict) else {}
+    if isinstance(meta, dict):
+        source_text = str(meta.get("source_text_ja", "")).strip()
+        if source_text:
+            return source_text
+    return str(segment.get("text", "")).strip() if isinstance(segment, dict) else ""
+
+
+def _store_approved_corrections(
+    *,
+    translation_memory: TranslationMemoryStore,
+    candidate: SubtitleCandidateRecord,
+    updated_segments: List[Dict[str, Any]],
+    edits: Dict[int, str],
+    reviewer_notes: str,
+) -> int:
+    stored_count = 0
+    domain = str(candidate.meta.get("domain_pack", "")).strip() or None
+    language_pack = str(candidate.meta.get("language_pack", "")).strip() or None
+    for idx in sorted(edits):
+        if idx < 0 or idx >= len(updated_segments):
+            continue
+        before = str((candidate.segments[idx] or {}).get("text", "")).strip()
+        after = str((updated_segments[idx] or {}).get("text", "")).strip()
+        if not before or not after or before == after:
+            continue
+        current_segment = updated_segments[idx] or {}
+        source_text = _source_context_text(current_segment)
+        previous_context = _source_context_text(updated_segments[idx - 1]) if idx > 0 else ""
+        next_context = _source_context_text(updated_segments[idx + 1]) if idx + 1 < len(updated_segments) else ""
+        if not source_text:
+            continue
+        translation_memory.add(
+            {
+                "source_lang": str(candidate.meta.get("source_language", "ja")),
+                "target_lang": str(candidate.language or "en"),
+                "domain": domain,
+                "source_text": source_text,
+                "bad_translation": before,
+                "approved_translation": after,
+                "previous_context": previous_context,
+                "next_context": next_context,
+                "speaker": None,
+                "tags": ["review_approved_edit"],
+                "notes": reviewer_notes,
+                "language_pack": language_pack,
+            }
+        )
+        stored_count += 1
+    return stored_count
+
+
 def approve_review_task(
     registry: ArtifactRegistry,
     *,
@@ -335,6 +389,7 @@ def approve_review_task(
     edited_segments: Optional[Mapping[int, str] | Mapping[str, str]] = None,
     reviewer_notes: Optional[str] = None,
     output_srt_path: Optional[str] = None,
+    translation_memory: Optional[TranslationMemoryStore] = None,
 ) -> Dict[str, Any]:
     """Apply optional edits, approve a task, and persist an approved output."""
     task = registry.get_review_task(task_id)
@@ -384,6 +439,24 @@ def approve_review_task(
         },
     )
 
+    stored_corrections = 0
+    if translation_memory is not None:
+        try:
+            stored_corrections = _store_approved_corrections(
+                translation_memory=translation_memory,
+                candidate=candidate,
+                updated_segments=updated_segments,
+                edits=edits,
+                reviewer_notes=note or "",
+            )
+        except Exception as exc:
+            _append_history(
+                registry,
+                task_id,
+                action="translation_memory_store_failed",
+                details={"error": str(exc)},
+            )
+
     output_path_value = None
     if output_srt_path:
         output_path = Path(output_srt_path)
@@ -403,6 +476,7 @@ def approve_review_task(
         "task_id": task_id,
         "approved_candidate_id": approved.id,
         "output_srt_path": output_path_value,
+        "stored_corrections": stored_corrections,
         "history": list(refreshed.history if refreshed else []),
     }
 

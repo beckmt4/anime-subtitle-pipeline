@@ -105,6 +105,11 @@ translation:
   timeout: 60                     # seconds for LLM direct translation calls
   workflow: "single_pass"         # single_pass | literal_then_natural
   save_intermediate: false        # save literal-pass segments in candidate metadata
+  memory:
+    enabled: false                # inject approved correction memory into LLM prompts
+    path: ""                      # default: <outbox>/translation_memory.jsonl
+    max_matches: 3                # retrieval cap before prompt formatting
+    max_entries_in_prompt: 3      # final prompt-injection cap
   profiles:
     live_action_adult:
       engine: "llm_direct"

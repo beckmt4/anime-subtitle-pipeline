@@ -6,6 +6,7 @@ import pytest
 import requests
 
 from config import Config
+from core.translation import TranslationMemoryStore
 from models import Segment, SubtitleCandidate
 import mt
 
@@ -246,6 +247,47 @@ def test_llm_direct_prompt_injects_relevant_glossary_terms(monkeypatch):
     assert "Glossary enforcement (must follow for this cue):" in prompts[0]
     assert "太郎 -> Taro" in prompts[0]
     assert "先輩 -> senpai" in prompts[0]
+
+
+def test_llm_direct_prompt_injects_approved_translation_memory(monkeypatch, tmp_path):
+    prompts = []
+    memory_path = tmp_path / "translation_memory.jsonl"
+    TranslationMemoryStore(memory_path).add(
+        {
+            "source_lang": "ja",
+            "target_lang": "en",
+            "domain": "anime",
+            "source_text": "太郎は先輩です",
+            "bad_translation": "He is my upperclassman.",
+            "approved_translation": "Taro is a senpai.",
+            "language_pack": "ja_en",
+            "tags": ["name_error"],
+        }
+    )
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": "Taro is a senpai."}
+
+    def fake_post(url, json, timeout):
+        prompts.append(json["prompt"])
+        return _Response()
+
+    monkeypatch.setattr(mt.requests, "post", fake_post)
+
+    cfg = _cfg("llm_direct")
+    cfg._config["domain"] = {"pack": "anime"}
+    cfg._config["translation"]["memory"] = {"enabled": True, "path": str(memory_path), "max_matches": 3}
+    mt.translate_candidate_jp_to_en(_term_candidate(), cfg)
+
+    assert len(prompts) == 1
+    assert "Approved translation memory (reuse when applicable):" in prompts[0]
+    assert "Source: 太郎は先輩です" in prompts[0]
+    assert "Approved: Taro is a senpai." in prompts[0]
+    assert "Avoid: He is my upperclassman." in prompts[0]
 
 
 def test_llm_direct_timeout_falls_back_to_marian(monkeypatch):
