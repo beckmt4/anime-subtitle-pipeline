@@ -67,7 +67,7 @@ def test_translation_qc_fail_case_for_empty_final_line():
     result = run_translation_qc(final, source_candidate=source)
 
     assert result["qc_status"] == "fail"
-    assert any(f["code"] == "missing_final_line" for f in result["findings"])
+    assert any(f["code"] == "possible_omission" for f in result["findings"])
     assert result["summary"]["fail_count"] >= 1
 
 
@@ -83,7 +83,7 @@ def test_translation_qc_uses_mocked_llm_judge():
                 {
                     "segment_index": 1,
                     "severity": "warning",
-                    "code": "possible_context_hallucination",
+                    "code": "hallucination",
                     "message": "May add unsupported context",
                 }
             ]
@@ -92,4 +92,29 @@ def test_translation_qc_uses_mocked_llm_judge():
     result = run_translation_qc(final, source_candidate=source, config=cfg, llm_judge=_mock_judge)
 
     assert result["qc_status"] in {"warn", "fail"}
-    assert any(f["code"] == "possible_context_hallucination" for f in result["findings"])
+    assert any(f["code"] == "hallucination" for f in result["findings"])
+
+
+def test_translation_qc_normalizes_unknown_llm_code_to_taxonomy():
+    source = _candidate("ja_src", "そういうことだ", language="ja")
+    final = _candidate("fin", "That's it.")
+    cfg = DummyConfig({"translation_qc": {"llm_judge": {"enabled": True}}})
+
+    def _mock_judge(_payload):
+        return {
+            "findings": [
+                {
+                    "segment_index": 1,
+                    "severity": "warning",
+                    "code": "totally_new_failure_code",
+                    "message": "Unknown model reason",
+                }
+            ]
+        }
+
+    result = run_translation_qc(final, source_candidate=source, config=cfg, llm_judge=_mock_judge)
+
+    finding = result["findings"][-1]
+    assert finding["code"] == "needs_human_review"
+    assert "totally_new_failure_code" not in result["taxonomy_codes"]
+    assert "needs_human_review" in result["taxonomy_codes"]

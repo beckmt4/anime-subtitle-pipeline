@@ -367,11 +367,36 @@ between cues.
 
 Translation-faithfulness QC (`translation_qc.run_translation_qc`) returns
 `pass|warn|fail`, a normalized score, and per-segment findings with codes such as
-`missing_final_line`, `non_english_leakage`, `possible_omission`,
-`possible_added_meaning`, `final_literal_entity_drift`, and `register_softened`.
+`possible_omission`, `added_meaning`, `wrong_meaning`, `cjk_leakage`,
+`register_softened`, and `needs_human_review`.
 Generate-mode metadata includes this summary for translated outputs, and benchmark
 candidate metadata includes `translation_qc` summaries for JP-source candidates.
 Generate mode also writes a versioned QC sidecar (`*.en.qc.json`) with:
+
+Canonical translation failure taxonomy is defined in
+`core/quality/failure_taxonomy.py` and uses these codes:
+
+- `wrong_meaning` — source meaning changed/distorted
+- `possible_omission` — likely omitted meaning
+- `added_meaning` — likely unsupported added meaning
+- `hallucination` — invented unsupported content
+- `bad_name` — incorrect/inconsistent entity naming
+- `bad_honorific` — honorific mismatch
+- `wrong_pronoun_or_relationship` — pronoun/relationship mismatch
+- `too_literal` — unnaturally literal rendering
+- `too_wordy` — overly verbose subtitle line
+- `register_softened` — softened tone/register
+- `censored_or_refused` — refusal/censorship instead of translation
+- `cjk_leakage` — CJK text leaked into English output
+- `subtitle_constraint_violation` — subtitle constraints likely affected output
+- `bad_asr_source` — upstream ASR quality issue
+- `bad_ocr_source` — upstream OCR quality issue
+- `timing_unreadable` — timing/readability issue impacting meaning
+- `needs_human_review` — uncertain reason requiring manual review
+
+Each finding is normalized to these canonical codes. Unknown codes are mapped to
+`needs_human_review` so unregistered tags do not silently appear in structured
+outputs.
 
 ```json
 {

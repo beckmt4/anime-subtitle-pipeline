@@ -51,6 +51,31 @@ def test_generate_repeated_readability_issues_route_to_review_required() -> None
     assert result["review_task"] is not None
 
 
+def test_generate_includes_translation_taxonomy_reason_codes() -> None:
+    result = route_generate_review_task(
+        video="sample.mkv",
+        candidate_id="cand-translation",
+        strategy="embedded_jp_mt",
+        qc_summary={
+            "parsed_ok": True,
+            "cue_count": 4,
+            "violations": [],
+            "error_count": 0,
+            "warning_count": 0,
+        },
+        translation_qc_summary={
+            "findings": [
+                {"segment_index": 1, "severity": "warning", "code": "possible_omission"},
+                {"segment_index": 2, "severity": "warning", "code": "register_softened"},
+            ]
+        },
+    )
+    assert result["status"] == "review_required"
+    assert "possible_omission" in result["reason_codes"]
+    assert "register_softened" in result["reason_codes"]
+    assert result["review_task"] is not None
+
+
 def test_benchmark_weak_comparisons_route_to_review_required() -> None:
     result = route_benchmark_review_task(
         video="bench.mkv",
@@ -65,9 +90,10 @@ def test_benchmark_weak_comparisons_route_to_review_required() -> None:
                     "metrics": {"wer": 0.62, "bleu": 12.0, "chrf": 25.0},
                 }
             ],
+            "translation_failure_taxonomy": {"by_code": {"wrong_meaning": 2}},
         },
     )
     assert result["status"] == "review_required"
     assert "benchmark.quality_below_threshold" in result["reason_codes"]
+    assert "wrong_meaning" in result["reason_codes"]
     assert result["review_task"] is not None
-

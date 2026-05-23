@@ -26,6 +26,7 @@ from mt import translate_candidate_jp_to_en_workflow
 from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candidate
 from models import SubtitleCandidate
 from compare_core import compare_candidates
+from core.quality import aggregate_failure_codes
 from translation_qc import run_translation_qc
 from tracing import start_span
 from core.review import (
@@ -474,6 +475,14 @@ def run_benchmark(
     if not candidates:
         raise RuntimeError("No EN candidates generated; cannot perform benchmark")
 
+    translation_findings = []
+    for candidate in candidate_metadata:
+        translation_qc = candidate.get("translation_qc")
+        if not isinstance(translation_qc, dict):
+            continue
+        translation_findings.extend(list(translation_qc.get("findings", [])))
+    translation_failure_taxonomy = aggregate_failure_codes(translation_findings)
+
     ref_candidate = select_reference_candidate(candidates, config)
 
     # Unique run_id for this benchmark session
@@ -488,6 +497,7 @@ def run_benchmark(
         "comparisons": [],
         "run_id": session_run_id,
         "status": "single_candidate_only" if _single_candidate else "ok",
+        "translation_failure_taxonomy": translation_failure_taxonomy,
     }
 
     if _single_candidate:
