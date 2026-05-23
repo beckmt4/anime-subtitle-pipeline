@@ -7,6 +7,11 @@ from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
+from core.quality import (
+    aggregate_failure_codes,
+    normalize_failure_code,
+    normalize_failure_severity,
+)
 from models import SubtitleCandidate
 
 _CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
@@ -86,15 +91,20 @@ def _make_finding(
     literal_text: str,
     final_text: str,
 ) -> Dict[str, Any]:
-    return {
+    canonical_code = normalize_failure_code(code)
+    normalized_severity = normalize_failure_severity(canonical_code, severity)
+    finding = {
         "segment_index": segment_index,
-        "severity": severity,
-        "code": code,
+        "severity": normalized_severity,
+        "code": canonical_code,
         "message": message,
         "source_text": source_text,
         "literal_text": literal_text,
         "final_text": final_text,
     }
+    if canonical_code != str(code).strip().lower():
+        finding["raw_code"] = str(code or "")
+    return finding
 
 
 def _call_local_llm_judge(config: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -157,7 +167,7 @@ def run_translation_qc(
                 _make_finding(
                     segment_index=idx,
                     severity="fail",
-                    code="missing_final_line",
+                    code="possible_omission",
                     message="Final subtitle line is empty",
                     source_text=source_text,
                     literal_text=literal_text,
@@ -169,7 +179,7 @@ def run_translation_qc(
                 _make_finding(
                     segment_index=idx,
                     severity="warning",
-                    code="non_english_leakage",
+                    code="cjk_leakage",
                     message="Final subtitle contains CJK characters",
                     source_text=source_text,
                     literal_text=literal_text,
@@ -209,7 +219,7 @@ def run_translation_qc(
                     _make_finding(
                         segment_index=idx,
                         severity="fail",
-                        code="possible_added_meaning",
+                        code="added_meaning",
                         message=f"Final subtitle is much longer than baseline (ratio={ratio:.2f})",
                         source_text=source_text,
                         literal_text=literal_text,
@@ -221,7 +231,7 @@ def run_translation_qc(
                     _make_finding(
                         segment_index=idx,
                         severity="warning",
-                        code="possible_added_meaning",
+                        code="added_meaning",
                         message=f"Final subtitle may add unsupported meaning (ratio={ratio:.2f})",
                         source_text=source_text,
                         literal_text=literal_text,
@@ -238,7 +248,7 @@ def run_translation_qc(
                     _make_finding(
                         segment_index=idx,
                         severity="fail",
-                        code="final_literal_entity_drift",
+                        code="wrong_meaning",
                         message=f"Final subtitle dropped key terms: {', '.join(missing[:3])}",
                         source_text=source_text,
                         literal_text=literal_text,
@@ -250,7 +260,7 @@ def run_translation_qc(
                     _make_finding(
                         segment_index=idx,
                         severity="warning",
-                        code="final_literal_entity_drift",
+                        code="wrong_meaning",
                         message=f"Final subtitle may drift from literal terms: {', '.join(missing[:3])}",
                         source_text=source_text,
                         literal_text=literal_text,
@@ -289,6 +299,7 @@ def run_translation_qc(
                     else "warn" if seg_findings else "pass"
                 ),
                 "finding_count": len(seg_findings),
+                "failure_codes": list(dict.fromkeys(str(f["code"]) for f in seg_findings)),
             }
         )
 
@@ -315,30 +326,35 @@ def run_translation_qc(
             llm_result = judge(payload) or {}
             for raw in llm_result.get("findings", []):
                 seg_idx = int(raw.get("segment_index", -1))
-                severity = "fail" if str(raw.get("severity", "warning")).lower() == "fail" else "warning"
+                raw_code = str(raw.get("code", "llm_judge_review"))
                 findings.append(
                     _make_finding(
                         segment_index=seg_idx,
-                        severity=severity,
-                        code=str(raw.get("code", "llm_judge_review")),
+                        severity=str(raw.get("severity", "warning")),
+                        code=raw_code,
                         message=str(raw.get("message", "LLM judge requested review")),
                         source_text=str(raw.get("source_text", "")),
                         literal_text=str(raw.get("literal_text", "")),
                         final_text=str(raw.get("final_text", "")),
                     )
                 )
+                severity = findings[-1]["severity"]
+                code = str(findings[-1]["code"])
                 if 1 <= seg_idx <= len(segment_results):
                     segment_results[seg_idx - 1]["review_required"] = True
                     if severity == "fail":
                         segment_results[seg_idx - 1]["status"] = "fail"
                     elif segment_results[seg_idx - 1]["status"] == "pass":
                         segment_results[seg_idx - 1]["status"] = "warn"
+                    segment_results[seg_idx - 1]["failure_codes"] = list(
+                        dict.fromkeys(segment_results[seg_idx - 1]["failure_codes"] + [code])
+                    )
         except Exception as exc:
             findings.append(
                 _make_finding(
                     segment_index=-1,
                     severity="warning",
-                    code="llm_judge_unavailable",
+                    code="needs_human_review",
                     message=f"Local LLM judge failed: {exc}",
                     source_text="",
                     literal_text="",
@@ -348,6 +364,8 @@ def run_translation_qc(
 
     warning_count = sum(1 for f in findings if f["severity"] == "warning")
     fail_count = sum(1 for f in findings if f["severity"] == "fail")
+    taxonomy_summary = aggregate_failure_codes(findings)
+    taxonomy_codes = list(taxonomy_summary["by_code"].keys())
     score = 1.0 - warning_count * 0.08 - fail_count * 0.20
     score = max(0.0, min(1.0, score))
 
@@ -363,6 +381,8 @@ def run_translation_qc(
         "qc_status": qc_status,
         "score": round(score, 3),
         "findings": findings,
+        "taxonomy_codes": taxonomy_codes,
+        "taxonomy_summary": taxonomy_summary,
         "segment_results": segment_results,
         "summary": {
             "warning_count": warning_count,

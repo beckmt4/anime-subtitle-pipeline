@@ -23,10 +23,10 @@ and emits structured candidate-level + segment-level summaries:
 
 | Check | Violation type | Severity |
 |---|---|---|
-| Missing or empty final line | `missing_final_line` | fail |
-| CJK characters remain in English output | `non_english_leakage` | warning |
-| Major final/baseline length drift | `possible_omission`, `possible_added_meaning` | warn/fail (config-driven) |
-| Final drops obvious literal terms/entities | `final_literal_entity_drift` | warn/fail (config-driven) |
+| Missing or empty final line | `possible_omission` | fail |
+| CJK characters remain in English output | `cjk_leakage` | warning |
+| Major final/baseline length drift | `possible_omission`, `added_meaning` | warn/fail (config-driven) |
+| Final drops obvious literal terms/entities | `wrong_meaning` | warn/fail (config-driven) |
 | Register appears softened vs source/literal | `register_softened` | warning |
 | Optional local-LLM judge findings | `<llm code>` | warning/fail |
 
@@ -58,6 +58,11 @@ QC status/counts:
   now persisted and enforced in generate-mode routing.
 - Review-routing dependencies `#22` and `#56`: translation-QC-driven REVIEW/REJECT
   triggers are now available in policy routing output.
+- Taxonomy standardization (`feat: add translation failure taxonomy and per-line error tagging`):
+  translation findings now normalize to canonical codes from
+  `core/quality/failure_taxonomy.py`, include per-line `failure_codes`, expose
+  `taxonomy_codes` in translation QC outputs, and benchmark reports include
+  `translation_failure_taxonomy` aggregate counts.
 
 ## Tests
 

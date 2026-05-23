@@ -2266,6 +2266,7 @@ def run_generate(
                 if polish_stats and "polish_change_rate" in polish_stats
                 else None
             ),
+            translation_qc_summary=translation_qc_summary,
             cfg=cfg,
         )
         try:

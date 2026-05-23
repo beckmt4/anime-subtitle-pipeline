@@ -229,6 +229,8 @@ def test_generalized_generation_and_reference():
     assert results["reference_id"].startswith("embedded_en"), "Embedded EN should be reference"
     assert "review_task_routing" in results
     assert "status" in results["review_task_routing"]
+    assert "translation_failure_taxonomy" in results
+    assert "by_code" in results["translation_failure_taxonomy"]
     # Reference comparisons only (N-1)
     assert len([c for c in results["comparisons"] if c["ref_id"] == results["reference_id"]]) == 4
 

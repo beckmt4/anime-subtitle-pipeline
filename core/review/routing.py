@@ -57,6 +57,7 @@ def route_generate_review_task(
     selection_report: Dict[str, Any] | None = None,
     routing_decision: Dict[str, Any] | None = None,
     polish_change_rate: float | None = None,
+    translation_qc_summary: Dict[str, Any] | None = None,
     cfg: Any = None,
 ) -> Dict[str, Any]:
     """Route generate-mode output to ok/warning/review_required/failed."""
@@ -141,6 +142,22 @@ def route_generate_review_task(
             status = _bump_status(status, REVIEW_STATUS_REVIEW_REQUIRED)
             reason_codes.append("generate.high_polish_change_rate")
 
+    translation_findings = (
+        translation_qc_summary.get("findings", [])
+        if isinstance(translation_qc_summary, dict)
+        else []
+    )
+    taxonomy_codes = []
+    for finding in translation_findings:
+        code = str(finding.get("code", "")).strip()
+        if code:
+            taxonomy_codes.append(code)
+    if any(str(f.get("severity")) == "fail" for f in translation_findings):
+        status = _bump_status(status, REVIEW_STATUS_FAILED)
+    elif taxonomy_codes:
+        status = _bump_status(status, REVIEW_STATUS_REVIEW_REQUIRED)
+    reason_codes.extend(taxonomy_codes)
+
     reason_codes = list(dict.fromkeys(reason_codes))
     review_task = None
     if status in {REVIEW_STATUS_REVIEW_REQUIRED, REVIEW_STATUS_FAILED}:
@@ -218,6 +235,13 @@ def route_benchmark_review_task(
     elif weak_comparisons:
         status = _bump_status(status, REVIEW_STATUS_WARNING)
         reason_codes.append("benchmark.quality_borderline")
+
+    taxonomy = results.get("translation_failure_taxonomy", {})
+    by_code = taxonomy.get("by_code", {}) if isinstance(taxonomy, dict) else {}
+    taxonomy_codes = sorted(str(code) for code, count in by_code.items() if int(count) > 0)
+    if taxonomy_codes:
+        status = _bump_status(status, REVIEW_STATUS_REVIEW_REQUIRED)
+        reason_codes.extend(taxonomy_codes)
 
     reason_codes = list(dict.fromkeys(reason_codes))
     review_task = None
