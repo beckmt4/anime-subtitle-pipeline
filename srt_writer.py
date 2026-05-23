@@ -14,9 +14,8 @@ Key features:
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
-from asr import Segment  # legacy
 from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 
@@ -158,7 +157,7 @@ class SRTWriter:
         self.max_chars_per_line = config.llm_max_chars_per_line
         self.min_gap = config.get("subtitles", "min_gap_sec", default=0.05)
 
-    def _enforce_non_overlapping_timings(self, segments: List[Segment]) -> List[Segment]:
+    def _enforce_non_overlapping_timings(self, segments: List[GenericSegment]) -> List[GenericSegment]:
         """Clamp adjacent cues so the written SRT never contains overlaps."""
         if len(segments) < 2:
             return segments
@@ -194,7 +193,7 @@ class SRTWriter:
 
         return fixed
     
-    def prepare_segments(self, segments: List[Segment]) -> List[Segment]:
+    def _prepare_segments(self, segments: List[GenericSegment]) -> List[GenericSegment]:
         """
         Prepare segments for writing by applying timing and splitting constraints.
         
@@ -212,7 +211,7 @@ class SRTWriter:
         
         for seg in segments:
             # Skip empty segments
-            if not seg.text_en_final.strip():
+            if not seg.text.strip():
                 continue
             
             # Enforce minimum duration
@@ -221,10 +220,10 @@ class SRTWriter:
                 seg.end = seg.start + self.min_duration
             
             # Check if segment needs splitting
-            if seg.duration > self.max_duration or len(seg.text_en_final) > self.target_split_length:
+            if seg.duration > self.max_duration or len(seg.text) > self.target_split_length:
                 # Try to split by punctuation
                 text_chunks = split_text_by_punctuation(
-                    seg.text_en_final,
+                    seg.text,
                     self.split_punctuation,
                     self.target_split_length
                 )
@@ -242,12 +241,11 @@ class SRTWriter:
 
                     for i, chunk in enumerate(text_chunks):
                         chunk_start = seg.start + i * duration_per_chunk
-                        new_seg = Segment(
+                        new_seg = GenericSegment(
                             start=chunk_start,
                             end=chunk_start + chunk_duration,
-                            text_ja=seg.text_ja,  # Keep original for reference
-                            text_en_raw=seg.text_en_raw,
-                            text_en_final=chunk.strip()
+                            text=chunk.strip(),
+                            meta=dict(seg.meta),
                         )
                         prepared.append(new_seg)
 
@@ -295,12 +293,12 @@ class SRTWriter:
                 )
         return final
 
-    def write_srt(self, segments: List[Segment], output_path: str) -> Path:
+    def write_srt(self, segments: List[GenericSegment], output_path: str) -> Path:
         """
         Write segments to an SRT file.
         
         Args:
-            segments: List of Segment objects with text_en_final populated
+            segments: List of Segment objects with text populated
             output_path: Path for output SRT file
             
         Returns:
@@ -316,7 +314,7 @@ class SRTWriter:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Prepare segments (apply constraints)
-        segments = self.prepare_segments(segments)
+        segments = self._prepare_segments(segments)
         
         if not segments:
             raise ValueError("Cannot write SRT file: all segments were filtered out")
@@ -332,7 +330,7 @@ class SRTWriter:
                 # (blank line)
                 
                 # Format text with line breaks
-                text = split_into_lines(seg.text_en_final, self.max_chars_per_line)
+                text = split_into_lines(seg.text, self.max_chars_per_line)
                 
                 # Write subtitle entry
                 f.write(f"{i}\n")
@@ -345,97 +343,23 @@ class SRTWriter:
         
         return output_path
     
-    def validate_segments(self, segments: List[Segment]) -> List[str]:
-        """
-        Validate segments for common issues.
-        
-        Returns a list of warning messages (empty if no issues).
-        
-        Args:
-            segments: List of segments to validate
-            
-        Returns:
-            List of warning messages
-        """
-        warnings = []
-        
-        for i, seg in enumerate(segments):
-            # Check timing
-            if seg.start >= seg.end:
-                warnings.append(f"Segment {i+1}: start time >= end time ({seg.start:.2f} >= {seg.end:.2f})")
-            
-            if seg.duration < 0.1:
-                warnings.append(f"Segment {i+1}: duration too short ({seg.duration:.2f}s)")
-            
-            # Check text
-            if not seg.text_en_final.strip():
-                warnings.append(f"Segment {i+1}: empty text")
-            
-            # Check overlap with next segment
-            if i < len(segments) - 1:
-                next_seg = segments[i + 1]
-                if seg.end > next_seg.start:
-                    warnings.append(
-                        f"Segment {i+1}: overlaps with next segment "
-                        f"({seg.end:.2f} > {next_seg.start:.2f})"
-                    )
-        
-        return warnings
-
-
-def write_srt_file(segments: List[Segment], output_path: str, config: Config) -> Path:
-    """
-    Convenience function to write an SRT file.
-    
-    Args:
-        segments: List of Segment objects with English text
-        output_path: Output file path
-        config: Configuration object
-        
-    Returns:
-        Path to written SRT file
-    """
-    writer = SRTWriter(config)
-    
-    # Validate before writing
-    warnings = writer.validate_segments(segments)
-    if warnings:
-        logger.warning(f"Found {len(warnings)} validation warnings:")
-        for warning in warnings[:5]:  # Show first 5
-            logger.warning(f"  {warning}")
-        if len(warnings) > 5:
-            logger.warning(f"  ... and {len(warnings) - 5} more")
-    
-    return writer.write_srt(segments, output_path)
-
-
 # ---------------------------------------------------------------------------
 # New unified candidate SRT helpers
 # ---------------------------------------------------------------------------
 def write_candidate_srt(candidate: SubtitleCandidate, output_path: str, config: Config) -> Path:
     """Write a SubtitleCandidate to SRT using its segment texts."""
     writer = SRTWriter(config)
-    # Convert candidate segments to legacy style temporary objects for existing pipeline logic
-    temp_segments: List[Segment] = []
-    for s in candidate.segments:
-        temp_segments.append(
-            Segment(start=s.start, end=s.end, text_ja="", text_en_raw=s.text, text_en_final=s.text)
-        )
-    warnings = writer.validate_segments(temp_segments)
-    if warnings:
-        logger.warning(f"Found {len(warnings)} validation warnings for candidate {candidate.id}")
-    return writer.write_srt(temp_segments, output_path)
+    return writer.write_srt(candidate.segments, output_path)
 
 __all__ = [
     "format_timestamp_srt",
-    "write_srt_file",
     "write_candidate_srt",
     "read_srt_file",
 ]
 
 
 # Utility: Read SRT file back into segments (for testing/validation)
-def read_srt_file(srt_path: str) -> List[Segment]:
+def read_srt_file(srt_path: str) -> List[GenericSegment]:
     """
     Read an SRT file and parse it into Segment objects.
     
@@ -480,12 +404,10 @@ def read_srt_file(srt_path: str) -> List[Segment]:
             # Text is all remaining lines
             text = '\n'.join(lines[2:])
             
-            seg = Segment(
+            seg = GenericSegment(
                 start=start,
                 end=end,
-                text_ja="",  # Not available from SRT
-                text_en_raw="",
-                text_en_final=text
+                text=text,
             )
             segments.append(seg)
     

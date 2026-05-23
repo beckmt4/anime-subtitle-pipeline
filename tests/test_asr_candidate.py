@@ -13,7 +13,8 @@ from typing import List
 from unittest.mock import MagicMock, patch
 
 from config import Config
-from asr import Segment, build_candidate_from_segments, FasterWhisperASR
+from asr import build_candidate_from_segments, FasterWhisperASR
+from models import Segment
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -92,11 +93,15 @@ def test_candidate_builder_flags_weak_asr_segments():
             0.0,
             0.1,
             "???",
-            avg_logprob=-2.0,
-            no_speech_prob=0.80,
-            compression_ratio=3.1,
+            meta={
+                "asr": {
+                    "avg_logprob": -2.0,
+                    "no_speech_prob": 0.80,
+                    "compression_ratio": 3.1,
+                }
+            },
         ),
-        Segment(0.2, 1.2, "こんにちは", avg_logprob=-0.1, no_speech_prob=0.05),
+        Segment(0.2, 1.2, "こんにちは", meta={"asr": {"avg_logprob": -0.1, "no_speech_prob": 0.05}}),
     ]
     candidate = build_candidate_from_segments(segments, StubConfig())
 
