@@ -15,6 +15,7 @@ from core.review import (
     list_review_history,
     render_local_review_ui,
 )
+from core.translation import TranslationMemoryStore
 
 
 def _store_candidate(
@@ -96,11 +97,26 @@ def test_create_review_task_from_benchmark_output_resolves_candidate() -> None:
 
 def test_approve_review_task_stores_output_and_history(tmp_path: Path) -> None:
     with ArtifactRegistry(":memory:") as registry:
-        candidate = _store_candidate(registry, source_id="cand_review")
+        candidate = registry.store_candidate(
+            SubtitleCandidateRecord(
+                media_hash="m1",
+                source_id="cand_review",
+                language="en",
+                source="mt",
+                origin_stream="sub:0",
+                model_version="test",
+                segments=[
+                    {"start": 0.0, "end": 1.0, "text": "hello", "meta": {"source_text_ja": "こんにちは"}},
+                    {"start": 1.2, "end": 2.3, "text": "world", "meta": {"source_text_ja": "世界"}},
+                ],
+                meta={"domain_pack": "anime", "language_pack": "ja_en", "source_language": "ja"},
+            )
+        )
         task = registry.create_review_task(
             ReviewTaskRecord(media_hash="m1", candidate_id=candidate.id)
         )
         output_srt = tmp_path / "approved.srt"
+        memory = TranslationMemoryStore(tmp_path / "translation_memory.jsonl")
 
         result = approve_review_task(
             registry,
@@ -108,13 +124,25 @@ def test_approve_review_task_stores_output_and_history(tmp_path: Path) -> None:
             edited_segments={1: "earth"},
             reviewer_notes="looks good",
             output_srt_path=str(output_srt),
+            translation_memory=memory,
         )
 
         assert result["approved_candidate_id"] is not None
+        assert result["stored_corrections"] == 1
         assert output_srt.exists()
         latest_srt = registry.get_latest_artifact("m1", ARTIFACT_TYPE_SRT)
         assert latest_srt is not None
         assert latest_srt.candidate_id == result["approved_candidate_id"]
+        correction_hits = memory.query(
+            source_text="世界",
+            source_lang="ja",
+            target_lang="en",
+            domain="anime",
+            language_pack="ja_en",
+        )
+        assert len(correction_hits) == 1
+        assert correction_hits[0]["bad_translation"] == "world"
+        assert correction_hits[0]["approved_translation"] == "earth"
         history = list_review_history(registry, task_id=task.id)
         assert history[-1]["action"] == "task_approved"
 

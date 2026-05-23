@@ -215,9 +215,11 @@ python main.py video.mkv --mode benchmark
 python main.py video.mkv --mode review --review-action queue
 python main.py video.mkv --mode review --review-action render --task-id 12
 python main.py video.mkv --mode review --review-action approve --task-id 12 --review-edits-json edits.json
-
-
 ```bash
+
+Approved edits can be persisted into a local translation-memory JSONL store and
+reused in future LLM direct/hybrid prompts when enabled. This stays local-only
+on disk (no cloud sync).bash
 # Use prod profile (for 4090 GPU)
 python main.py video.mkv --profile prod
 
@@ -284,6 +286,11 @@ translation:
   preserve_adult_register: false
   flag_low_confidence: false
   flag_high_risk_content: false
+  memory:
+    enabled: false
+    path: ""                      # default: <outbox>/translation_memory.jsonl
+    max_matches: 3
+    max_entries_in_prompt: 3
   profiles:
     live_action_adult:
       engine: "llm_direct"
