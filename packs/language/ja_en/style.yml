@@ -1,0 +1,5 @@
+style:
+  preserve_names: true
+  preserve_honorifics: true
+  honorific_policy: "romanize"
+  note: "Language-level defaults; domain style may add stricter overrides."

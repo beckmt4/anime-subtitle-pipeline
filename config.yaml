@@ -21,7 +21,7 @@ domain:
     source_preferences:
       prefer_subtitles: true
       prefer_audio_language: "ja"       # anime prefers JP audio when generation is required
-    glossary_path: "./packs/domain/anime/glossary.yaml"
+    glossary_path: "./packs/domain/anime/glossary.yml"
     glossary_overrides: []              # Optional list of {"source": "...", "target": "..."}
   jav:
     source_preferences:

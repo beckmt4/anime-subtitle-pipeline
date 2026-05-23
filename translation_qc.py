@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
+from core.translation import load_active_glossary_data, validate_required_term_drift
 from core.quality import (
     aggregate_failure_codes,
     normalize_failure_code,
@@ -141,6 +142,7 @@ def run_translation_qc(
 ) -> Dict[str, Any]:
     """Run translation-faithfulness QC and return structured findings."""
     cfg = _thresholds(config)
+    glossary_data = load_active_glossary_data(config)
     findings: List[Dict[str, Any]] = []
     segment_results: List[Dict[str, Any]] = []
     candidate_metadata = candidate_metadata or final_candidate.meta or {}
@@ -288,6 +290,27 @@ def run_translation_qc(
                         final_text=final_text,
                     )
                 )
+
+        drift_findings = validate_required_term_drift(
+            source_text=source_text,
+            final_text=final_text,
+            glossary_data=glossary_data,
+            literal_text=literal_text,
+        )
+        for raw in drift_findings:
+            finding = _make_finding(
+                segment_index=idx,
+                severity=str(raw.get("severity", "warning")),
+                code=str(raw.get("code", "wrong_meaning")),
+                message=str(raw.get("message", "Required term drift detected")),
+                source_text=source_text,
+                literal_text=literal_text,
+                final_text=final_text,
+            )
+            for key in ("term_kind", "source_term", "expected_target", "pack_scope"):
+                if raw.get(key):
+                    finding[key] = raw[key]
+            seg_findings.append(finding)
 
         findings.extend(seg_findings)
         segment_results.append(

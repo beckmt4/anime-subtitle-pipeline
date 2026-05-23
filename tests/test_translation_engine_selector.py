@@ -24,6 +24,17 @@ def _candidate() -> SubtitleCandidate:
     )
 
 
+def _term_candidate() -> SubtitleCandidate:
+    return SubtitleCandidate(
+        id="embedded_ja_terms",
+        language="ja",
+        source="embedded",
+        origin_stream="sub:1",
+        segments=[Segment(0.0, 1.0, "太郎は先輩です")],
+        meta={},
+    )
+
+
 def _cfg(engine: str = "marian", dialogue_profile: str = "default") -> Config:
     cfg = Config()
     cfg._config.setdefault("translation", {})
@@ -209,6 +220,32 @@ def test_llm_direct_prompt_includes_context_and_accepts_only_current_output(monk
     assert "Previous accepted English output:\nfocused output" in prompts[1]
     assert translated.segments[0].text == "focused output"
     assert translated.segments[1].text == "focused output"
+
+
+def test_llm_direct_prompt_injects_relevant_glossary_terms(monkeypatch):
+    prompts = []
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": "Taro is a senpai."}
+
+    def fake_post(url, json, timeout):
+        prompts.append(json["prompt"])
+        return _Response()
+
+    monkeypatch.setattr(mt.requests, "post", fake_post)
+
+    cfg = _cfg("llm_direct")
+    cfg._config["domain"] = {"pack": "anime"}
+    mt.translate_candidate_jp_to_en(_term_candidate(), cfg)
+
+    assert len(prompts) == 1
+    assert "Glossary enforcement (must follow for this cue):" in prompts[0]
+    assert "太郎 -> Taro" in prompts[0]
+    assert "先輩 -> senpai" in prompts[0]
 
 
 def test_llm_direct_timeout_falls_back_to_marian(monkeypatch):

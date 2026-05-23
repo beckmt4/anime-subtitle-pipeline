@@ -6,7 +6,7 @@ Supplies anime-specific style, glossary, and review configuration that
 Modules
 -------
 style       Honorific handling, OP/ED treatment, on-screen text policy.
-glossary    Common anime terminology overrides (loaded from glossary.yaml).
+glossary    Common anime terminology overrides (loaded from glossary.yml).
 
 Pack metadata
 -------------

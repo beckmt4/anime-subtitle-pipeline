@@ -1,0 +1,15 @@
+terms:
+  - source: "先輩"
+    target: "senpai"
+    required: true
+    note: "Domain override for anime audience expectations."
+  - source: "文化祭"
+    target: "school culture festival"
+    required: false
+    note: "Starter anime-school-domain terminology sample."
+
+names:
+  - source: "太郎"
+    target: "Taro"
+    required: true
+    note: "Name preservation sample."

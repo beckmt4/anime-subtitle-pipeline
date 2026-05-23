@@ -1,0 +1,11 @@
+names:
+  - source: "太郎"
+    target: "Taro"
+    required: true
+    note: "Starter deterministic character-name enforcement example."
+
+honorifics:
+  - source: "先輩"
+    target: "senpai"
+    required: true
+    note: "Preserve canonical honorific rendering."

@@ -13,7 +13,12 @@ def load_glossary_terms(
     overrides: List[Dict[str, str]] | None = None,
 ) -> List[Dict[str, str]]:
     """Load anime glossary terms from YAML and append optional overrides."""
-    path = Path(glossary_path) if glossary_path else Path(__file__).with_name("glossary.yaml")
+    if glossary_path:
+        path = Path(glossary_path)
+    else:
+        path = Path(__file__).with_name("glossary.yml")
+        if not path.exists():
+            path = Path(__file__).with_name("glossary.yaml")
     data: Dict[str, Any] = {}
     if path.exists():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

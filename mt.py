@@ -22,6 +22,7 @@ from transformers import MarianMTModel, MarianTokenizer
 from asr import Segment  # legacy Segment (for backward compatibility wrappers)
 from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
+from core.translation import build_prompt_glossary_block, load_active_glossary_data
 from packs.language.ja_en.cjk_filter import has_cjk_leak
 
 logger = logging.getLogger(__name__)
@@ -502,6 +503,7 @@ class LLMDirectTranslator:
         self.flag_high_risk_content = bool(tcfg["flag_high_risk_content"])
         self.context_window_segments = int(tcfg["context_window_segments"])
         self.timeout = int(tcfg["timeout"])
+        self.glossary_data = load_active_glossary_data(config)
 
         logger.info("Initializing LLM direct translator")
         logger.info("  Model: %s", self.model_name)
@@ -555,6 +557,7 @@ class LLMDirectTranslator:
         previous_english_text: Optional[str] = None,
     ) -> str:
         source_text = candidate.segments[index].text
+        glossary_block = build_prompt_glossary_block(source_text, self.glossary_data)
         baseline_block = (
             f"\nBaseline MarianMT translation:\n{baseline_text}\n"
             if baseline_text is not None
@@ -574,6 +577,7 @@ class LLMDirectTranslator:
             f"{self._context_for_index(candidate, index)}\n"
             f"{baseline_block}\n"
             f"{previous_english_block}\n"
+            f"{glossary_block}\n\n"
             "Return only the English translation for this one subtitle cue.\n"
             f"Japanese cue:\n{source_text}"
         )

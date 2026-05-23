@@ -4,6 +4,8 @@ Validates that the reference language pack meets the interface contract
 defined in specs/29-language-pack-interface.md.
 """
 
+from pathlib import Path
+
 import pytest
 
 
@@ -155,3 +157,9 @@ class TestJaEnPackMetadata:
     def test_pack_id(self):
         from packs.language.ja_en import PACK_ID
         assert PACK_ID == "ja_en"
+
+    def test_pack_glossary_name_and_style_files_exist(self):
+        pack_dir = Path(__file__).parent.parent / "packs" / "language" / "ja_en"
+        assert (pack_dir / "glossary.yml").exists()
+        assert (pack_dir / "names.yml").exists()
+        assert (pack_dir / "style.yml").exists()

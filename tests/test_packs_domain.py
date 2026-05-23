@@ -4,6 +4,8 @@ Validates that both reference domain packs meet the interface contract
 defined in specs/30-domain-pack-interface.md.
 """
 
+from pathlib import Path
+
 import pytest
 
 
@@ -72,12 +74,15 @@ class TestAnimePack:
         assert {"source": "先輩", "target": "senpai"} in terms
 
     def test_anime_benchmark_fixtures_exist(self):
-        from pathlib import Path
-
         fixture_dir = Path(__file__).parent.parent / "fixtures" / "benchmark_translation" / "anime"
         assert (fixture_dir / "source.ja.srt").exists()
         assert (fixture_dir / "reference.en.srt").exists()
         assert (fixture_dir / "expected.json").exists()
+
+    def test_anime_glossary_and_style_yml_exist(self):
+        pack_dir = Path(__file__).parent.parent / "packs" / "domain" / "anime"
+        assert (pack_dir / "glossary.yml").exists()
+        assert (pack_dir / "style.yml").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +105,11 @@ class TestJavPack:
         assert cfg["dialogue_profile"] == "live_action_adult"
         assert cfg["review_mode"] == "adult"
         assert cfg["preserve_adult_register"] is True
+
+    def test_glossary_and_style_yml_exist(self):
+        pack_dir = Path(__file__).parent.parent / "packs" / "domain" / "jav"
+        assert (pack_dir / "glossary.yml").exists()
+        assert (pack_dir / "style.yml").exists()
 
     def test_assert_opt_in_passes_when_true(self):
         from packs.domain.jav.privacy import assert_opt_in

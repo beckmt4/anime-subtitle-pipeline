@@ -1,0 +1,9 @@
+terms:
+  - source: "先輩"
+    target: "senior"
+    required: false
+    note: "Language-pack default; domain packs may override."
+  - source: "学園祭"
+    target: "school festival"
+    required: false
+    note: "Common school-context term."
