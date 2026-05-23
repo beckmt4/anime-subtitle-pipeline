@@ -7,8 +7,9 @@ from translation_qc import run_translation_qc
 
 
 class DummyConfig:
-    def __init__(self, data=None):
+    def __init__(self, data=None, *, domain_pack=None):
         self._data = data or {}
+        self.domain_pack = domain_pack
 
     def get(self, *keys, default=None):
         value = self._data
@@ -118,3 +119,18 @@ def test_translation_qc_normalizes_unknown_llm_code_to_taxonomy():
     assert finding["code"] == "needs_human_review"
     assert "totally_new_failure_code" not in result["taxonomy_codes"]
     assert "needs_human_review" in result["taxonomy_codes"]
+
+
+def test_translation_qc_flags_required_name_and_honorific_drift():
+    source = _candidate("ja_src", "太郎は先輩です。", language="ja")
+    literal = _candidate("lit", "Taro is a senpai.")
+    final = _candidate("fin", "He is my upperclassman.")
+    cfg = DummyConfig(
+        {"asr": {"language": "ja"}},
+        domain_pack="anime",
+    )
+
+    result = run_translation_qc(final, source_candidate=source, literal_candidate=literal, config=cfg)
+
+    assert any(f["code"] == "bad_name" for f in result["findings"])
+    assert any(f["code"] == "bad_honorific" for f in result["findings"])

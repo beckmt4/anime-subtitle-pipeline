@@ -13,6 +13,7 @@ asr         speech → text backend abstraction
 mt          translation backend abstraction
 polish      LLM quality improvement backend
 subtitles   Segment / SubtitleCandidate data model and SRT formatting
+translation pack-aware glossary/terminology enforcement helpers
 benchmark   candidate comparison and quality metrics
 artifacts   processing ledger and artifact storage (Issue #18)
 policy      quality threshold routing decisions

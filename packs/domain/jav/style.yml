@@ -1,0 +1,5 @@
+style:
+  llm_style: "jav_conversational"
+  dialogue_profile: "live_action_adult"
+  preserve_adult_register: true
+  terminology_mode: "domain_specific_overrides"

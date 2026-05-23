@@ -38,8 +38,8 @@ Tests run and pass with `pytest tests/test_packs_domain.py`.
 
 ## Notes
 
-- The anime glossary (`glossary.yaml`) is not yet populated; that is content
-  work tracked in Issue #23.
+- The anime glossary now ships as `glossary.yml` with starter entries; broader
+  population and curation remain tracked in Issue #23.
 - Full JAV privacy audit (all sensitive key enumeration) is deferred to
   Issue #24.
 - The `REQUIRES_OPT_IN` check is defined in `packs/domain/jav/privacy.py` and

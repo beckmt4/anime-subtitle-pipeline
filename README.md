@@ -421,6 +421,24 @@ baseline details.
 When `translation.dialogue_profile` is `live_action_adult`, the
 `translation.profiles.live_action_adult` preset is automatically applied.
 
+### Pack glossary/name/style files
+
+Translation terminology enforcement is pack-owned and loaded from:
+
+- `packs/language/ja_en/glossary.yml`
+- `packs/language/ja_en/names.yml`
+- `packs/language/ja_en/style.yml`
+- `packs/domain/anime/glossary.yml`
+- `packs/domain/anime/style.yml`
+- `packs/domain/jav/glossary.yml`
+- `packs/domain/jav/style.yml`
+
+Precedence is **domain pack overrides language pack** for the same source term.
+`mt.LLMDirectTranslator` injects relevant per-cue glossary/name entries into
+LLM prompts, and `translation_qc.run_translation_qc` emits structured warnings
+for required name/honorific/term drift (`bad_name`, `bad_honorific`,
+`wrong_meaning`).
+
 Benchmark metrics:
 - **WER** – Word Error Rate (lower better)
 - **BLEU** – Translation quality (higher better)

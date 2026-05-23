@@ -1,0 +1,5 @@
+style:
+  llm_style: "anime_natural"
+  preserve_honorifics: true
+  preserve_names: true
+  terminology_mode: "anime_specific_overrides"

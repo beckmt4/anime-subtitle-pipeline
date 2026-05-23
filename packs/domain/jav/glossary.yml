@@ -1,0 +1,9 @@
+terms:
+  - source: "男優"
+    target: "male performer"
+    required: false
+    note: "Domain vocabulary sample."
+  - source: "女優"
+    target: "female performer"
+    required: false
+    note: "Domain vocabulary sample."
