@@ -198,6 +198,30 @@ class TranslationMemoryStore:
                 count += 1
         return count
 
+    def list_records(
+        self,
+        *,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        domain: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return serialized records, optionally filtered by language/domain."""
+        filters = {
+            "source_lang": _normalize_text(source_lang).lower() if source_lang else None,
+            "target_lang": _normalize_text(target_lang).lower() if target_lang else None,
+            "domain": _normalize_text(domain) if domain else None,
+        }
+        records: List[Dict[str, Any]] = []
+        for record in self._read_records():
+            if filters["source_lang"] and record.source_lang != filters["source_lang"]:
+                continue
+            if filters["target_lang"] and record.target_lang != filters["target_lang"]:
+                continue
+            if filters["domain"] and record.domain != filters["domain"]:
+                continue
+            records.append(self._serialize_record(record))
+        return records
+
 
 def build_prompt_memory_block(memory_entries: List[Dict[str, Any]], *, max_entries: int = 3) -> str:
     """Build deterministic prompt block from queried approved correction entries."""
