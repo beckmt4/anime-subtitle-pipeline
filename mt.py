@@ -19,7 +19,6 @@ import requests
 import torch
 from transformers import MarianMTModel, MarianTokenizer
 
-from asr import Segment  # legacy Segment (for backward compatibility wrappers)
 from models import Segment as GenericSegment, SubtitleCandidate
 from config import Config
 from core.translation import (
@@ -368,44 +367,6 @@ class MarianTranslator:
             # Return original texts on error
             return texts
     
-    def translate_segments_ja_to_en(self, segments: List[Segment]) -> List[Segment]:
-        """
-        Translate Japanese text in segments to English.
-        
-        Updates each segment with text_en_raw field containing the translation.
-        Processes in batches for efficiency.
-        
-        Args:
-            segments: List of Segment objects with text_ja field
-            
-        Returns:
-            The same list of segments with text_en_raw populated
-        """
-        if not segments:
-            return segments
-        
-        logger.info(f"Translating {len(segments)} segments (JA → EN)")
-        
-        batch_size = self.config.mt_batch_size
-        
-        # Process in batches
-        for i in range(0, len(segments), batch_size):
-            batch = segments[i:i + batch_size]
-            batch_texts = [seg.text_ja for seg in batch]
-            
-            logger.debug(f"Translating batch {i//batch_size + 1}/{(len(segments)-1)//batch_size + 1}")
-            
-            # Translate batch
-            translations = self.translate_batch(batch_texts)
-            
-            # Update segments
-            for seg, translation in zip(batch, translations):
-                seg.text_en_raw = translation
-        
-        logger.info("Translation complete")
-        
-        return segments
-
     # ------------------------------------------------------------------
     # New unified data-model API
     # ------------------------------------------------------------------
@@ -442,7 +403,7 @@ class MarianTranslator:
         # tokenizer padding to the longest sequence across ALL segments and a
         # single model.generate(num_beams=4) over the full padded tensor. On
         # CPU with ~900 segments this ballooned RAM to ~48 GB and ran for
-        # hours. Matches the batching pattern in translate_segments_ja_to_en.
+        # hours. Matches the same batched translation approach used across MT paths.
         batch_size = self.config.mt_batch_size
         total = len(candidate.segments)
         num_batches = (total - 1) // batch_size + 1
@@ -851,25 +812,6 @@ def translate_candidate(
     raise AssertionError(f"Unhandled translation engine: {selected_engine}")
 
 
-def translate_segments_ja_to_en(segments: List[Segment], config: Config) -> List[Segment]:
-    """
-    Convenience function for one-shot translation.
-    
-    Creates a translator, translates segments, and cleans up.
-    
-    Args:
-        segments: List of Segment objects with Japanese text
-        config: Configuration object
-        
-    Returns:
-        Segments with English translations in text_en_raw
-    """
-    translator = MarianTranslator(config)
-    segments = translator.translate_segments_ja_to_en(segments)
-    translator.unload_model()
-    return segments
-
-
 def translate_candidate_jp_to_en(
     candidate: SubtitleCandidate,
     config: Config,
@@ -981,35 +923,6 @@ def run_two_pass_translation(
     return final_candidate
 
 
-# Alternative: Keep model loaded for batch processing
-class BatchTranslator:
-    """
-    Translator that keeps the model loaded for multiple translation runs.
-    
-    Usage:
-        with BatchTranslator(config) as translator:
-            for segments in segment_batches:
-                translator.translate(segments)
-                # process segments...
-    """
-    
-    def __init__(self, config: Config):
-        self.translator = MarianTranslator(config)
-    
-    def __enter__(self):
-        self.translator.load_model()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.translator.unload_model()
-    
-    def translate(self, segments: List[Segment]) -> List[Segment]:
-        """Translate segments."""
-        return self.translator.translate_segments_ja_to_en(segments)
-
-    def translate_candidate(self, candidate: SubtitleCandidate) -> SubtitleCandidate:
-        return self.translator.translate_candidate(candidate, target_language="en")
-
 __all__ = [
     "InvalidTranslationEngineError",
     "LLMDirectTranslator",
@@ -1017,9 +930,7 @@ __all__ = [
     "VALID_TRANSLATION_ENGINES",
     "VALID_TRANSLATION_WORKFLOWS",
     "translate_candidate",
-    "translate_segments_ja_to_en",
     "translate_candidate_jp_to_en",
     "translate_candidate_jp_to_en_workflow",
     "run_two_pass_translation",
-    "BatchTranslator",
 ]

@@ -14,7 +14,6 @@ Key features:
 
 import logging
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -58,32 +57,33 @@ def _japanese_char_ratio(text: str) -> float:
 
 
 def _segment_quality_warnings(
-    segment: "Segment",
+    segment: GenericSegment,
     *,
-    previous: Optional["Segment"],
+    previous: Optional[GenericSegment],
     repeated_count: int,
     language: str,
     thresholds: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
     duration = segment.duration
-    text = segment.text_ja.strip()
+    text = segment.text.strip()
+    asr_meta = segment.meta.get("asr", {})
 
-    no_speech = segment.no_speech_prob
+    no_speech = asr_meta.get("no_speech_prob", getattr(segment, "no_speech_prob", None))
     if no_speech is not None and no_speech > thresholds["warn_no_speech_prob_above"]:
         warnings.append(_warning(
             "high_no_speech_probability",
             f"no_speech_prob {no_speech:.2f} > {thresholds['warn_no_speech_prob_above']:.2f}",
         ))
 
-    avg_logprob = segment.avg_logprob
+    avg_logprob = asr_meta.get("avg_logprob", getattr(segment, "avg_logprob", None))
     if avg_logprob is not None and avg_logprob < thresholds["warn_avg_logprob_below"]:
         warnings.append(_warning(
             "low_average_log_probability",
             f"avg_logprob {avg_logprob:.2f} < {thresholds['warn_avg_logprob_below']:.2f}",
         ))
 
-    compression = segment.compression_ratio
+    compression = asr_meta.get("compression_ratio", getattr(segment, "compression_ratio", None))
     if compression is not None and compression > thresholds["warn_compression_ratio_above"]:
         warnings.append(_warning(
             "high_compression_ratio",
@@ -124,36 +124,6 @@ def _segment_quality_warnings(
             ))
 
     return warnings
-
-
-@dataclass
-class Segment:
-    """
-    A transcribed audio segment with timing information.
-    
-    This is the core data structure passed through the pipeline.
-    Additional fields (text_en_raw, text_en_final) are added by later stages.
-    """
-    start: float           # Start time in seconds
-    end: float             # End time in seconds
-    text_ja: str           # Japanese transcription
-    text_en_raw: str = ""  # Raw English translation (from MT)
-    text_en_final: str = "" # Polished English (from LLM or same as raw)
-    avg_logprob: Optional[float] = None
-    no_speech_prob: Optional[float] = None
-    compression_ratio: Optional[float] = None
-    meta: Dict[str, Any] = field(default_factory=dict)
-    
-    _REPR_TEXT_MAX_LEN = 30  # Maximum text length in repr
-    
-    @property
-    def duration(self) -> float:
-        """Duration of the segment in seconds."""
-        return self.end - self.start
-    
-    def __repr__(self) -> str:
-        text_preview = self.text_ja[:self._REPR_TEXT_MAX_LEN]
-        return f"Segment({self.start:.2f}-{self.end:.2f}s: '{text_preview}...')"
 
 
 class FasterWhisperASR:
@@ -215,7 +185,7 @@ class FasterWhisperASR:
         self,
         audio_path: str,
         language: Optional[str] = None
-    ) -> Tuple[List[Segment], SubtitleCandidate]:
+    ) -> Tuple[List[GenericSegment], SubtitleCandidate]:
         """
         Transcribe an audio file to Japanese text segments with timestamps.
 
@@ -224,7 +194,8 @@ class FasterWhisperASR:
             language: Language code (default: from config, typically "ja")
 
         Returns:
-            A tuple of (segments, candidate) where segments is a list of Segment
+            A tuple of (segments, candidate) where segments is a list of
+            generic subtitle Segment objects
             objects with Japanese transcriptions and timing, and candidate is the
             corresponding SubtitleCandidate built from those segments.
 
@@ -268,7 +239,7 @@ class FasterWhisperASR:
             logger.info(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
             logger.info(f"Audio duration: {info.duration:.2f}s")
             
-            # Convert iterator to list of Segment objects
+            # Convert iterator to list of generic Segment objects
             segments = []
             for seg in segments_iter:
                 # Filter out segments with no speech
@@ -276,13 +247,17 @@ class FasterWhisperASR:
                 if not text:
                     continue
                 
-                segment = Segment(
+                segment = GenericSegment(
                     start=seg.start,
                     end=seg.end,
-                    text_ja=text,
-                    avg_logprob=getattr(seg, "avg_logprob", None),
-                    no_speech_prob=getattr(seg, "no_speech_prob", None),
-                    compression_ratio=getattr(seg, "compression_ratio", None),
+                    text=text,
+                    meta={
+                        "asr": {
+                            "avg_logprob": getattr(seg, "avg_logprob", None),
+                            "no_speech_prob": getattr(seg, "no_speech_prob", None),
+                            "compression_ratio": getattr(seg, "compression_ratio", None),
+                        },
+                    },
                 )
                 segments.append(segment)
             
@@ -335,8 +310,8 @@ class FasterWhisperASR:
             logger.debug("Unloading Whisper model")
             self.model = None
 
-    def _build_candidate_from_segments(self, segments: List[Segment], language: str, origin_stream: str) -> SubtitleCandidate:
-        """Build a SubtitleCandidate from legacy ASR Segment list."""
+    def _build_candidate_from_segments(self, segments: List[GenericSegment], language: str, origin_stream: str) -> SubtitleCandidate:
+        """Build a SubtitleCandidate from ASR segments."""
         return build_candidate_from_segments(
             segments,
             self.config,
@@ -346,7 +321,7 @@ class FasterWhisperASR:
         )
 
 
-def transcribe_audio_to_segments(audio_path: str, config: Config) -> List[Segment]:
+def transcribe_audio_to_segments(audio_path: str, config: Config) -> List[GenericSegment]:
     """
     Convenience function for one-shot transcription.
     
@@ -358,7 +333,7 @@ def transcribe_audio_to_segments(audio_path: str, config: Config) -> List[Segmen
         config: Configuration object
         
     Returns:
-        List of Segment objects with Japanese transcriptions
+        List of generic Segment objects with Japanese transcriptions
     """
     asr = FasterWhisperASR(config)
     segments, _ = asr.transcribe_audio_to_segments(audio_path)
@@ -390,7 +365,7 @@ class BatchASR:
         self.asr.unload_model()
         return False
     
-    def transcribe(self, audio_path: str) -> List[Segment]:
+    def transcribe(self, audio_path: str) -> List[GenericSegment]:
         """Transcribe an audio file."""
         segments, cand = self.asr.transcribe_audio_to_segments(audio_path)
         self._last_candidate = cand
@@ -405,7 +380,7 @@ class BatchASR:
 # New generic candidate builder utilities
 # ---------------------------------------------------------------------------
 def build_candidate_from_segments(
-    segments: List[Segment],
+    segments: List[GenericSegment],
     config: Config,
     candidate_id: str = "asr_ja",
     language: str = "ja",
@@ -419,16 +394,16 @@ def build_candidate_from_segments(
     thresholds = _quality_thresholds(config)
     text_counts: Dict[str, int] = {}
     for s in segments:
-        key = " ".join(s.text_ja.casefold().split())
+        key = " ".join(s.text.casefold().split())
         if key:
             text_counts[key] = text_counts.get(key, 0) + 1
 
     generic_segments: List[GenericSegment] = []
     warning_count = 0
     low_confidence_count = 0
-    previous: Optional[Segment] = None
+    previous: Optional[GenericSegment] = None
     for s in segments:
-        key = " ".join(s.text_ja.casefold().split())
+        key = " ".join(s.text.casefold().split())
         warnings = _segment_quality_warnings(
             s,
             previous=previous,
@@ -442,15 +417,16 @@ def build_candidate_from_segments(
         if low_confidence:
             low_confidence_count += 1
 
+        base_asr_meta = dict(getattr(s, "meta", {}).get("asr", {}))
         asr_meta = {
-            "avg_logprob": s.avg_logprob,
-            "no_speech_prob": s.no_speech_prob,
-            "compression_ratio": s.compression_ratio,
+            "avg_logprob": base_asr_meta.get("avg_logprob", getattr(s, "avg_logprob", None)),
+            "no_speech_prob": base_asr_meta.get("no_speech_prob", getattr(s, "no_speech_prob", None)),
+            "compression_ratio": base_asr_meta.get("compression_ratio", getattr(s, "compression_ratio", None)),
             "low_confidence": low_confidence,
             "warnings": warnings,
         }
-        segment_meta = {**getattr(s, "meta", {}), "asr": asr_meta}
-        generic_segments.append(GenericSegment(s.start, s.end, s.text_ja, meta=segment_meta))
+        segment_meta = {**getattr(s, "meta", {}), "asr": {**base_asr_meta, **asr_meta}}
+        generic_segments.append(GenericSegment(s.start, s.end, s.text, meta=segment_meta))
 
     if not segments:
         summary_status = "fail"
@@ -517,7 +493,6 @@ def transcribe_audio_to_candidate(
 
 
 __all__ = [
-    "Segment",
     "FasterWhisperASR",
     "BatchASR",
     "build_candidate_from_segments",

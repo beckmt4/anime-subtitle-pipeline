@@ -278,9 +278,9 @@ from asr import FasterWhisperASR
 config = Config()
 asr = FasterWhisperASR(config)
 
-segments = asr.transcribe_audio_to_segments("audio.wav")
+segments, _candidate = asr.transcribe_audio_to_segments("audio.wav")
 for seg in segments:
-    print(f"{seg.start:.2f}s: {seg.text_ja}")
+    print(f"{seg.start:.2f}s: {seg.text}")
 
 asr.unload_model()
 ```
@@ -775,19 +775,16 @@ segments = asr.transcribe_audio_to_segments(audio_path)
 asr.unload_model()
 
 # Translate
-translator = MarianTranslator(config)
-segments = translator.translate_segments_ja_to_en(segments)
-translator.unload_model()
+mt_candidate = translate_candidate_jp_to_en(_candidate, config)
 
 # Polish (optional)
 if config.llm_enabled:
-    segments = polish_english_subtitles_with_llm(segments, config)
+    final_candidate = polish_candidate_with_llm(mt_candidate, config)
 else:
-    for seg in segments:
-        seg.text_en_final = seg.text_en_raw
+    final_candidate = mt_candidate
 
 # Write SRT
-write_srt_file(segments, srt_path, config)
+write_candidate_srt(final_candidate, srt_path, config)
 
 # Cleanup
 Path(audio_path).unlink()
@@ -812,7 +809,7 @@ segments = [s for s in segments if s.duration >= 1.0]
 
 # Custom processing
 for seg in segments:
-    print(f"{seg.start:.1f}s: {seg.text_ja}")
+    print(f"{seg.start:.1f}s: {seg.text}")
 ```
 
 ---

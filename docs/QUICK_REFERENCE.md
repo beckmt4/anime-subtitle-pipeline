@@ -273,9 +273,9 @@ from asr import FasterWhisperASR
 config = Config()
 asr = FasterWhisperASR(config)
 
-segments = asr.transcribe_audio_to_segments("audio.wav")
+segments, _candidate = asr.transcribe_audio_to_segments("audio.wav")
 for seg in segments:
-    print(f"{seg.start:.2f}s: {seg.text_ja}")
+    print(f"{seg.start:.2f}s: {seg.text}")
 
 asr.unload_model()
 ```
@@ -284,40 +284,34 @@ asr.unload_model()
 
 ```python
 from config import Config
-from mt import MarianTranslator
+from mt import translate_candidate_jp_to_en
 
 config = Config()
-translator = MarianTranslator(config)
-
-segments = translator.translate_segments_ja_to_en(segments)
-for seg in segments:
-    print(f"{seg.text_ja} → {seg.text_en_raw}")
-
-translator.unload_model()
+mt_candidate = translate_candidate_jp_to_en(_candidate, config)
+for seg in mt_candidate.segments:
+    print(seg.text)
 ```
 
 ### Polish with LLM
 
 ```python
 from config import Config
-from llm_polish import polish_english_subtitles_with_llm
+from llm_polish import polish_candidate_with_llm
 
 config = Config()
-segments = polish_english_subtitles_with_llm(segments, config)
-
-for seg in segments:
-    print(f"Raw: {seg.text_en_raw}")
-    print(f"Polished: {seg.text_en_final}")
+final_candidate = polish_candidate_with_llm(mt_candidate, config)
+for seg in final_candidate.segments:
+    print(seg.text)
 ```
 
 ### Write SRT
 
 ```python
 from config import Config
-from srt_writer import write_srt_file
+from srt_writer import write_candidate_srt
 
 config = Config()
-srt_path = write_srt_file(segments, "output.srt", config)
+srt_path = write_candidate_srt(final_candidate, "output.srt", config)
 print(f"SRT written to: {srt_path}")
 ```
 
