@@ -265,6 +265,67 @@ def test_anime_domain_source_preferences_apply_in_inspect_mode():
     assert meta["strategy"] == "ja_audio_asr_mt", meta
 
 
+def test_packs_language_config_drives_language_routing_hook_resolution(monkeypatch):
+    calls = []
+
+    def fake_load_language_routing_hooks(source_language: str = "ja", target_language: str = "en"):
+        calls.append((source_language, target_language))
+        return LanguageRoutingHooks(
+            pack_id="en_ja",
+            source_language="ja",
+            target_language="en",
+            lang_aliases={
+                "ja": frozenset({"ja", "jpn", "jp", "ja-jp", "japanese"}),
+                "en": frozenset({"en", "eng", "en-us", "en-gb", "english"}),
+            },
+            untagged_audio_fallback_source_language="ja",
+            translate_candidate=lambda cand, cfg, source_candidate=None: cand,
+        )
+
+    monkeypatch.setattr(orch, "load_language_routing_hooks", fake_load_language_routing_hooks)
+
+    cfg = Config()
+    cfg._config["packs"] = {"language": "en_ja"}
+    media = _media(en_sub=True, en_audio=True, jp_sub=True, jp_audio=True)
+    meta = orch.run_generate(media, cfg, inspect_only=True)
+
+    assert calls == [("en", "ja")]
+    assert meta["language_pack"] == "en_ja"
+
+
+def test_anime_domain_pack_style_config_overrides_qc_defaults_and_injects_prompt_fn(monkeypatch):
+    captured = {}
+
+    def fake_polish_candidate_with_llm(cand: SubtitleCandidate, cfg: Config, **kwargs):
+        captured["prompt_fn"] = kwargs.get("prompt_fn")
+        return cand
+
+    def fake_run_qc(*args, **kwargs):
+        captured["qc_kwargs"] = kwargs
+        return _clean_qc_summary()
+
+    monkeypatch.setattr(orch, "polish_candidate_with_llm", fake_polish_candidate_with_llm)
+    monkeypatch.setattr(orch, "run_qc", fake_run_qc)
+
+    cfg = Config()
+    cfg._config.setdefault("generate", {})
+    cfg._config["generate"]["prefer_subtitles"] = True
+    cfg._config["generate"]["use_llm_polish"] = True
+    cfg._config["llm"]["max_chars_per_line"] = 55
+    cfg._config["llm"]["max_lines"] = 3
+    cfg._config["packs"] = {"language": "ja_en", "domain": "anime"}
+
+    media = _media(en_sub=False, en_audio=False, jp_sub=True, jp_audio=True)
+    meta = orch.run_generate(media, cfg)
+
+    assert meta["strategy"] == "embedded_jp_mt"
+    assert captured["qc_kwargs"]["max_line_chars"] == 42
+    assert captured["qc_kwargs"]["max_lines"] == 2
+    assert callable(captured["prompt_fn"])
+    from packs.language.ja_en.prompts import get_system_prompt
+    assert captured["prompt_fn"]("natural") == get_system_prompt("natural")
+
+
 def test_jav_domain_requires_explicit_opt_in():
     from packs.domain.jav.privacy import ContentGateError
 

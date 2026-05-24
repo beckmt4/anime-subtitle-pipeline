@@ -131,6 +131,28 @@ class TestIsStockPhraseCollapse:
 
 
 # ---------------------------------------------------------------------------
+# polish_text — prompt injection
+# ---------------------------------------------------------------------------
+
+class TestPromptInjection:
+    def test_prompt_fn_overrides_config_prompt(self):
+        cfg = _make_config(llm_enabled=True)
+        polisher = LLMPolisher(cfg, prompt_fn=lambda style: f"pack:{style}")
+
+        with patch("core.polish.requests.post") as post:
+            response = MagicMock()
+            response.status_code = 200
+            response.json.return_value = {"response": "Improved text"}
+            post.return_value = response
+
+            result = polisher.polish_text("日本語", "Raw text", style="natural", retry_count=0)
+
+        assert result == "Improved text"
+        assert post.call_args.kwargs["json"]["system"] == "pack:natural"
+        cfg.get_llm_prompt.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # PolishStats
 # ---------------------------------------------------------------------------
 

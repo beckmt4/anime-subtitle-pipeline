@@ -11,6 +11,10 @@
 runtime:
   profile: "prod"  # dev = A3000 6GB laptop | prod = RTX 4090 workstation
 
+packs:
+  language: "ja_en"
+  domain: null
+
 # Domain pack selection and policy routing.
 domain:
   pack: null                            # "anime" | "jav" | null

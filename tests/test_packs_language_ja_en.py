@@ -7,6 +7,7 @@ defined in specs/29-language-pack-interface.md.
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,17 @@ class TestJaEnPrompts:
     def test_natural_and_literal_differ(self):
         from packs.language.ja_en.prompts import get_system_prompt
         assert get_system_prompt("natural") != get_system_prompt("literal")
+
+    @pytest.mark.parametrize("style", ["natural", "literal"])
+    def test_pack_prompts_match_config_templates(self, style):
+        from packs.language.ja_en.prompts import get_system_prompt
+
+        config = yaml.safe_load((Path(__file__).parent.parent / "config.yaml").read_text(encoding="utf-8"))
+        expected = config["llm"]["prompts"][style].format(
+            max_lines=config["llm"]["max_lines"],
+            max_chars_per_line=config["llm"]["max_chars_per_line"],
+        )
+        assert get_system_prompt(style).strip() == expected.strip()
 
 
 # ---------------------------------------------------------------------------

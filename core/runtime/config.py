@@ -118,6 +118,9 @@ class Config:
     @property
     def domain_pack(self) -> Optional[str]:
         """Return active domain pack ID from explicit config or policy fallback."""
+        explicit_pack = self.get("packs", "domain", default=None)
+        if explicit_pack in {"anime", "jav"}:
+            return explicit_pack
         explicit = self.get("domain", "pack", default=None)
         if explicit in {"anime", "jav"}:
             return explicit

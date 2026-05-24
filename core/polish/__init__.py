@@ -21,7 +21,7 @@ enforce_constraints_on_candidate(…)  Timing / line-length normalisation.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Callable
 
 from core.subtitles import SubtitleCandidate
 
@@ -210,7 +210,7 @@ class LLMPolisher:
     while maintaining timing and meaning constraints.
     """
     
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, prompt_fn: Optional[Callable[[str], str]] = None):
         """
         Initialize the LLM polisher.
         
@@ -222,6 +222,7 @@ class LLMPolisher:
         self.model_name = config.llm_model_name
         self.style = config.llm_style
         self.timeout = config.llm_timeout
+        self.prompt_fn = prompt_fn
         
         logger.info("Initializing LLM polisher")
         logger.info(f"  Endpoint: {self.base_url}")
@@ -287,7 +288,18 @@ class LLMPolisher:
             Polished English text, or original text_en_raw on failure
         """
         style = style or self.style
-        system_prompt = self.config.get_llm_prompt(style)
+        if self.prompt_fn is not None:
+            try:
+                system_prompt = self.prompt_fn(style)
+            except Exception:
+                logger.warning(
+                    "Pack prompt function failed for style '%s'; falling back to config prompt",
+                    style,
+                    exc_info=True,
+                )
+                system_prompt = self.config.get_llm_prompt(style)
+        else:
+            system_prompt = self.config.get_llm_prompt(style)
         
         # Construct user prompt
         user_prompt = f"""Japanese: {text_ja}
@@ -722,6 +734,7 @@ def polish_candidate_with_llm(
     config: Config,
     ja_candidate: Optional[SubtitleCandidate] = None,
     style: Optional[str] = None,
+    prompt_fn: Optional[Callable[[str], str]] = None,
 ) -> SubtitleCandidate:
     """Convenience wrapper: polish a single MT candidate using the LLM.
 
@@ -733,7 +746,7 @@ def polish_candidate_with_llm(
             as context to the LLM, reducing hallucination and semantic drift.
         style: Override configured LLM style.
     """
-    polisher = LLMPolisher(config)
+    polisher = LLMPolisher(config, prompt_fn=prompt_fn)
     return polisher.polish_candidate(candidate, ja_candidate=ja_candidate, style=style)
 
 
