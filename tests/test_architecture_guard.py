@@ -13,6 +13,7 @@ Hardcoded-language guards (no "Japanese dialogue into English subtitles" in
 core/mt/__init__.py) are defined here as skipped stubs pending Epic 07 Task C.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -72,6 +73,48 @@ def _extract_python_import_lines(markdown_text: str) -> list[str]:
             import_lines.append(line)
 
     return import_lines
+
+
+def _extract_python_import_statements(markdown_text: str) -> list[str]:
+    statements: list[str] = []
+    in_python_block = False
+    current_block: list[str] = []
+
+    for raw_line in markdown_text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("```python"):
+            in_python_block = True
+            current_block = []
+            continue
+        if in_python_block and line.startswith("```"):
+            in_python_block = False
+            try:
+                tree = ast.parse("\n".join(current_block))
+            except SyntaxError:
+                continue
+            for node in tree.body:
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    statements.append(ast.unparse(node))
+            continue
+        if in_python_block:
+            current_block.append(raw_line)
+
+    return statements
+
+
+def _extract_import_symbol_origins(import_lines: list[str]) -> dict[str, str]:
+    origins: dict[str, str] = {}
+    for line in import_lines:
+        node = ast.parse(line).body[0]
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                origins[alias.asname or alias.name] = module
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                origins[alias.asname or root] = alias.name
+    return origins
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +238,65 @@ class TestQuickReferenceFreshness:
         assert not failures, (
             "Some docs/QUICK_REFERENCE.md Python import examples do not resolve:\n"
             + "\n".join(f"  {f}" for f in failures)
+        )
+
+
+class TestApiDocumentationFreshness:
+    """docs/API_DOCUMENTATION.md import examples must stay aligned with core APIs."""
+
+    def _read(self):
+        path = REPO_ROOT / "docs" / "API_DOCUMENTATION.md"
+        assert path.exists(), "docs/API_DOCUMENTATION.md is missing"
+        return path.read_text(encoding="utf-8")
+
+    def test_no_stale_root_shim_import_examples(self):
+        content = self._read()
+        import_statements = _extract_python_import_statements(content)
+        for line in import_statements:
+            for shim in DELETED_ROOT_SHIMS:
+                assert not line.startswith(f"from {shim} import"), (
+                    "docs/API_DOCUMENTATION.md contains a stale root-shim import "
+                    f"example: {line!r}. Use core.* imports instead."
+                )
+
+    def test_python_import_examples_resolve(self):
+        content = self._read()
+        import_statements = _extract_python_import_statements(content)
+        assert import_statements, "docs/API_DOCUMENTATION.md has no Python import examples"
+
+        failures = []
+        for line in import_statements:
+            try:
+                exec(line, {}, {})  # noqa: S102
+            except Exception as exc:
+                failures.append(f"{line!r} -> {type(exc).__name__}: {exc}")
+
+        assert not failures, (
+            "Some docs/API_DOCUMENTATION.md Python import examples do not resolve:\n"
+            + "\n".join(f"  {f}" for f in failures)
+        )
+
+    def test_shared_examples_align_with_quick_reference(self):
+        api_content = self._read()
+        quick_reference = (REPO_ROOT / "docs" / "QUICK_REFERENCE.md").read_text(encoding="utf-8")
+
+        api_map = _extract_import_symbol_origins(_extract_python_import_statements(api_content))
+        quick_map = _extract_import_symbol_origins(_extract_python_import_lines(quick_reference))
+        shared_symbols = sorted(set(api_map) & set(quick_map))
+        assert shared_symbols, (
+            "No shared import symbols found between docs/API_DOCUMENTATION.md and "
+            "docs/QUICK_REFERENCE.md; examples cannot be cross-checked."
+        )
+
+        mismatches = [
+            f"{symbol}: API={api_map[symbol]!r}, QUICK_REFERENCE={quick_map[symbol]!r}"
+            for symbol in shared_symbols
+            if api_map[symbol] != quick_map[symbol]
+        ]
+        assert not mismatches, (
+            "Shared import symbols are inconsistent between docs/API_DOCUMENTATION.md "
+            "and docs/QUICK_REFERENCE.md:\n"
+            + "\n".join(f"  {m}" for m in mismatches)
         )
 
 

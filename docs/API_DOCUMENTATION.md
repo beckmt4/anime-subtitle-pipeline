@@ -50,8 +50,7 @@ from core.polish import polish_candidate_with_llm, enforce_constraints_on_candid
 ## Subtitle models and writing
 
 ```python
-from core.subtitles import Segment, SubtitleCandidate
-from core.subtitles.srt_writer import write_candidate_srt
+from core.subtitles import Segment, SubtitleCandidate, write_candidate_srt
 ```
 
 ## Benchmarking
@@ -83,6 +82,10 @@ from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
 - Supported CLI entrypoint: `main.py`
 - Supported modes: `generate`, `benchmark`, `review`, `subtitle` (deprecated
   alias of `generate`)
+- Import examples are cross-checked against `docs/QUICK_REFERENCE.md` for any
+  shared symbols.
+- Lightweight validation path for docs import examples:
+  - `python -m pytest -v tests/test_architecture_guard.py -k "QuickReferenceFreshness or ApiDocumentationFreshness"`
 - For module ownership and boundaries, see:
   - `docs/FILE_OVERVIEW.md`
   - `docs/architecture/module-boundaries.md`
