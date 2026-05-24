@@ -12,7 +12,9 @@ from pathlib import Path
 import pytest
 
 from orchestrator import _lang_matches, _first_text_sub, _first_audio_order, _select_untagged_audio_fallback
+import orchestrator as orch
 from media_inspect import MediaInfo, AudioStream, SubtitleStream
+from packs.language.ja_en.aliases import LANG_ALIASES
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +64,9 @@ def make_media(
 # ---------------------------------------------------------------------------
 
 class TestLangMatches:
+    def test_orchestrator_uses_pack_lang_aliases(self):
+        assert orch._LANG_ALIASES is LANG_ALIASES
+
     @pytest.mark.parametrize("code", ["ja", "jpn", "jp", "ja-jp"])
     def test_ja_variants_match_ja(self, code):
         assert _lang_matches(code, "ja") is True
@@ -344,4 +349,3 @@ class TestSelectUntaggedAudioFallback:
         order, _ = _select_untagged_audio_fallback(media)
         # Title wins regardless of the 'mul' tag on track 0
         assert order == 1
-

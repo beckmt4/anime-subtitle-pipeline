@@ -213,6 +213,11 @@ class TestConfigProperties:
         cfg = Config(str(p))
         assert cfg.domain_pack == "anime"
 
+    def test_domain_pack_prefers_new_packs_domain_key(self, tmp_path):
+        p = write_config(tmp_path, extra={"packs": {"domain": "jav"}, "domain": {"pack": "anime"}})
+        cfg = Config(str(p))
+        assert cfg.domain_pack == "jav"
+
     def test_domain_pack_explicit_jav_selection(self, tmp_path):
         p = write_config(tmp_path, extra={"domain": {"pack": "jav", "adult_content_opt_in": True}})
         cfg = Config(str(p))

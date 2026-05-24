@@ -70,12 +70,10 @@ from core.review import (
     route_generate_review_task,
 )
 from packs.language import load_language_routing_hooks
+from packs.language.ja_en.aliases import LANG_ALIASES as _LANG_ALIASES
 
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_LANG_ALIASES = dict(load_language_routing_hooks().lang_aliases)
-
 
 # Audio language probe settings (used when metadata tag is absent or suspect).
 _PROBE_DURATION_SEC = 30       # seconds of audio to sample
@@ -154,7 +152,7 @@ def _lang_matches(
     if not stream_lang:
         return False
     if lang_aliases is None:
-        lang_aliases = _DEFAULT_LANG_ALIASES
+        lang_aliases = _LANG_ALIASES
     code = stream_lang.strip().lower()
     aliases = lang_aliases.get(target, frozenset({target}))
     if code in aliases:
@@ -170,7 +168,7 @@ def _first_text_sub(
     lang_aliases: Dict[str, frozenset[str]] | None = None,
 ) -> int | None:
     if lang_aliases is None:
-        lang_aliases = _DEFAULT_LANG_ALIASES
+        lang_aliases = _LANG_ALIASES
     for s in media.subtitle_streams:
         if s.is_bitmap:
             logger.debug(
@@ -198,7 +196,7 @@ def _first_bitmap_sub(
     lang_aliases: Dict[str, frozenset[str]] | None = None,
 ) -> int | None:
     if lang_aliases is None:
-        lang_aliases = _DEFAULT_LANG_ALIASES
+        lang_aliases = _LANG_ALIASES
     for s in media.subtitle_streams:
         if not s.is_bitmap:
             continue
@@ -214,7 +212,7 @@ def _first_audio_order(
     lang_aliases: Dict[str, frozenset[str]] | None = None,
 ) -> int | None:
     if lang_aliases is None:
-        lang_aliases = _DEFAULT_LANG_ALIASES
+        lang_aliases = _LANG_ALIASES
     for order, stream in enumerate(media.audio_streams):
         raw = stream.language or stream.raw_language
         if _lang_matches(raw, lang, lang_aliases):
@@ -236,7 +234,7 @@ def _first_sidecar(
     lang_aliases: Dict[str, frozenset[str]] | None = None,
 ) -> SubtitleCandidate | None:
     if lang_aliases is None:
-        lang_aliases = _DEFAULT_LANG_ALIASES
+        lang_aliases = _LANG_ALIASES
     for cand in sidecars:
         if _lang_matches(cand.language, lang, lang_aliases):
             return cand
@@ -1412,7 +1410,14 @@ def run_generate(
     video_path = media.path
     prefer_subtitles = cfg.get("generate", "prefer_subtitles", default=True)
     prefer_audio_language = cfg.get("generate", "prefer_audio_language", default="auto")
-    active_domain_pack = cfg.domain_pack
+    configured_language_pack = str(cfg.get("packs", "language", default="ja_en")).strip() or "ja_en"
+    configured_domain_pack = cfg.get("packs", "domain", default=None)
+    active_domain_pack = configured_domain_pack if configured_domain_pack in {"anime", "jav"} else cfg.domain_pack
+    style_config = {
+        "max_chars_per_line": cfg.llm_max_chars_per_line,
+        "max_lines_per_segment": cfg.llm_max_lines,
+    }
+    prompt_fn = None
     privacy_redact_logs = False
     privacy_redact_reports = False
     jav_media_id: str | None = None
@@ -1440,6 +1445,7 @@ def run_generate(
             prefer_subtitles,
             prefer_audio_language,
         )
+        style_config.update(cfg.get_domain_style_config())
     elif active_domain_pack == "jav":
         from packs.domain.jav.parser import extract_jav_id
         from packs.domain.jav.privacy import assert_opt_in
@@ -1470,6 +1476,8 @@ def run_generate(
             privacy_redact_reports,
             jav_media_id or "<unknown>",
         )
+    llm_max_chars_per_line = int(style_config.get("max_chars_per_line", cfg.llm_max_chars_per_line))
+    llm_max_lines = int(style_config.get("max_lines_per_segment", cfg.llm_max_lines))
     use_llm_polish = (
         cfg.get("generate", "use_llm_polish", default=True)
         and cfg.llm_enabled
@@ -1495,7 +1503,15 @@ def run_generate(
     if inspect_only:
         logger.info("Inspect-only mode enabled: planning generate flow without execution")
 
-    language_routing = load_language_routing_hooks(source_language="ja", target_language="en")
+    if "_" not in configured_language_pack:
+        raise ValueError(
+            f"Invalid packs.language value '{configured_language_pack}'. Expected '<source>_<target>'."
+        )
+    source_language_pack, target_language_pack = configured_language_pack.split("_", 1)
+    language_routing = load_language_routing_hooks(
+        source_language=source_language_pack,
+        target_language=target_language_pack,
+    )
     language_pack = language_routing.pack_id
     translation_source_language = language_routing.source_language
     translation_target_language = language_routing.target_language
@@ -1511,6 +1527,10 @@ def run_generate(
         translation_target_language,
         untagged_audio_fallback_source_language,
     )
+    if language_pack == "ja_en":
+        from packs.language.ja_en.prompts import get_system_prompt
+
+        prompt_fn = get_system_prompt
 
     logger.info("=" * 70)
     logger.info(f"GENERATE MODE: {_display_name(video_path)}")
@@ -1934,7 +1954,12 @@ def run_generate(
             logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_sidecar_jp"):
-                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
+                    polished = polish_candidate_with_llm(
+                        mt_candidate,
+                        cfg,
+                        ja_candidate=ja_candidate,
+                        prompt_fn=prompt_fn,
+                    )
                     candidate = enforce_constraints_on_candidate(polished, cfg)
                 polish_stats = _compare_candidates(mt_candidate, candidate)
                 _log_polish_stats(polish_stats)
@@ -1982,7 +2007,12 @@ def run_generate(
             logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_embedded_jp"):
-                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
+                    polished = polish_candidate_with_llm(
+                        mt_candidate,
+                        cfg,
+                        ja_candidate=ja_candidate,
+                        prompt_fn=prompt_fn,
+                    )
                     # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
                     candidate = enforce_constraints_on_candidate(polished, cfg)
                 polish_stats = _compare_candidates(mt_candidate, candidate)
@@ -2031,7 +2061,12 @@ def run_generate(
             logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_bitmap_jp_ocr"):
-                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_candidate)
+                    polished = polish_candidate_with_llm(
+                        mt_candidate,
+                        cfg,
+                        ja_candidate=ja_candidate,
+                        prompt_fn=prompt_fn,
+                    )
                     candidate = enforce_constraints_on_candidate(polished, cfg)
                 polish_stats = _compare_candidates(mt_candidate, candidate)
                 _log_polish_stats(polish_stats)
@@ -2121,7 +2156,12 @@ def run_generate(
             logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_ja_audio"):
-                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
+                    polished = polish_candidate_with_llm(
+                        mt_candidate,
+                        cfg,
+                        ja_candidate=ja_asr_candidate,
+                        prompt_fn=prompt_fn,
+                    )
                     # polish_candidate_with_llm already appends "_llm"; do not re-tag here.
                     candidate = enforce_constraints_on_candidate(polished, cfg)
                 polish_stats = _compare_candidates(mt_candidate, candidate)
@@ -2260,7 +2300,12 @@ def run_generate(
             logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
             if _should_apply_post_mt_llm(mt_candidate):
                 with start_span("llm_polish_untagged_audio"):
-                    polished = polish_candidate_with_llm(mt_candidate, cfg, ja_candidate=ja_asr_candidate)
+                    polished = polish_candidate_with_llm(
+                        mt_candidate,
+                        cfg,
+                        ja_candidate=ja_asr_candidate,
+                        prompt_fn=prompt_fn,
+                    )
                     # polish_candidate_with_llm already appends "_llm".
                     candidate = enforce_constraints_on_candidate(polished, cfg)
                 polish_stats = _compare_candidates(mt_candidate, candidate)
@@ -2332,8 +2377,8 @@ def run_generate(
                 min_duration=cfg.subtitle_min_duration,
                 max_duration=cfg.subtitle_max_duration,
                 max_cps=cfg.qc_max_cps,
-                max_line_chars=cfg.llm_max_chars_per_line,
-                max_lines=cfg.llm_max_lines,
+                max_line_chars=llm_max_chars_per_line,
+                max_lines=llm_max_lines,
                 ocr_confidence_warn_below=cfg.get(
                     "ocr", "confidence_warn_below", default=0.70
                 ),
