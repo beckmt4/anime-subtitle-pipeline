@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 import main
-import orchestrator
 from core.ocr import OCRBackend
 from media_inspect import MediaInfo, SubtitleStream
 from models import Segment, SubtitleCandidate
@@ -57,7 +56,7 @@ def test_main_generate_passes_configured_ocr_backend(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "check_ffmpeg_available", lambda: True)
     monkeypatch.setattr(main, "inspect_media", lambda _: media)
     monkeypatch.setattr(main, "create_ocr_backend", lambda _cfg: fake_backend)
-    monkeypatch.setattr(orchestrator, "run_generate", _fake_run_generate)
+    monkeypatch.setattr(main, "run_generate", _fake_run_generate)
 
     argv = [
         "main.py",

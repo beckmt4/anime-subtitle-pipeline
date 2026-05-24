@@ -1,4 +1,4 @@
-"""Registry integration tests for orchestrator.run_generate."""
+"""Registry integration tests for core.runtime.run_generate."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from config import Config
 from core.artifacts import (
     ARTIFACT_TYPE_QC_JSON,
     ARTIFACT_TYPE_SRT,
@@ -15,10 +14,10 @@ from core.artifacts import (
     PIPELINE_STATUS_COMPLETED,
     PIPELINE_STATUS_FAILED,
 )
+from core.runtime import Config, run_generate
 from main import _emit_registry_run_id
 from media_inspect import AudioStream, MediaInfo
 from models import Segment, SubtitleCandidate
-from orchestrator import run_generate
 from packs.language import LanguageRoutingHooks
 
 
@@ -137,14 +136,14 @@ def test_run_generate_records_run_candidates_and_artifacts(tmp_path):
     asr_instance.transcribe_audio_to_segments.return_value = (asr_segments, None)
     routing_hooks = _routing_hooks_for_tests(mt_candidate)
 
-    with patch("orchestrator.extract_audio_with_ffmpeg", side_effect=_extract_audio(audio_path)), \
-         patch("orchestrator.FasterWhisperASR", return_value=asr_instance), \
-         patch("orchestrator.build_candidate_from_segments", return_value=ja_asr_candidate), \
-         patch("orchestrator.load_language_routing_hooks", return_value=routing_hooks), \
-         patch("orchestrator.write_candidate_srt", side_effect=_write_candidate_srt), \
-         patch("orchestrator.run_qc", side_effect=_clean_qc_summary), \
-         patch("orchestrator.run_translation_qc", side_effect=_translation_qc_summary), \
-         patch("orchestrator.route_generate_review_task", side_effect=_review_routing):
+    with patch("core.runtime.orchestrator.extract_audio_with_ffmpeg", side_effect=_extract_audio(audio_path)), \
+         patch("core.runtime.orchestrator.FasterWhisperASR", return_value=asr_instance), \
+         patch("core.runtime.orchestrator.build_candidate_from_segments", return_value=ja_asr_candidate), \
+         patch("core.runtime.orchestrator.load_language_routing_hooks", return_value=routing_hooks), \
+         patch("core.runtime.orchestrator.write_candidate_srt", side_effect=_write_candidate_srt), \
+         patch("core.runtime.orchestrator.run_qc", side_effect=_clean_qc_summary), \
+         patch("core.runtime.orchestrator.run_translation_qc", side_effect=_translation_qc_summary), \
+         patch("core.runtime.orchestrator.route_generate_review_task", side_effect=_review_routing):
         result = run_generate(
             media,
             cfg,
@@ -204,14 +203,14 @@ def test_run_generate_without_registry_does_not_emit_registry_id(tmp_path):
     asr_instance.transcribe_audio_to_segments.return_value = (asr_segments, None)
     routing_hooks = _routing_hooks_for_tests(mt_candidate)
 
-    with patch("orchestrator.extract_audio_with_ffmpeg", side_effect=_extract_audio(audio_path)), \
-         patch("orchestrator.FasterWhisperASR", return_value=asr_instance), \
-         patch("orchestrator.build_candidate_from_segments", return_value=ja_asr_candidate), \
-         patch("orchestrator.load_language_routing_hooks", return_value=routing_hooks), \
-         patch("orchestrator.write_candidate_srt", side_effect=_write_candidate_srt), \
-         patch("orchestrator.run_qc", side_effect=_clean_qc_summary), \
-         patch("orchestrator.run_translation_qc", side_effect=_translation_qc_summary), \
-         patch("orchestrator.route_generate_review_task", side_effect=_review_routing):
+    with patch("core.runtime.orchestrator.extract_audio_with_ffmpeg", side_effect=_extract_audio(audio_path)), \
+         patch("core.runtime.orchestrator.FasterWhisperASR", return_value=asr_instance), \
+         patch("core.runtime.orchestrator.build_candidate_from_segments", return_value=ja_asr_candidate), \
+         patch("core.runtime.orchestrator.load_language_routing_hooks", return_value=routing_hooks), \
+         patch("core.runtime.orchestrator.write_candidate_srt", side_effect=_write_candidate_srt), \
+         patch("core.runtime.orchestrator.run_qc", side_effect=_clean_qc_summary), \
+         patch("core.runtime.orchestrator.run_translation_qc", side_effect=_translation_qc_summary), \
+         patch("core.runtime.orchestrator.route_generate_review_task", side_effect=_review_routing):
         result = run_generate(
             media,
             cfg,
@@ -233,7 +232,7 @@ def test_run_generate_marks_registry_run_failed_on_error(tmp_path):
     media_hash = "deadbeef"
 
     with patch(
-        "orchestrator.extract_audio_with_ffmpeg",
+        "core.runtime.orchestrator.extract_audio_with_ffmpeg",
         side_effect=RuntimeError("probe failed"),
     ):
         with pytest.raises(RuntimeError, match="probe failed"):

@@ -1,54 +1,18 @@
-"""
-Main subtitle generation pipeline.
-
-This is the entry point for the anime subtitle pipeline. It orchestrates
-all the components:
-1. Audio extraction from video
-2. Japanese ASR transcription
-3. Japanese to English translation
-4. Optional LLM polishing
-5. SRT file generation
-6. Optional subtitle muxing back into video
-7. JSON logging
-
-Usage:
-    python main.py /path/to/video.mkv
-    python main.py /path/to/video.mkv --no-llm
-    python main.py /path/to/video.mkv --profile prod --no-mux
-"""
+"""CLI entry point for generate, benchmark, and review workflows."""
 
 import argparse
 import json
 import logging
 import sys
-import uuid
 from pathlib import Path
 from typing import Optional
 
-from config import Config, set_config
-from audio_utils import (
-    check_ffmpeg_available,
-    extract_audio_with_ffmpeg,
-    mux_subtitle_to_video
-)
-from core.artifacts.models import (
-    ARTIFACT_TYPE_MKV,
-    ARTIFACT_TYPE_SRT,
-    PIPELINE_STATUS_COMPLETED,
-    PIPELINE_STATUS_FAILED,
-)
+from audio_utils import check_ffmpeg_available
 from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
 from core.ocr import create_backend as create_ocr_backend
-from media_inspect import inspect_media, choose_audio_track
-from models import SubtitleCandidate
-from asr import FasterWhisperASR, build_candidate_from_segments
-from mt import translate_candidate_jp_to_en
-from llm_polish import (
-    polish_candidate_with_llm,
-    enforce_constraints_on_candidate,
-)
+from core.runtime import Config, run_generate, set_config, setup_tracing
+from media_inspect import inspect_media
 from srt_writer import write_candidate_srt
-from tracing import setup_tracing, start_span
 
 
 # Configure logging
@@ -76,359 +40,6 @@ def _emit_registry_run_id(registry_run_id: Optional[str]) -> None:
         return
     logger.info("  Registry run: %s", registry_run_id)
     print(f"registry_run_id={registry_run_id}")
-
-
-def save_candidate_chain_log(asr_candidate: SubtitleCandidate, mt_candidate: SubtitleCandidate, final_candidate: SubtitleCandidate, output_path: str):
-    """Save unified candidate processing chain to JSON.
-
-    Structure:
-    {
-      "candidates": [
-         { id, language, source, origin_stream, segment_count, meta, segments: [ {start,end,duration,text} ] },
-         ...
-      ],
-      "final_candidate_id": "..."
-    }
-    """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    def serialize_candidate(c: SubtitleCandidate) -> dict:
-        return {
-            "id": c.id,
-            "language": c.language,
-            "source": c.source,
-            "origin_stream": c.origin_stream,
-            "segment_count": len(c.segments),
-            "meta": c.meta,
-            "segments": [
-                {
-                    "start": s.start,
-                    "end": s.end,
-                    "duration": round(s.end - s.start, 3),
-                    "text": s.text,
-                }
-                for s in c.segments
-            ],
-        }
-
-    data = {
-        "candidates": [
-            serialize_candidate(asr_candidate),
-            serialize_candidate(mt_candidate),
-            serialize_candidate(final_candidate),
-        ],
-        "final_candidate_id": final_candidate.id,
-    }
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    logger.info(f"Saved candidate chain log to {output_path.name}")
-
-
-def process_video(
-    video_path: str,
-    config: Config,
-    no_llm: bool = False,
-    no_mux: bool = False,
-    audio_track: Optional[int] = None,
-    registry=None,
-    media_hash: Optional[str] = None,
-) -> dict:
-    """
-    Process a single video file through the complete pipeline.
-    
-    Args:
-        video_path: Path to input video file
-        config: Configuration object
-        no_llm: Skip LLM polishing step
-        no_mux: Skip muxing subtitles into video
-        audio_track: Specific audio track index (None = auto-detect)
-        registry: Optional ArtifactRegistry. If omitted, this function opens
-            the configured registry itself and records best-effort lineage.
-        media_hash: Optional SHA-256 of the input media. If omitted, this
-            function computes it before opening the registry.
-        
-    Returns:
-        Dictionary with output file paths and statistics
-    """
-    video_path = Path(video_path)
-    if not video_path.exists():
-        raise FileNotFoundError(f"Video file not found: {video_path}")
-    
-    logger.info("=" * 70)
-    logger.info(f"Processing: {video_path.name}")
-    logger.info("=" * 70)
-    
-    # Prepare paths
-    video_stem = video_path.stem
-    outbox_dir = Path(config.get_path("outbox"))
-    audio_path = Path(config.get_path("temp")) / f"{video_stem}.wav"
-    srt_path = outbox_dir / f"{video_stem}.en.srt"
-    raw_srt_path = outbox_dir / f"{video_stem}.raw.en.srt"
-    log_path = Path(config.get_path("logs")) / f"{video_stem}.json"
-
-    result = {
-        "input_video": str(video_path),
-        "audio_file": str(audio_path),
-        "srt_file": str(srt_path),
-        "raw_srt_file": str(raw_srt_path),
-        "log_file": str(log_path),
-        "muxed_video": None,
-        "segment_count": 0,
-        "success": False,
-        "registry_run_id": None,
-    }
-
-    from orchestrator import (
-        _reg_finish_run,
-        _reg_start_run,
-        _reg_store_artifact,
-        _reg_store_candidate,
-    )
-
-    _registry_owned = registry is None
-    if media_hash is None:
-        try:
-            media_hash = compute_media_hash(video_path)
-            logger.debug("Media hash: %s", media_hash)
-        except Exception as exc:
-            logger.warning("Could not compute media hash -- registry disabled: %s", exc)
-
-    if registry is None and media_hash is not None:
-        registry = open_registry(config)
-
-    if registry is not None and media_hash is not None:
-        try:
-            registry.upsert_media_asset(
-                media_hash=media_hash,
-                file_path=str(video_path),
-                file_name=video_path.name,
-            )
-        except Exception as exc:
-            logger.warning("ArtifactRegistry: failed to upsert media asset -- %s", exc)
-
-    _run_id = uuid.uuid4().hex
-    _run_db_id = _reg_start_run(registry, media_hash, config, run_id=_run_id)
-    if registry is not None and _run_db_id is not None:
-        result["registry_run_id"] = _run_id
-    
-    try:
-        # ===================================================================
-        # Step 1: Extract audio
-        # ===================================================================
-        logger.info("\n[1/6] Extracting audio track from video...")
-        
-        with start_span("extract_audio", video=str(video_path.name)):
-            if audio_track is None:
-                # New path: use media inspection for dynamic selection
-                try:
-                    media = inspect_media(str(video_path))
-                    preferred = config.get("audio", "preferred_languages", default=["ja", "jpn", "ja-JP"])
-                    audio_track = choose_audio_track(media, preferred_languages=preferred)
-                except Exception as e:
-                    logger.warning(f"Media inspection failed ({e}); falling back to default track 0")
-                    audio_track = 0
-            audio_path = extract_audio_with_ffmpeg(
-                input_video_path=str(video_path),
-                output_audio_path=str(audio_path),
-                audio_track_index=audio_track
-            )
-        
-        # ===================================================================
-        # Step 2: Japanese ASR (Speech to Text, candidate-based)
-        # ===================================================================
-        logger.info("\n[2/6] Running Japanese ASR (Faster-Whisper)...")
-        with start_span("asr_transcription", model=config.asr_model_name, profile=config.profile):
-            asr = FasterWhisperASR(config)
-            segments, _ = asr.transcribe_audio_to_segments(str(audio_path))
-            # Build generic candidate reflecting selected audio track & detected language
-            try:
-                media_for_lang = inspect_media(str(video_path))
-                audio_lang = None
-                if audio_track is not None and audio_track < len(media_for_lang.audio_streams):
-                    audio_lang = media_for_lang.audio_streams[audio_track].language or media_for_lang.audio_streams[audio_track].raw_language
-            except Exception:
-                audio_lang = None
-            candidate_lang = audio_lang or config.asr_language or "und"
-            asr_candidate = build_candidate_from_segments(
-                segments,
-                config,
-                candidate_id=f"asr_{candidate_lang}",
-                language=candidate_lang,
-                origin_stream=f"audio:{audio_track if audio_track is not None else 0}",
-            )
-            result["asr_candidate_language"] = asr_candidate.language
-            result["asr_candidate_origin_stream"] = asr_candidate.origin_stream
-            result["asr_candidate_segment_count"] = asr_candidate.segment_count
-            # TODO: restore asr.unload_model() — disabled due to crash after destructor in legacy path
-            # asr.unload_model()
-        _asr_db_id = _reg_store_candidate(
-            registry,
-            media_hash,
-            asr_candidate,
-            source="asr",
-            model_version=config.asr_model_name,
-        )
-        
-        if not asr_candidate.segments:
-            logger.error("No speech segments detected in audio")
-            _reg_finish_run(
-                registry,
-                _run_id,
-                status=PIPELINE_STATUS_FAILED,
-                error_message="No speech segments detected in audio",
-            )
-            return result
-        
-        logger.info(
-            f"Transcribed {asr_candidate.segment_count} segments (audio track {audio_track}) "
-            f"candidate_id={asr_candidate.id} origin={asr_candidate.origin_stream}"
-        )
-        
-        # ===================================================================
-        # Step 3: Japanese to English translation (candidate-based)
-        # ===================================================================
-        logger.info("\n[3/6] Translating Japanese to English (MarianMT, candidate model)...")
-        with start_span("machine_translation", model=config.mt_model_name, device=config.mt_device):
-            mt_candidate = translate_candidate_jp_to_en(asr_candidate, config)
-        _mt_db_id = _reg_store_candidate(
-            registry,
-            media_hash,
-            mt_candidate,
-            source="mt",
-            model_version=config.mt_model_name,
-            parent_id=_asr_db_id,
-        )
-        
-        # ===================================================================
-        # Step 3.5: Write raw MT SRT (always, before optional LLM polish)
-        # ===================================================================
-        logger.info("\n[3.5/6] Writing raw MT SRT (pre-polish)...")
-        with start_span("write_raw_srt", output=str(raw_srt_path)):
-            write_candidate_srt(mt_candidate, str(raw_srt_path), config)
-            logger.info(f"✓ Raw MT SRT written: {raw_srt_path.name}")
-        _reg_store_artifact(
-            registry,
-            media_hash,
-            ARTIFACT_TYPE_SRT,
-            raw_srt_path,
-            candidate_db_id=_mt_db_id,
-            run_db_id=_run_db_id,
-        )
-
-        # ===================================================================
-        # Step 4: Optional LLM polishing (candidate-based)
-        # ===================================================================
-        if no_llm or not config.llm_enabled:
-            logger.info("\n[4/6] Skipping LLM polishing (disabled)")
-            with start_span("llm_polish", enabled=False):
-                final_candidate = mt_candidate  # pass-through
-            _final_db_id = _mt_db_id
-        else:
-            logger.info("\n[4/6] Polishing subtitles with LLM (candidate model)...")
-            with start_span("llm_polish", model=config.llm_model_name, base_url=config.llm_base_url):
-                polished_candidate = polish_candidate_with_llm(mt_candidate, config)
-                final_candidate = enforce_constraints_on_candidate(polished_candidate, config)
-            _final_db_id = _reg_store_candidate(
-                registry,
-                media_hash,
-                final_candidate,
-                source="mt_llm",
-                model_version=config.llm_model_name,
-                parent_id=_mt_db_id,
-            )
-        
-        # ===================================================================
-        # Step 5: Write SRT file (candidate-based)
-        # ===================================================================
-        logger.info("\n[5/6] Writing SRT subtitle file (from final candidate)...")
-        with start_span("write_srt", output=str(srt_path)):
-            srt_path = write_candidate_srt(final_candidate, str(srt_path), config)
-            logger.info(f"✓ SRT file created: {srt_path}")
-        _reg_store_artifact(
-            registry,
-            media_hash,
-            ARTIFACT_TYPE_SRT,
-            srt_path,
-            candidate_db_id=_final_db_id,
-            run_db_id=_run_db_id,
-        )
-        
-        # ===================================================================
-        # Step 6: Optional muxing
-        # ===================================================================
-        if no_mux or not config.mux_enabled:
-            logger.info("\n[6/6] Skipping video muxing (disabled)")
-        else:
-            logger.info("\n[6/6] Muxing subtitles into video...")
-            with start_span("mux_subtitles"):
-                suffix = config.mux_output_suffix
-                muxed_path = outbox_dir / f"{video_stem}.{suffix}{video_path.suffix}"
-
-                muxed_path = mux_subtitle_to_video(
-                    input_video_path=str(video_path),
-                    subtitle_path=str(srt_path),
-                    output_video_path=str(muxed_path),
-                    subtitle_language=config.get("mux", "subtitle_language", default="eng"),
-                    subtitle_title=config.get("mux", "subtitle_title", default="English")
-                )
-
-                result["muxed_video"] = str(muxed_path)
-                logger.info(f"✓ Muxed video created: {muxed_path}")
-
-                _reg_store_artifact(
-                    registry,
-                    media_hash,
-                    ARTIFACT_TYPE_MKV,
-                    muxed_path,
-                    candidate_db_id=_final_db_id,
-                    run_db_id=_run_db_id,
-                )
-        
-        # ===================================================================
-        # Save candidate chain log
-        # ===================================================================
-        if config.get("logging", "save_segment_json", default=True):
-            with start_span("save_segment_log", output=str(log_path)):
-                save_candidate_chain_log(asr_candidate, mt_candidate, final_candidate, str(log_path))
-        
-        # Update result metadata
-        result["segment_count"] = final_candidate.segment_count
-        result["final_candidate_id"] = final_candidate.id
-        
-        # ===================================================================
-        # Cleanup temp files
-        # ===================================================================
-        if audio_path.exists():
-            audio_path.unlink()
-            logger.debug(f"Cleaned up temp file: {audio_path.name}")
-        
-        result["success"] = True
-        _reg_finish_run(registry, _run_id, status=PIPELINE_STATUS_COMPLETED)
-        
-        logger.info("\n" + "=" * 70)
-        logger.info("✓ Processing complete!")
-        logger.info(f"  SRT file: {srt_path}")
-        if result["muxed_video"]:
-            logger.info(f"  Video file: {result['muxed_video']}")
-        logger.info("=" * 70)
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"\n✗ Processing failed: {e}", exc_info=True)
-        result["error"] = str(e)
-        _reg_finish_run(
-            registry,
-            _run_id,
-            status=PIPELINE_STATUS_FAILED,
-            error_message=str(e),
-        )
-        return result
-    finally:
-        if _registry_owned and registry is not None:
-            registry.close()
 
 
 def main():
@@ -546,7 +157,7 @@ Examples:
             "Run mode: 'generate' (production EN subs, default), "
             "'benchmark' (compare all candidate sources, writes benchmark_results.json), "
             "'review' (local review queue and approval workflow), "
-            "'subtitle' (legacy JP→EN pipeline)"
+            "'subtitle' (deprecated alias of generate)"
         )
     )
 
@@ -796,9 +407,11 @@ Examples:
                 if getattr(args, "strict_benchmark", False):
                     sys.exit(2)
             sys.exit(0)
-        elif args.mode == "generate":
-            from orchestrator import run_generate
-            logger.info("Running in GENERATE mode (strategy selection)")
+        elif args.mode in {"generate", "subtitle"}:
+            if args.mode == "subtitle":
+                logger.info("Running in SUBTITLE mode (alias of generate)")
+            else:
+                logger.info("Running in GENERATE mode (strategy selection)")
             media = inspect_media(args.video)
             ocr_backend = create_ocr_backend(config)
             if ocr_backend is None:
@@ -858,21 +471,6 @@ Examples:
                     logger.info(f"    • {reason}")
             _emit_registry_run_id(meta.get("registry_run_id"))
             sys.exit(0)
-        else:  # legacy subtitle mode
-            logger.info("Running in legacy SUBTITLE mode (JP audio → ASR → MT → LLM)")
-            result = process_video(
-                video_path=args.video,
-                config=config,
-                no_llm=args.no_llm,
-                no_mux=args.no_mux,
-                audio_track=args.audio_track,
-            )
-            if result["success"]:
-                _emit_registry_run_id(result.get("registry_run_id"))
-                sys.exit(0)
-            else:
-                logger.error("Processing failed")
-                sys.exit(1)
             
     except KeyboardInterrupt:
         logger.info("\nInterrupted by user")
