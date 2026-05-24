@@ -74,6 +74,8 @@ from packs.language import load_language_routing_hooks
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_LANG_ALIASES = dict(load_language_routing_hooks().lang_aliases)
+
 
 # Audio language probe settings (used when metadata tag is absent or suspect).
 _PROBE_DURATION_SEC = 30       # seconds of audio to sample
@@ -141,7 +143,7 @@ _REVIEW_RECOMMENDED_STRATEGIES = {
 def _lang_matches(
     stream_lang: str | None,
     target: str,
-    lang_aliases: Dict[str, frozenset[str]],
+    lang_aliases: Dict[str, frozenset[str]] | None = None,
 ) -> bool:
     """True if stream_lang (raw from container) belongs to target's alias set.
 
@@ -151,6 +153,8 @@ def _lang_matches(
     """
     if not stream_lang:
         return False
+    if lang_aliases is None:
+        lang_aliases = _DEFAULT_LANG_ALIASES
     code = stream_lang.strip().lower()
     aliases = lang_aliases.get(target, frozenset({target}))
     if code in aliases:
@@ -160,7 +164,13 @@ def _lang_matches(
     return prefix in aliases
 
 
-def _first_text_sub(media: MediaInfo, lang: str, lang_aliases: Dict[str, frozenset[str]]) -> int | None:
+def _first_text_sub(
+    media: MediaInfo,
+    lang: str,
+    lang_aliases: Dict[str, frozenset[str]] | None = None,
+) -> int | None:
+    if lang_aliases is None:
+        lang_aliases = _DEFAULT_LANG_ALIASES
     for s in media.subtitle_streams:
         if s.is_bitmap:
             logger.debug(
@@ -182,7 +192,13 @@ def _first_text_sub(media: MediaInfo, lang: str, lang_aliases: Dict[str, frozens
     return None
 
 
-def _first_bitmap_sub(media: MediaInfo, lang: str, lang_aliases: Dict[str, frozenset[str]]) -> int | None:
+def _first_bitmap_sub(
+    media: MediaInfo,
+    lang: str,
+    lang_aliases: Dict[str, frozenset[str]] | None = None,
+) -> int | None:
+    if lang_aliases is None:
+        lang_aliases = _DEFAULT_LANG_ALIASES
     for s in media.subtitle_streams:
         if not s.is_bitmap:
             continue
@@ -195,8 +211,10 @@ def _first_bitmap_sub(media: MediaInfo, lang: str, lang_aliases: Dict[str, froze
 def _first_audio_order(
     media: MediaInfo,
     lang: str,
-    lang_aliases: Dict[str, frozenset[str]],
+    lang_aliases: Dict[str, frozenset[str]] | None = None,
 ) -> int | None:
+    if lang_aliases is None:
+        lang_aliases = _DEFAULT_LANG_ALIASES
     for order, stream in enumerate(media.audio_streams):
         raw = stream.language or stream.raw_language
         if _lang_matches(raw, lang, lang_aliases):
@@ -215,8 +233,10 @@ def _first_audio_order(
 def _first_sidecar(
     sidecars: list[SubtitleCandidate],
     lang: str,
-    lang_aliases: Dict[str, frozenset[str]],
+    lang_aliases: Dict[str, frozenset[str]] | None = None,
 ) -> SubtitleCandidate | None:
+    if lang_aliases is None:
+        lang_aliases = _DEFAULT_LANG_ALIASES
     for cand in sidecars:
         if _lang_matches(cand.language, lang, lang_aliases):
             return cand
