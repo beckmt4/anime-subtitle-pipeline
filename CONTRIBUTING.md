@@ -88,7 +88,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
 | `prompts/` | Reusable AI prompts used in this repo's development and pipeline |
 | `fixtures/` | Stable test inputs and sample data — small, deterministic, public-domain or synthetic |
 | `acceptance/` | Acceptance checklists and criteria definitions for issues and features |
-| `tests/` | Automated test files (`test_*.py`). Tests currently live in the root; new tests go in `tests/` |
+| `tests/` | Automated test files (`test_*.py`) |
 | `docs/` | Reference documentation; architecture notes in `docs/architecture/` |
 
 When a PR touches behavior in a module, check whether any of the above folders need updating.
@@ -119,9 +119,9 @@ flake8 core/media/__init__.py core/benchmark/compare_core.py core/runtime/config
 pytest -v -m "not integration"
 ```
 
-Tests live in both the repo root (`test_*.py`) and `tests/`. New tests go under
-`tests/`; existing root-level tests are migrated incrementally. All non-integration
-tests in both locations are collected and run by CI.
+Tests are maintained under `tests/`. Pytest collection starts from repository
+root (`pytest.ini` uses `testpaths = .`), so avoid adding stray ad-hoc test
+files outside `tests/` unless intentionally part of automated coverage.
 
 ### Intentionally excluded from CI
 
@@ -184,8 +184,8 @@ from pathlib import Path
 import torch
 
 # Local
-from config import Config
-from models import Segment
+from core.runtime.config import Config
+from core.subtitles import Segment
 ```
 
 ### Comments

@@ -17,6 +17,7 @@ from .workflow import (
     create_review_task_from_generate_output,
     list_review_history,
     list_review_queue,
+    reject_review_task,
     render_local_review_ui,
 )
 
@@ -33,5 +34,6 @@ __all__ = [
     "build_review_comparison",
     "render_local_review_ui",
     "approve_review_task",
+    "reject_review_task",
     "list_review_history",
 ]

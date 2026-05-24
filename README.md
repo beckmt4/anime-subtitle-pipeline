@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/beckmt4/anime-subtitle-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/beckmt4/anime-subtitle-pipeline/actions/workflows/ci.yml)
 
-A **production-quality**, **local-only** pipeline for generating English subtitles from Japanese anime, movies, and TV shows. No cloud services or external APIs required.
+A **local-first alpha**, **local-only** pipeline for generating English subtitles from Japanese anime, movies, and TV shows. No cloud services or external APIs required.
 
 ## Features
 
@@ -45,7 +45,7 @@ A **production-quality**, **local-only** pipeline for generating English subtitl
 sudo dnf install ffmpeg
 
 # Debian/Ubuntu:
-sudo dnf install ffmpeg
+sudo apt-get install ffmpeg
 
 # macOS:
 brew install ffmpeg
@@ -501,7 +501,24 @@ python main.py movie.mkv --mode subtitle --no-llm
 
 - `outbox/<video>.en.srt` – Final production subtitles.
 - `outbox/benchmark_results.json` – Comparison metrics & diffs.
-- `logs/<video>.json` – Candidate chain (legacy pipeline) when enabled.
+- `outbox/<video>.en.qc.json` – QC sidecar for generated output.
+- `outbox/pipeline.db` – Artifact/state SQLite database (default path).
+
+## Root script support status
+
+| Script | Status | Notes |
+|---|---|---|
+| `main.py` | Supported | Primary CLI entrypoint (`generate`, `benchmark`, `review`, `subtitle`) |
+| `batch_process.py` | Supported (shim) | Delegates to `core/runtime/batch_process.py` |
+| `compare_srt.py` | Supported utility | SRT-to-SRT comparison helper |
+| `scripts/export_review_corrections.py` | Supported utility | Exports approved correction memory datasets |
+| `subtitle_pipeline.py` | Legacy | Historical corrector pipeline, not part of the main product flow |
+| `subtitle_corrector.py` | Legacy utility | Used by `subtitle_pipeline.py`; not part of generate/benchmark/review modes |
+| `compare_subtitles.py` | Experimental/legacy utility | Legacy comparison helper outside core benchmark flow |
+| `evaluate_subtitles.py` | Experimental/legacy utility | Legacy evaluation wrapper |
+| `build_dataset.py` | Experimental/legacy utility | Dataset builder using legacy scripts |
+| `extract_training_data.py` | Experimental/legacy utility | Dataset extractor using legacy logs/comparison files |
+| `benchmark_configs.py` | Experimental/legacy utility | Legacy benchmark helper script |
 
 ## Review correction exports
 

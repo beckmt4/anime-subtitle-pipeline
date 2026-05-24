@@ -75,7 +75,8 @@ Examples:
     parser.add_argument(
         "video",
         type=str,
-        help="Path to input video file (MKV, MP4, etc.)"
+        nargs="?",
+        help="Path to input video file (required for generate/benchmark/subtitle modes)"
     )
     
     parser.add_argument(
@@ -164,9 +165,12 @@ Examples:
     parser.add_argument(
         "--review-action",
         type=str,
-        choices=["queue", "render", "approve"],
+        choices=["queue", "render", "approve", "reject"],
         default="queue",
-        help="In review mode: queue (list tasks), render (build local HTML UI), approve (apply edits).",
+        help=(
+            "In review mode: queue (list tasks), render (build local HTML UI), "
+            "approve (apply edits), reject (mark task rejected)."
+        ),
     )
     parser.add_argument(
         "--task-id",
@@ -236,11 +240,19 @@ Examples:
     logger.info(f"Profile: {config.profile}")
     logger.info(f"Configuration loaded from: {config.config_path}")
     
-    # Check ffmpeg availability
-    if not check_ffmpeg_available():
-        logger.error("ffmpeg not found in PATH")
-        logger.error("Please install ffmpeg and ensure it's accessible")
-        sys.exit(1)
+    if args.mode != "review":
+        if not args.video:
+            logger.error("video argument is required unless --mode review is used")
+            sys.exit(2)
+        # Check ffmpeg availability
+        if not check_ffmpeg_available():
+            logger.error("ffmpeg not found in PATH")
+            logger.error("Please install ffmpeg and ensure it's accessible")
+            sys.exit(1)
+    elif args.list_tracks or args.extract_en_subs:
+        if not args.video:
+            logger.error("video argument is required for --list-tracks/--extract-en-subs")
+            sys.exit(2)
     
     # Fast path: list tracks only
     if args.list_tracks:
@@ -327,7 +339,12 @@ Examples:
     # Dispatch to appropriate mode
     try:
         if args.mode == "review":
-            from core.review import approve_review_task, list_review_queue, render_local_review_ui
+            from core.review import (
+                approve_review_task,
+                list_review_queue,
+                reject_review_task,
+                render_local_review_ui,
+            )
 
             logger.info("Running in REVIEW mode")
             registry = open_registry(config)
@@ -361,7 +378,7 @@ Examples:
                         compare_candidate_id=args.compare_candidate_id,
                     )
                     logger.info("Review UI written: %s", rendered)
-                else:  # approve
+                elif args.review_action == "approve":
                     if args.task_id is None:
                         logger.error("--task-id is required for --review-action approve")
                         sys.exit(2)
@@ -378,6 +395,16 @@ Examples:
                     )
                     logger.info("Approved candidate id: %s", approved["approved_candidate_id"])
                     logger.info("Stored approved output: %s", approved["output_srt_path"])
+                else:  # reject
+                    if args.task_id is None:
+                        logger.error("--task-id is required for --review-action reject")
+                        sys.exit(2)
+                    rejected = reject_review_task(
+                        registry,
+                        task_id=args.task_id,
+                        reviewer_notes=args.review_notes,
+                    )
+                    logger.info("Rejected task id: %s", rejected["task_id"])
             finally:
                 registry.close()
             sys.exit(0)

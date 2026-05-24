@@ -97,6 +97,15 @@ _PROPAGATED_ASR_META_KEYS = (
 )
 
 
+def _with_source_text_meta(segment: GenericSegment) -> dict:
+    """Return segment metadata with language-agnostic source text keys."""
+    meta = dict(segment.meta)
+    meta.setdefault("source_text", segment.text)
+    # Backward compatibility for consumers still reading source_text_ja.
+    meta.setdefault("source_text_ja", segment.text)
+    return meta
+
+
 def _copy_asr_candidate_meta(candidate: SubtitleCandidate) -> dict:
     return {
         key: candidate.meta[key]
@@ -473,7 +482,7 @@ class MarianTranslator:
                 start=s.start,
                 end=s.end,
                 text=t if t else "",
-                meta={"source_text_ja": s.text, **dict(s.meta)},
+                meta=_with_source_text_meta(s),
             )
             for s, t in zip(candidate.segments, translations)
         ]
@@ -734,7 +743,7 @@ class LLMDirectTranslator:
                 start=s.start,
                 end=s.end,
                 text=t,
-                meta={"source_text_ja": s.text, **dict(s.meta)},
+                meta=_with_source_text_meta(s),
             )
             for s, t in zip(candidate.segments, translations)
         ]
