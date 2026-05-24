@@ -12,7 +12,6 @@ Public API
 MTBackend                     Abstract base class.
 MarianTranslator              Concrete MarianMT implementation
 LLMDirectTranslator           Ollama-compatible direct translation backend
-                              (both live in root ``mt.py`` during migration).
 translate_candidate(…)        Direction-agnostic translation helper.
 """
 

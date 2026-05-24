@@ -2,7 +2,6 @@
 
 Measures subtitle quality by comparing candidates to a reference using
 WER, BLEU, and chrF.
-The root-level ``compare_core.py`` is a re-export shim pointing here.
 ``core.benchmark.__init__`` re-exports from this module.
 
 Public API

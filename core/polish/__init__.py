@@ -12,8 +12,7 @@ They belong in ``packs/language/ja_en/cjk_filter.py``, not here.
 Public API
 ----------
 PolishBackend                 Abstract base class.
-LLMPolisher                   Concrete Ollama implementation
-                              (lives in root ``llm_polish.py`` during migration).
+LLMPolisher                   Concrete Ollama implementation.
 polish_candidate_with_llm(…)  One-shot convenience wrapper.
 enforce_constraints_on_candidate(…)  Timing / line-length normalisation.
 """
@@ -260,7 +259,7 @@ class LLMPolisher:
         "full moon." The wrapping was also redundant with
         srt_writer.split_into_lines, which already word-wraps cleanly at
         max_chars_per_line boundaries. The original implementation is preserved
-        in git history; revert via `git log -p llm_polish.py` if needed.
+        in git history; revert via `git log -p core/polish/__init__.py` if needed.
         """
         if not text:
             return text
