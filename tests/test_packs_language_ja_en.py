@@ -206,3 +206,38 @@ class TestJaEnRoutingHooks:
 
         assert result == "translated"
         assert calls == [("candidate", "cfg", "source")]
+
+
+# ---------------------------------------------------------------------------
+# language pack registry
+# ---------------------------------------------------------------------------
+
+class TestLanguagePackRegistry:
+    def test_list_available_packs_returns_ja_en(self):
+        from packs.language import list_available_packs
+        packs = list_available_packs()
+        assert "ja_en" in packs
+
+    def test_list_available_packs_returns_list(self):
+        from packs.language import list_available_packs
+        packs = list_available_packs()
+        assert isinstance(packs, list)
+
+    def test_list_available_packs_sorted(self):
+        from packs.language import list_available_packs
+        packs = list_available_packs()
+        assert packs == sorted(packs)
+
+    def test_load_language_routing_hooks_unknown_pair_raises_value_error(self):
+        from packs.language import load_language_routing_hooks
+        with pytest.raises(ValueError, match="No language-pack routing hooks"):
+            load_language_routing_hooks("zz", "xx")
+
+    def test_list_available_packs_and_load_are_consistent(self):
+        """Every pack returned by list_available_packs() must be loadable."""
+        from packs.language import list_available_packs, load_language_routing_hooks
+
+        for pack_id in list_available_packs():
+            src, tgt = pack_id.split("_", 1)
+            hooks = load_language_routing_hooks(src, tgt)
+            assert hooks.pack_id == pack_id

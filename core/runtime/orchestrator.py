@@ -1266,16 +1266,20 @@ def _reg_store_candidate(
     source: str,
     model_version: str = "",
     parent_id: Optional[int] = None,
+    source_language: Optional[str] = None,
 ) -> Optional[int]:
     """Persist a SubtitleCandidate and return its DB id, or None on failure.
 
     Args:
-        registry:      Open ArtifactRegistry, or None (no-op).
-        media_hash:    SHA-256 hex digest of the source media file.
-        candidate:     models.SubtitleCandidate produced by the pipeline.
-        source:        One of 'asr', 'embedded', 'mt', 'mt_llm'.
-        model_version: Model identifier string (e.g. Whisper model name).
-        parent_id:     DB id of the candidate this was derived from, if any.
+        registry:        Open ArtifactRegistry, or None (no-op).
+        media_hash:      SHA-256 hex digest of the source media file.
+        candidate:       models.SubtitleCandidate produced by the pipeline.
+        source:          One of 'asr', 'embedded', 'mt', 'mt_llm'.
+        model_version:   Model identifier string (e.g. Whisper model name).
+        parent_id:       DB id of the candidate this was derived from, if any.
+        source_language: ISO 639-1 code of the language translated *from*, for
+                         MT candidates (e.g. ``'ja'`` when candidate.language
+                         is ``'en'``).  ``None`` for ASR and embedded candidates.
 
     Returns:
         Integer DB id of the stored record, or None if the registry is
@@ -1292,6 +1296,7 @@ def _reg_store_candidate(
             media_hash=media_hash,
             source_id=candidate.id,
             language=candidate.language,
+            source_language=source_language,
             source=source,
             origin_stream=candidate.origin_stream,
             model_version=model_version,
@@ -1945,6 +1950,7 @@ def run_generate(
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
+                source_language=translation_source_language,
             )
             raw_srt = (
                 Path(cfg.get_path("outbox"))
@@ -1966,6 +1972,7 @@ def run_generate(
                 _final_db_id = _reg_store_candidate(
                     registry, media_hash, candidate, source="mt_llm",
                     model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                    source_language=translation_source_language,
                 )
             else:
                 candidate = mt_candidate
@@ -1997,6 +2004,7 @@ def run_generate(
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
+                source_language=translation_source_language,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
             raw_srt = (
@@ -2020,6 +2028,7 @@ def run_generate(
                 _final_db_id = _reg_store_candidate(
                     registry, media_hash, candidate, source="mt_llm",
                     model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                    source_language=translation_source_language,
                 )
             else:
                 candidate = mt_candidate
@@ -2052,6 +2061,7 @@ def run_generate(
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
+                source_language=translation_source_language,
             )
             raw_srt = (
                 Path(cfg.get_path("outbox"))
@@ -2073,6 +2083,7 @@ def run_generate(
                 _final_db_id = _reg_store_candidate(
                     registry, media_hash, candidate, source="mt_llm",
                     model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                    source_language=translation_source_language,
                 )
             else:
                 candidate = mt_candidate
@@ -2146,6 +2157,7 @@ def run_generate(
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_asr_db_id,
+                source_language=translation_source_language,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
             raw_srt = (
@@ -2169,6 +2181,7 @@ def run_generate(
                 _final_db_id = _reg_store_candidate(
                     registry, media_hash, candidate, source="mt_llm",
                     model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                    source_language=translation_source_language,
                 )
             else:
                 candidate = mt_candidate
@@ -2290,6 +2303,7 @@ def run_generate(
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_asr_db_id,
+                source_language=translation_source_language,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
             raw_srt = (
@@ -2313,6 +2327,7 @@ def run_generate(
                 _final_db_id = _reg_store_candidate(
                     registry, media_hash, candidate, source="mt_llm",
                     model_version=cfg.llm_model_name, parent_id=_mt_db_id,
+                    source_language=translation_source_language,
                 )
             else:
                 candidate = mt_candidate

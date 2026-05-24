@@ -176,10 +176,11 @@ def _segment_quality_warnings(
 
 class FasterWhisperASR:
     """
-    Japanese ASR using Faster-Whisper.
+    Multi-language ASR using Faster-Whisper.
     
     This class wraps the Faster-Whisper library and provides a simple interface
-    for transcribing Japanese audio to timestamped text segments.
+    for transcribing audio to timestamped text segments.  The transcription
+    language is supplied by the caller (language pack or runtime config).
     """
     
     def __init__(self, config: Config):
@@ -235,17 +236,18 @@ class FasterWhisperASR:
         language: Optional[str] = None
     ) -> Tuple[List[GenericSegment], SubtitleCandidate]:
         """
-        Transcribe an audio file to Japanese text segments with timestamps.
+        Transcribe an audio file to text segments with timestamps.
 
         Args:
             audio_path: Path to audio file (WAV format recommended)
-            language: Language code (default: from config, typically "ja")
+            language: ISO-639-1 language hint (default: from config).  ``None``
+                      means auto-detect.
 
         Returns:
             A tuple of (segments, candidate) where segments is a list of
-            generic subtitle Segment objects
-            objects with Japanese transcriptions and timing, and candidate is the
-            corresponding SubtitleCandidate built from those segments.
+            generic subtitle Segment objects with transcriptions and timing,
+            and candidate is the corresponding SubtitleCandidate built from
+            those segments.
 
         Raises:
             FileNotFoundError: If audio file doesn't exist
