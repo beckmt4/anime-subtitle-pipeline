@@ -19,7 +19,7 @@ from config import Config
 from core.ocr import OCRBackend
 from models import Segment, SubtitleCandidate
 from media_inspect import MediaInfo, AudioStream, SubtitleStream
-import benchmark as bm
+import core.benchmark as bm
 
 
 # ---------------------------------------------------------------------------

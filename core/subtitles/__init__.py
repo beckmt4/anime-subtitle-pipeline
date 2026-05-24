@@ -1,15 +1,18 @@
-"""core.subtitles — shared data model and SRT formatting.
-
-Authoritative home for ``Segment`` and ``SubtitleCandidate``.
-Implementation lives in ``core.subtitles.models``.
-The root-level ``models.py`` is a re-export shim pointing here.
-
-Public API
-----------
-Segment              Language-agnostic timed text unit.
-SubtitleCandidate    A complete subtitle track from a single source.
-"""
+"""core.subtitles — shared data model and SRT formatting."""
 
 from core.subtitles.models import Segment, SubtitleCandidate  # noqa: F401
+from core.subtitles.srt_writer import (  # noqa: F401
+    SRTWriter,
+    format_timestamp_srt,
+    write_candidate_srt,
+    read_srt_file,
+)
 
-__all__ = ["Segment", "SubtitleCandidate"]
+__all__ = [
+    "Segment",
+    "SubtitleCandidate",
+    "SRTWriter",
+    "format_timestamp_srt",
+    "write_candidate_srt",
+    "read_srt_file",
+]

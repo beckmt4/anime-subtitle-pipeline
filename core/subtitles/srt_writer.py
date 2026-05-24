@@ -1,0 +1,416 @@
+"""
+SRT subtitle file writer.
+
+This module handles formatting and writing subtitle files in SRT format.
+
+Key features:
+- Proper SRT timestamp formatting (HH:MM:SS,mmm)
+- Enforces minimum and maximum subtitle durations
+- Splits overly long segments at punctuation marks
+- Handles line breaking for readability
+- Validates subtitle timing
+"""
+
+import logging
+import re
+from pathlib import Path
+from typing import List
+
+from core.subtitles.models import Segment as GenericSegment, SubtitleCandidate
+from config import Config
+
+logger = logging.getLogger(__name__)
+
+
+def format_timestamp_srt(seconds: float) -> str:
+    """
+    Format a timestamp in SRT format: HH:MM:SS,mmm
+    
+    Args:
+        seconds: Time in seconds (can have decimal places, must be non-negative)
+        
+    Returns:
+        Formatted timestamp string in SRT format
+        
+    Raises:
+        ValueError: If seconds is negative
+        
+    Example:
+        >>> format_timestamp_srt(90.5)
+        '00:01:30,500'
+    """
+    if seconds < 0:
+        raise ValueError(f"Timestamp cannot be negative: {seconds}")
+    
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds % 1) * 1000)
+    
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def split_text_by_punctuation(
+    text: str,
+    punctuation: List[str],
+    target_length: int
+) -> List[str]:
+    """
+    Split text at punctuation marks if it exceeds target length.
+    
+    Args:
+        text: Text to split
+        punctuation: List of punctuation marks to split on (e.g., ['.', '!', '?'])
+        target_length: Target length in characters before splitting
+        
+    Returns:
+        List of text chunks
+    """
+    if len(text) <= target_length:
+        return [text]
+    
+    # Build regex pattern for splitting on any of the punctuation marks
+    # Pattern matches punctuation followed by space or end of string
+    pattern = f"([{''.join(re.escape(p) for p in punctuation)}]\\s+)"
+    
+    # Split but keep the punctuation
+    parts = re.split(pattern, text)
+    
+    # Reconstruct chunks
+    chunks = []
+    current_chunk = ""
+    
+    for part in parts:
+        if current_chunk and len(current_chunk + part) > target_length:
+            # Current chunk is long enough, save it and start new one
+            chunks.append(current_chunk.strip())
+            current_chunk = part
+        else:
+            current_chunk += part
+    
+    # Add remaining chunk
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    return chunks if chunks else [text]
+
+
+def split_into_lines(text: str, max_chars_per_line: int) -> str:
+    """
+    Split text into multiple lines for subtitle display.
+    
+    Tries to split at word boundaries to avoid breaking words.
+    
+    Args:
+        text: Text to split
+        max_chars_per_line: Maximum characters per line
+        
+    Returns:
+        Text with newlines inserted
+    """
+    if len(text) <= max_chars_per_line:
+        return text
+    
+    words = text.split()
+    lines = []
+    current_line = ""
+    
+    for word in words:
+        # Check if adding this word would exceed the limit
+        test_line = f"{current_line} {word}".strip()
+        
+        if len(test_line) <= max_chars_per_line:
+            current_line = test_line
+        else:
+            # Line would be too long, start a new line
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    
+    # Add the last line
+    if current_line:
+        lines.append(current_line)
+    
+    return "\n".join(lines)
+
+
+class SRTWriter:
+    """
+    SRT subtitle file writer.
+    
+    Handles conversion of Segment objects to properly formatted SRT files
+    with timing and formatting constraints applied.
+    """
+    
+    def __init__(self, config: Config):
+        """
+        Initialize the SRT writer.
+        
+        Args:
+            config: Configuration object with subtitle settings
+        """
+        self.config = config
+        self.min_duration = config.subtitle_min_duration
+        self.max_duration = config.subtitle_max_duration
+        self.split_punctuation = config.get("subtitles", "split_on_punctuation", default=[".", "!", "?", ";"])
+        self.target_split_length = config.get("subtitles", "target_split_length", default=80)
+        self.max_chars_per_line = config.llm_max_chars_per_line
+        self.min_gap = config.get("subtitles", "min_gap_sec", default=0.05)
+
+    def _enforce_non_overlapping_timings(self, segments: List[GenericSegment]) -> List[GenericSegment]:
+        """Clamp adjacent cues so the written SRT never contains overlaps."""
+        if len(segments) < 2:
+            return segments
+
+        fixed = sorted(segments, key=lambda s: (s.start, s.end))
+        for i in range(1, len(fixed)):
+            prev = fixed[i - 1]
+            curr = fixed[i]
+            min_curr_start = prev.end + self.min_gap
+            if curr.start >= min_curr_start:
+                continue
+
+            desired_prev_end = curr.start - self.min_gap
+            if desired_prev_end >= prev.start + self.min_duration:
+                logger.debug(
+                    "Shrinking overlapping cue %d end from %.3fs to %.3fs",
+                    i,
+                    prev.end,
+                    desired_prev_end,
+                )
+                prev.end = desired_prev_end
+            else:
+                new_start = prev.end + self.min_gap
+                logger.debug(
+                    "Shifting overlapping cue %d start from %.3fs to %.3fs",
+                    i + 1,
+                    curr.start,
+                    new_start,
+                )
+                curr.start = new_start
+                if curr.end < curr.start + self.min_duration:
+                    curr.end = curr.start + self.min_duration
+
+        return fixed
+    
+    def _prepare_segments(self, segments: List[GenericSegment]) -> List[GenericSegment]:
+        """
+        Prepare segments for writing by applying timing and splitting constraints.
+        
+        - Enforces minimum duration
+        - Splits segments that are too long
+        - Validates timing
+        
+        Args:
+            segments: Original list of segments
+            
+        Returns:
+            New list of segments ready for writing
+        """
+        prepared = []
+        
+        for seg in segments:
+            # Skip empty segments
+            if not seg.text.strip():
+                continue
+            
+            # Enforce minimum duration
+            if seg.duration < self.min_duration:
+                logger.debug(f"Extending segment duration from {seg.duration:.2f}s to {self.min_duration}s")
+                seg.end = seg.start + self.min_duration
+            
+            # Check if segment needs splitting
+            if seg.duration > self.max_duration or len(seg.text) > self.target_split_length:
+                # Try to split by punctuation
+                text_chunks = split_text_by_punctuation(
+                    seg.text,
+                    self.split_punctuation,
+                    self.target_split_length
+                )
+                
+                if len(text_chunks) > 1:
+                    # Split the timing proportionally
+                    duration_per_chunk = seg.duration / len(text_chunks)
+                    # If the proportional slice still exceeds max_duration, cap each
+                    # chunk at max_duration. This introduces small gaps between
+                    # chunks (the subtitle blanks out before the next chunk starts)
+                    # which is standard subtitling practice — better than showing
+                    # the same line for longer than max_duration.
+                    chunk_duration = min(duration_per_chunk, self.max_duration)
+                    capped = duration_per_chunk > self.max_duration
+
+                    for i, chunk in enumerate(text_chunks):
+                        chunk_start = seg.start + i * duration_per_chunk
+                        new_seg = GenericSegment(
+                            start=chunk_start,
+                            end=chunk_start + chunk_duration,
+                            text=chunk.strip(),
+                            meta=dict(seg.meta),
+                        )
+                        prepared.append(new_seg)
+
+                    if capped:
+                        logger.debug(
+                            f"Split long segment ({seg.duration:.1f}s) into {len(text_chunks)} parts; "
+                            f"each capped at {self.max_duration}s (proportional slice was "
+                            f"{duration_per_chunk:.1f}s)"
+                        )
+                    else:
+                        logger.debug(
+                            f"Split long segment ({seg.duration:.1f}s) into {len(text_chunks)} parts"
+                        )
+                    continue
+            
+            # No splitting needed (or split_text_by_punctuation returned a single
+            # chunk because the text was shorter than target_split_length, or
+            # contained no splittable punctuation). If the duration still
+            # exceeds max_duration, cap the end time rather than display the
+            # same subtitle for too long. Standard subtitling practice.
+            if seg.duration > self.max_duration:
+                old_duration = seg.duration
+                seg.end = seg.start + self.max_duration
+                logger.debug(
+                    f"Capped segment duration from {old_duration:.1f}s to "
+                    f"{self.max_duration}s (text not splittable at punctuation)"
+                )
+
+            prepared.append(seg)
+
+        result = self._enforce_non_overlapping_timings(prepared)
+
+        # Final pass: drop any cues that are still shorter than min_duration after
+        # overlap repair. These are irrecoverable (packed so tight that both
+        # neighbouring cues cannot simultaneously satisfy min_duration).
+        final = []
+        for seg in result:
+            if seg.duration >= self.min_duration:
+                final.append(seg)
+            else:
+                logger.debug(
+                    "Dropping segment still %.3fs < min_duration %.3fs after overlap repair",
+                    seg.duration,
+                    self.min_duration,
+                )
+        return final
+
+    def write_srt(self, segments: List[GenericSegment], output_path: str) -> Path:
+        """
+        Write segments to an SRT file.
+        
+        Args:
+            segments: List of Segment objects with text populated
+            output_path: Path for output SRT file
+            
+        Returns:
+            Path object pointing to the written file
+            
+        Raises:
+            ValueError: If segments list is empty
+        """
+        if not segments:
+            raise ValueError("Cannot write SRT file: no segments provided")
+        
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Prepare segments (apply constraints)
+        segments = self._prepare_segments(segments)
+        
+        if not segments:
+            raise ValueError("Cannot write SRT file: all segments were filtered out")
+        
+        logger.info(f"Writing {len(segments)} subtitles to {output_path.name}")
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for i, seg in enumerate(segments, start=1):
+                # SRT format:
+                # 1
+                # 00:00:01,000 --> 00:00:04,000
+                # Subtitle text
+                # (blank line)
+                
+                # Format text with line breaks
+                text = split_into_lines(seg.text, self.max_chars_per_line)
+                
+                # Write subtitle entry
+                f.write(f"{i}\n")
+                f.write(f"{format_timestamp_srt(seg.start)} --> {format_timestamp_srt(seg.end)}\n")
+                f.write(f"{text}\n")
+                f.write("\n")
+        
+        file_size_kb = output_path.stat().st_size / 1024
+        logger.info(f"SRT file written: {file_size_kb:.1f} KB")
+        
+        return output_path
+    
+# ---------------------------------------------------------------------------
+# New unified candidate SRT helpers
+# ---------------------------------------------------------------------------
+def write_candidate_srt(candidate: SubtitleCandidate, output_path: str, config: Config) -> Path:
+    """Write a SubtitleCandidate to SRT using its segment texts."""
+    writer = SRTWriter(config)
+    return writer.write_srt(candidate.segments, output_path)
+
+__all__ = [
+    "format_timestamp_srt",
+    "write_candidate_srt",
+    "read_srt_file",
+]
+
+
+# Utility: Read SRT file back into segments (for testing/validation)
+def read_srt_file(srt_path: str) -> List[GenericSegment]:
+    """
+    Read an SRT file and parse it into Segment objects.
+    
+    This is useful for testing and validation. The Japanese text fields
+    will be empty since SRT only contains English.
+    
+    Args:
+        srt_path: Path to SRT file
+        
+    Returns:
+        List of Segment objects
+    """
+    srt_path = Path(srt_path)
+    if not srt_path.exists():
+        raise FileNotFoundError(f"SRT file not found: {srt_path}")
+    
+    segments = []
+    
+    with open(srt_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # SRT blocks are separated by blank lines
+    blocks = content.strip().split('\n\n')
+    
+    for block in blocks:
+        lines = block.strip().split('\n')
+        if len(lines) < 3:
+            continue
+        
+        # Parse timestamp line (line 1, 0-indexed)
+        timestamp_line = lines[1]
+        match = re.match(
+            r'(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})',
+            timestamp_line
+        )
+        
+        if match:
+            h1, m1, s1, ms1, h2, m2, s2, ms2 = map(int, match.groups())
+            start = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000
+            end = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000
+            
+            # Text is all remaining lines
+            text = '\n'.join(lines[2:])
+            
+            seg = GenericSegment(
+                start=start,
+                end=end,
+                text=text,
+            )
+            segments.append(seg)
+    
+    logger.info(f"Read {len(segments)} segments from {srt_path.name}")
+    
+    return segments

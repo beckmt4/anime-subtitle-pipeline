@@ -418,7 +418,7 @@ class TestAdaptCandidateFromLiteralWrapper:
         literal = _en_candidate(["text"], id="lit")
         cfg = _cfg()
 
-        with patch("llm_polish.LLMPolisher") as MockPolisher:
+        with patch("core.polish.LLMPolisher") as MockPolisher:
             instance = MockPolisher.return_value
             instance.adapt_candidate_from_literal.return_value = literal
 
@@ -433,7 +433,7 @@ class TestAdaptCandidateFromLiteralWrapper:
         ja = _ja_candidate(["日本語"])
         cfg = _cfg()
 
-        with patch("llm_polish.LLMPolisher") as MockPolisher:
+        with patch("core.polish.LLMPolisher") as MockPolisher:
             instance = MockPolisher.return_value
             instance.adapt_candidate_from_literal.return_value = literal
 
@@ -462,8 +462,8 @@ class TestRunTwoPassTranslation:
         literal_result = _en_candidate(["Literal A.", "Literal B."], id="lit")
         natural_result = _en_candidate(["Natural A.", "Natural B."], id="lit_natural")
 
-        with patch("mt.translate_candidate", return_value=literal_result) as mock_translate, \
-             patch("llm_polish.adapt_candidate_from_literal", return_value=natural_result) as mock_adapt:
+        with patch("core.mt.translate_candidate", return_value=literal_result) as mock_translate, \
+             patch("core.polish.adapt_candidate_from_literal", return_value=natural_result) as mock_adapt:
 
             mock_translate.side_effect = lambda *a, **kw: (call_order.append("translate"), literal_result)[1]
             mock_adapt.side_effect = lambda *a, **kw: (call_order.append("adapt"), natural_result)[1]
@@ -482,8 +482,8 @@ class TestRunTwoPassTranslation:
         literal = _en_candidate(["Literal."], id="lit")
         natural = _en_candidate(["Natural."], id="lit_natural")
 
-        with patch("mt.translate_candidate", return_value=literal) as mock_translate, \
-             patch("llm_polish.adapt_candidate_from_literal", return_value=natural):
+        with patch("core.mt.translate_candidate", return_value=literal) as mock_translate, \
+             patch("core.polish.adapt_candidate_from_literal", return_value=natural):
 
             mt.run_two_pass_translation(ja, cfg)
 
@@ -497,8 +497,8 @@ class TestRunTwoPassTranslation:
         literal = _en_candidate(["Literal."], id="lit")
         natural = _en_candidate(["Natural."], id="lit_natural")
 
-        with patch("mt.translate_candidate", return_value=literal), \
-             patch("llm_polish.adapt_candidate_from_literal", return_value=natural) as mock_adapt:
+        with patch("core.mt.translate_candidate", return_value=literal), \
+             patch("core.polish.adapt_candidate_from_literal", return_value=natural) as mock_adapt:
 
             mt.run_two_pass_translation(ja, cfg)
 
@@ -513,8 +513,8 @@ class TestRunTwoPassTranslation:
         natural = _en_candidate(["Natural."], id="asr_ja_mt_natural")
         natural.meta = {}
 
-        with patch("mt.translate_candidate", return_value=literal), \
-             patch("llm_polish.adapt_candidate_from_literal", return_value=natural):
+        with patch("core.mt.translate_candidate", return_value=literal), \
+             patch("core.polish.adapt_candidate_from_literal", return_value=natural):
 
             result = mt.run_two_pass_translation(ja, cfg)
 
@@ -536,8 +536,8 @@ class TestRunTwoPassTranslation:
             captured_literal.append(lit_cand)
             return natural
 
-        with patch("mt.translate_candidate", return_value=literal), \
-             patch("llm_polish.adapt_candidate_from_literal", side_effect=capture_adapt):
+        with patch("core.mt.translate_candidate", return_value=literal), \
+             patch("core.polish.adapt_candidate_from_literal", side_effect=capture_adapt):
 
             mt.run_two_pass_translation(ja, cfg)
 
@@ -561,8 +561,8 @@ class TestRunTwoPassTranslation:
             origin_stream="a:0", segments=nat_segs, meta={}
         )
 
-        with patch("mt.translate_candidate", return_value=literal), \
-             patch("llm_polish.adapt_candidate_from_literal", return_value=natural):
+        with patch("core.mt.translate_candidate", return_value=literal), \
+             patch("core.polish.adapt_candidate_from_literal", return_value=natural):
 
             result = mt.run_two_pass_translation(ja, cfg)
 
@@ -584,8 +584,8 @@ class TestRunTwoPassSaveIntermediate:
         natural = _en_candidate(["Natural."], id="lit_natural")
         natural.meta = {}
 
-        with patch("mt.translate_candidate", return_value=literal), \
-             patch("llm_polish.adapt_candidate_from_literal", return_value=natural):
+        with patch("core.mt.translate_candidate", return_value=literal), \
+             patch("core.polish.adapt_candidate_from_literal", return_value=natural):
 
             result = mt.run_two_pass_translation(ja, cfg)
 
@@ -600,8 +600,8 @@ class TestRunTwoPassSaveIntermediate:
         natural = _en_candidate(["Natural."], id="lit_natural")
         natural.meta = {}
 
-        with patch("mt.translate_candidate", return_value=literal), \
-             patch("llm_polish.adapt_candidate_from_literal", return_value=natural):
+        with patch("core.mt.translate_candidate", return_value=literal), \
+             patch("core.polish.adapt_candidate_from_literal", return_value=natural):
 
             result = mt.run_two_pass_translation(ja, cfg)
 
@@ -623,8 +623,8 @@ class TestRunTwoPassSaveIntermediate:
             origin_stream="a:0", segments=[], meta={}
         )
 
-        with patch("mt.translate_candidate", return_value=literal), \
-             patch("llm_polish.adapt_candidate_from_literal", return_value=natural):
+        with patch("core.mt.translate_candidate", return_value=literal), \
+             patch("core.polish.adapt_candidate_from_literal", return_value=natural):
 
             result = mt.run_two_pass_translation(ja, cfg)
 
@@ -650,8 +650,8 @@ class TestTranslateCandidateJPToENWorkflowSelector:
         cfg = _cfg(workflow="single_pass")
         single = _en_candidate(["Single."], id="single")
 
-        with patch("mt.translate_candidate_jp_to_en", return_value=single) as mock_single, \
-             patch("mt.run_two_pass_translation") as mock_two_pass:
+        with patch("core.mt.translate_candidate_jp_to_en", return_value=single) as mock_single, \
+             patch("core.mt.run_two_pass_translation") as mock_two_pass:
             result = mt.translate_candidate_jp_to_en_workflow(ja, cfg)
 
         assert result is single
@@ -665,8 +665,8 @@ class TestTranslateCandidateJPToENWorkflowSelector:
         two_pass = _en_candidate(["Natural."], id="two_pass")
         two_pass.meta["translation_workflow"] = "literal_then_natural"
 
-        with patch("mt.run_two_pass_translation", return_value=two_pass) as mock_two_pass, \
-             patch("mt.translate_candidate_jp_to_en") as mock_single:
+        with patch("core.mt.run_two_pass_translation", return_value=two_pass) as mock_two_pass, \
+             patch("core.mt.translate_candidate_jp_to_en") as mock_single:
             result = mt.translate_candidate_jp_to_en_workflow(ja, cfg, engine="llm_direct", ja_candidate=ja)
 
         assert result is two_pass

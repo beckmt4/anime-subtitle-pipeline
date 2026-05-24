@@ -389,7 +389,7 @@ class TestPolishCandidateWithLlm:
 
         cfg = _make_config(llm_enabled=True)
 
-        with patch("llm_polish.LLMPolisher") as MockPolisher:
+        with patch("core.polish.LLMPolisher") as MockPolisher:
             instance = MockPolisher.return_value
             instance.polish_candidate.return_value = en_cand
 
@@ -406,7 +406,7 @@ class TestPolishCandidateWithLlm:
         en_cand = _make_candidate(en_texts)
         cfg = _make_config(llm_enabled=True)
 
-        with patch("llm_polish.LLMPolisher") as MockPolisher:
+        with patch("core.polish.LLMPolisher") as MockPolisher:
             instance = MockPolisher.return_value
             instance.polish_candidate.return_value = en_cand
 

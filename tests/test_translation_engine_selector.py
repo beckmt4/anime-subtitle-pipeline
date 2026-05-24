@@ -209,7 +209,7 @@ def test_llm_direct_prompt_includes_context_and_accepts_only_current_output(monk
         prompts.append(json["prompt"])
         return _Response()
 
-    monkeypatch.setattr(mt.requests, "post", fake_post)
+    monkeypatch.setattr(requests, "post", fake_post)
 
     translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
 
@@ -237,7 +237,7 @@ def test_llm_direct_prompt_injects_relevant_glossary_terms(monkeypatch):
         prompts.append(json["prompt"])
         return _Response()
 
-    monkeypatch.setattr(mt.requests, "post", fake_post)
+    monkeypatch.setattr(requests, "post", fake_post)
 
     cfg = _cfg("llm_direct")
     cfg._config["domain"] = {"pack": "anime"}
@@ -276,7 +276,7 @@ def test_llm_direct_prompt_injects_approved_translation_memory(monkeypatch, tmp_
         prompts.append(json["prompt"])
         return _Response()
 
-    monkeypatch.setattr(mt.requests, "post", fake_post)
+    monkeypatch.setattr(requests, "post", fake_post)
 
     cfg = _cfg("llm_direct")
     cfg._config["domain"] = {"pack": "anime"}
@@ -297,7 +297,7 @@ def test_llm_direct_timeout_falls_back_to_marian(monkeypatch):
         lambda self, texts: [f"fallback:{text}" for text in texts],
     )
     monkeypatch.setattr(
-        mt.requests,
+        requests,
         "post",
         lambda *args, **kwargs: (_ for _ in ()).throw(requests.Timeout()),
     )
@@ -322,7 +322,7 @@ def test_llm_direct_empty_response_falls_back_to_marian(monkeypatch):
         "translate_batch",
         lambda self, texts: [f"fallback:{text}" for text in texts],
     )
-    monkeypatch.setattr(mt.requests, "post", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: _Response())
 
     translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
 
@@ -344,7 +344,7 @@ def test_llm_direct_malformed_response_falls_back_to_marian(monkeypatch):
         "translate_batch",
         lambda self, texts: [f"fallback:{text}" for text in texts],
     )
-    monkeypatch.setattr(mt.requests, "post", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: _Response())
 
     translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
 
@@ -366,7 +366,7 @@ def test_llm_direct_non_english_response_falls_back_to_marian(monkeypatch):
         "translate_batch",
         lambda self, texts: [f"fallback:{text}" for text in texts],
     )
-    monkeypatch.setattr(mt.requests, "post", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: _Response())
 
     translated = mt.translate_candidate_jp_to_en(_candidate(), _cfg("llm_direct"))
 

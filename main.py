@@ -29,7 +29,6 @@ from config import Config, set_config
 from audio_utils import (
     check_ffmpeg_available,
     extract_audio_with_ffmpeg,
-    find_japanese_audio_track,  # retained for backward compatibility
     mux_subtitle_to_video
 )
 from core.artifacts.models import (
@@ -228,9 +227,8 @@ def process_video(
                     preferred = config.get("audio", "preferred_languages", default=["ja", "jpn", "ja-JP"])
                     audio_track = choose_audio_track(media, preferred_languages=preferred)
                 except Exception as e:
-                    logger.warning(f"Media inspection failed ({e}); falling back to legacy detection")
-                    fallback = find_japanese_audio_track(str(video_path))
-                    audio_track = fallback if fallback is not None else 0
+                    logger.warning(f"Media inspection failed ({e}); falling back to default track 0")
+                    audio_track = 0
             audio_path = extract_audio_with_ffmpeg(
                 input_video_path=str(video_path),
                 output_audio_path=str(audio_path),
