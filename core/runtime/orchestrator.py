@@ -33,6 +33,7 @@ from __future__ import annotations
 import copy
 import itertools
 import logging
+from importlib import import_module
 from pathlib import Path
 from typing import Dict, Any
 
@@ -1532,10 +1533,13 @@ def run_generate(
         translation_target_language,
         untagged_audio_fallback_source_language,
     )
-    if language_pack == "ja_en":
-        from packs.language.ja_en.prompts import get_system_prompt
-
-        prompt_fn = get_system_prompt
+    try:
+        prompts_module = import_module(f"packs.language.{language_pack}.prompts")
+        prompt_candidate = getattr(prompts_module, "get_system_prompt", None)
+        if callable(prompt_candidate):
+            prompt_fn = prompt_candidate
+    except ModuleNotFoundError:
+        logger.debug("No prompts module for language pack %s; using config prompts", language_pack)
 
     logger.info("=" * 70)
     logger.info(f"GENERATE MODE: {_display_name(video_path)}")

@@ -1,0 +1,11 @@
+1
+00:00:01,100 --> 00:00:03,300
+Espera, todavía no estoy listo.
+
+2
+00:00:04,000 --> 00:00:06,100
+No pasa nada, vamos juntos.
+
+3
+00:00:06,900 --> 00:00:09,200
+Esta vez saldrá bien.

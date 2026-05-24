@@ -13,6 +13,10 @@ It supplies:
 Available packs
 ---------------
 ja_en   Japanese source → English target.
+ko_en   Korean source → English target.
+zh_en   Chinese source → English target.
+es_en   Spanish source → English target.
+en_en   English transcription-only workflow.
 """
 
 from __future__ import annotations

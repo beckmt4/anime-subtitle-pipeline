@@ -1,0 +1,12 @@
+{
+  "fixture": "english_transcription",
+  "description": "Expected quality floor for English transcription-only fixture.",
+  "engines": {
+    "transcription_only": {
+      "wer_max": 0.10,
+      "bleu_min": 85.0,
+      "chrf_min": 90.0
+    }
+  },
+  "notes": "Pass-through English workflow should stay close to the source transcript."
+}
