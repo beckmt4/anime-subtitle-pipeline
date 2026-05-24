@@ -156,7 +156,7 @@ class TestBenchmarkPersistence:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, AudioStream, SubtitleStream
@@ -232,7 +232,7 @@ class TestBenchmarkPersistence:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, AudioStream, SubtitleStream
@@ -284,7 +284,7 @@ class TestBenchmarkPersistence:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, AudioStream, SubtitleStream
@@ -425,7 +425,7 @@ class TestCandidateScorecards:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, AudioStream, SubtitleStream
@@ -577,7 +577,7 @@ class TestHtmlReport:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, AudioStream, SubtitleStream
@@ -780,7 +780,7 @@ class TestBenchmarkStalenessGuards:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, SubtitleStream
@@ -827,7 +827,7 @@ class TestBenchmarkStalenessGuards:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, SubtitleStream
@@ -883,7 +883,7 @@ class TestBenchmarkStalenessGuards:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, AudioStream, SubtitleStream
@@ -953,7 +953,7 @@ class TestBenchmarkStalenessGuards:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, AudioStream, SubtitleStream
@@ -1012,7 +1012,7 @@ class TestSingleCandidateDetection:
 
     def _make_single_candidate_results(self, tmp_path, monkeypatch):
         """Run run_benchmark with only one EN candidate available."""
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, SubtitleStream
@@ -1130,7 +1130,7 @@ class TestSingleCandidateDetection:
         pytest.importorskip("jiwer")
         pytest.importorskip("sacrebleu")
 
-        import benchmark as bm
+        import core.benchmark as bm
         from config import Config
         from models import Segment, SubtitleCandidate
         from media_inspect import MediaInfo, AudioStream, SubtitleStream

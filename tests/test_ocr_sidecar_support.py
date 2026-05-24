@@ -55,7 +55,7 @@ def test_extract_bitmap_track_uses_ocr_backend(monkeypatch, tmp_path):
             SubtitleStream(index=2, codec="pgssub", language="ja", raw_language="jpn", is_bitmap=True),
         ],
     )
-    monkeypatch.setattr("subtitle_utils.inspect_media", lambda _: media)
+    monkeypatch.setattr("core.extract.subtitle_utils.inspect_media", lambda _: media)
 
     cand = extract_subtitle_track(video, 2, "ja", ocr_backend=DummyOCRBackend())
 

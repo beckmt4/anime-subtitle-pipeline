@@ -143,7 +143,7 @@ def test_detect_language_passes_decoded_audio_to_model():
 
     fake_audio_array = MagicMock(name="audio_array")  # simulates np.ndarray
 
-    with patch("asr.decode_audio", return_value=fake_audio_array) as mock_decode:
+    with patch("core.asr.decode_audio", return_value=fake_audio_array) as mock_decode:
         lang, prob = asr.detect_language("/tmp/probe.wav")
 
     # decode_audio must have been called with the path string and 16 kHz rate.
