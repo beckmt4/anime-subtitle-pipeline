@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from config import Config
-from models import Segment, SubtitleCandidate
-from orchestrator import score_candidate
+from core.runtime.config import Config
+from core.subtitles import Segment, SubtitleCandidate
+from core.runtime.orchestrator import score_candidate
 from core.policy import PolicyEngine
 
 

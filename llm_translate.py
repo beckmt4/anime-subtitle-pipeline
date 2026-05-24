@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from config import Config
-from models import SubtitleCandidate
-from mt import LLMDirectTranslator
+from core.runtime.config import Config
+from core.subtitles import SubtitleCandidate
+from core.mt import LLMDirectTranslator
 
 
 class LLMTranslator(LLMDirectTranslator):

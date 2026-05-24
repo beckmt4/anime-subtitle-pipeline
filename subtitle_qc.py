@@ -74,7 +74,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from models import SubtitleCandidate
+from core.subtitles import SubtitleCandidate
 
 logger = logging.getLogger(__name__)
 

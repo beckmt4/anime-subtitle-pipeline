@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from config import Config
-from models import Segment, SubtitleCandidate
-from srt_writer import write_candidate_srt
+from core.runtime.config import Config
+from core.subtitles import Segment, SubtitleCandidate
+from core.subtitles.srt_writer import write_candidate_srt
 from subtitle_qc import run_qc
 
 

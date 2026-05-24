@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from config import Config
+    from core.runtime.config import Config
 
 logger = logging.getLogger(__name__)
 

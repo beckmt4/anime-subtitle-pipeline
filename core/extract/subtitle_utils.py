@@ -16,7 +16,7 @@ import pysubs2
 
 from core.ocr import OCRBackend, ocr_subtitle_track
 from core.subtitles import Segment, SubtitleCandidate
-from media_inspect import inspect_media, MediaInfo, SubtitleStream
+from core.media import inspect_media, MediaInfo, SubtitleStream
 
 logger = logging.getLogger(__name__)
 

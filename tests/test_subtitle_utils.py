@@ -11,8 +11,8 @@ import sys
 
 import pytest
 
-from media_inspect import inspect_media
-from subtitle_utils import extract_subtitle_track
+from core.media import inspect_media
+from core.extract.subtitle_utils import extract_subtitle_track
 
 TEMP_DIR = Path("temp").resolve()
 TEMP_DIR.mkdir(parents=True, exist_ok=True)

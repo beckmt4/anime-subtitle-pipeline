@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from compare_core import compute_overlap, align_segments, compute_metrics
-from models import Segment, SubtitleCandidate
+from core.benchmark import compute_overlap, align_segments, compute_metrics
+from core.subtitles import Segment, SubtitleCandidate
 
 
 def make_candidate(id_: str, segs: List[tuple]) -> SubtitleCandidate:

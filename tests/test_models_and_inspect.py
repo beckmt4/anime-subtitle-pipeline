@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from models import Segment, SubtitleCandidate
-from media_inspect import inspect_media, MediaInfo
+from core.subtitles import Segment, SubtitleCandidate
+from core.media import inspect_media, MediaInfo
 
 logger = logging.getLogger(__name__)
 

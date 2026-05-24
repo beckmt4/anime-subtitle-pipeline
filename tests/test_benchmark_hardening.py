@@ -36,7 +36,7 @@ class TestBenchmarkConfig:
     """BenchmarkConfig reads all benchmark settings from Config in one place."""
 
     def test_defaults_when_no_benchmark_section(self):
-        from config import Config
+        from core.runtime.config import Config
         from core.benchmark.config import BenchmarkConfig, DEFAULT_REFERENCE_PRIORITY
 
         cfg = Config()
@@ -55,7 +55,7 @@ class TestBenchmarkConfig:
         assert bc.translation_engines == ["marian"]
 
     def test_sources_flags_respected(self):
-        from config import Config
+        from core.runtime.config import Config
         from core.benchmark.config import BenchmarkConfig
 
         cfg = Config()
@@ -75,7 +75,7 @@ class TestBenchmarkConfig:
         assert bc.use_ja_audio is True
 
     def test_compare_all_pairs_and_max_diffs(self):
-        from config import Config
+        from core.runtime.config import Config
         from core.benchmark.config import BenchmarkConfig
 
         cfg = Config()
@@ -89,7 +89,7 @@ class TestBenchmarkConfig:
         assert bc.max_diffs_per_comparison == 5
 
     def test_reference_priority_overridden(self):
-        from config import Config
+        from core.runtime.config import Config
         from core.benchmark.config import BenchmarkConfig
 
         cfg = Config()
@@ -100,7 +100,7 @@ class TestBenchmarkConfig:
         assert bc.reference_priority == custom_priority
 
     def test_translation_engines_from_benchmark_section(self):
-        from config import Config
+        from core.runtime.config import Config
         from core.benchmark.config import BenchmarkConfig
 
         cfg = Config()
@@ -110,7 +110,7 @@ class TestBenchmarkConfig:
         assert bc.translation_engines == ["marian", "llm_direct"]
 
     def test_translation_engines_fallback_to_translation_section(self):
-        from config import Config
+        from core.runtime.config import Config
         from core.benchmark.config import BenchmarkConfig
 
         cfg = Config()
@@ -121,7 +121,7 @@ class TestBenchmarkConfig:
         assert bc.translation_engines == ["hybrid"]
 
     def test_translation_engines_string_normalised_to_list(self):
-        from config import Config
+        from core.runtime.config import Config
         from core.benchmark.config import BenchmarkConfig
 
         cfg = Config()
@@ -157,9 +157,9 @@ class TestBenchmarkPersistence:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth_media = MediaInfo(
             path=Path("dummy.mkv"),
@@ -233,9 +233,9 @@ class TestBenchmarkPersistence:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -285,9 +285,9 @@ class TestBenchmarkPersistence:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -426,9 +426,9 @@ class TestCandidateScorecards:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -578,9 +578,9 @@ class TestHtmlReport:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -781,9 +781,9 @@ class TestBenchmarkStalenessGuards:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, SubtitleStream
 
         # Only one EN subtitle stream -> single candidate -> no comparisons
         synth = MediaInfo(
@@ -828,9 +828,9 @@ class TestBenchmarkStalenessGuards:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, SubtitleStream
         from core.artifacts import ArtifactRegistry
 
         synth = MediaInfo(
@@ -884,9 +884,9 @@ class TestBenchmarkStalenessGuards:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
         from core.artifacts import ArtifactRegistry
         from core.artifacts.pipeline_wiring import compute_media_hash
 
@@ -954,9 +954,9 @@ class TestBenchmarkStalenessGuards:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -1013,9 +1013,9 @@ class TestSingleCandidateDetection:
     def _make_single_candidate_results(self, tmp_path, monkeypatch):
         """Run run_benchmark with only one EN candidate available."""
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"),
@@ -1131,9 +1131,9 @@ class TestSingleCandidateDetection:
         pytest.importorskip("sacrebleu")
 
         import core.benchmark as bm
-        from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.runtime.config import Config
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"),

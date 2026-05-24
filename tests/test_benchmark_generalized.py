@@ -15,10 +15,10 @@ import pytest
 pytest.importorskip("jiwer")
 pytest.importorskip("sacrebleu")
 
-from config import Config
+from core.runtime.config import Config
 from core.ocr import OCRBackend
-from models import Segment, SubtitleCandidate
-from media_inspect import MediaInfo, AudioStream, SubtitleStream
+from core.subtitles import Segment, SubtitleCandidate
+from core.media import MediaInfo, AudioStream, SubtitleStream
 import core.benchmark as bm
 
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import List
 
 from core.subtitles.models import Segment as GenericSegment, SubtitleCandidate
-from config import Config
+from core.runtime.config import Config
 
 logger = logging.getLogger(__name__)
 

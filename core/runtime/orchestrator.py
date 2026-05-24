@@ -37,14 +37,14 @@ from pathlib import Path
 from typing import Dict, Any
 
 from core.runtime.config import Config
-from media_inspect import MediaInfo
-from subtitle_utils import extract_subtitle_track, discover_sidecar_subtitles
-from audio_utils import extract_audio_with_ffmpeg
-from asr import FasterWhisperASR, build_candidate_from_segments
-from mt import translate_candidate_jp_to_en_workflow
-from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candidate
-from srt_writer import write_candidate_srt
-from models import SubtitleCandidate
+from core.media import MediaInfo
+from core.extract.subtitle_utils import extract_subtitle_track, discover_sidecar_subtitles
+from core.extract.audio_utils import extract_audio_with_ffmpeg
+from core.asr import FasterWhisperASR, build_candidate_from_segments
+from core.mt import translate_candidate_jp_to_en_workflow
+from core.polish import polish_candidate_with_llm, enforce_constraints_on_candidate
+from core.subtitles.srt_writer import write_candidate_srt
+from core.subtitles import SubtitleCandidate
 from subtitle_qc import run_qc
 from translation_qc import run_translation_qc
 from core.runtime.tracing import start_span

@@ -7,8 +7,8 @@ import pytest
 
 import main
 from core.ocr import OCRBackend
-from media_inspect import MediaInfo, SubtitleStream
-from models import Segment, SubtitleCandidate
+from core.media import MediaInfo, SubtitleStream
+from core.subtitles import Segment, SubtitleCandidate
 
 
 class FakeOCRBackend(OCRBackend):

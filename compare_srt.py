@@ -23,8 +23,8 @@ import sys
 from pathlib import Path
 from typing import List
 
-from models import Segment, SubtitleCandidate
-from compare_core import compare_candidates
+from core.subtitles import Segment, SubtitleCandidate
+from core.benchmark import compare_candidates
 
 
 _TS_RE = re.compile(

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from config import Config
-from models import SubtitleCandidate
-from mt import translate_candidate_jp_to_en_workflow
+from core.runtime.config import Config
+from core.subtitles import SubtitleCandidate
+from core.mt import translate_candidate_jp_to_en_workflow
 
 from . import SOURCE_LANG
 

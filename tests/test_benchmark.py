@@ -6,8 +6,8 @@ import pytest
 pytest.importorskip("jiwer")
 pytest.importorskip("sacrebleu")
 
-from models import Segment, SubtitleCandidate
-from compare_core import align_segments, compute_metrics, compare_candidates, compute_overlap
+from core.subtitles import Segment, SubtitleCandidate
+from core.benchmark import align_segments, compute_metrics, compare_candidates, compute_overlap
 
 
 def test_compute_overlap():

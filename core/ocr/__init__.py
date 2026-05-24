@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from core.subtitles import SubtitleCandidate
 
 if TYPE_CHECKING:
-    from config import Config
+    from core.runtime.config import Config
 
 logger = logging.getLogger(__name__)
 

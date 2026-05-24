@@ -154,7 +154,7 @@ class TestOpenRegistry:
 # ---------------------------------------------------------------------------
 
 # Import the private helpers directly for unit testing.
-from orchestrator import (  # noqa: E402  (after fixtures)
+from core.runtime.orchestrator import (  # noqa: E402  (after fixtures)
     _reg_finish_run,
     _reg_start_run,
     _reg_store_artifact,
