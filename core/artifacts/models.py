@@ -77,7 +77,15 @@ class SubtitleCandidateRecord:
         media_hash:          SHA-256 hex digest of the source media file.
         source_id:           ``SubtitleCandidate.id`` (e.g. ``'asr_ja'``).
         model_version:       String identifying the model/version used.
-        language:            ISO 639-1 language code.
+        language:            ISO 639-1 language code of this candidate's text
+                             (i.e. the *output* language).
+        source_language:     ISO 639-1 code of the original source language, if
+                             different from ``language``.  Set for translated
+                             candidates (``source='mt'`` or ``'mt_llm'``) to
+                             record the language that was translated *from*
+                             (e.g. ``'ja'`` when ``language='en'``).  ``None``
+                             for ASR and embedded candidates where source and
+                             output language are the same.
         source:              Origin type: ``'asr'``, ``'embedded'``, ``'mt'``, ``'mt_llm'``.
         origin_stream:       Stream identifier (``'audio:1'``, ``'sub:0'``, filename).
         segments:            List of segment dicts (serialised to JSON in the DB).
@@ -94,6 +102,7 @@ class SubtitleCandidateRecord:
     source: str
     origin_stream: str
     model_version: str = ""
+    source_language: Optional[str] = None
     segments: List[Dict[str, Any]] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=dict)
     status: str = CANDIDATE_STATUS_PENDING

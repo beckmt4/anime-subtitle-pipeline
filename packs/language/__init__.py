@@ -19,7 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import TYPE_CHECKING, Callable, Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, List, Mapping
 
 if TYPE_CHECKING:
     from core.runtime.config import Config
@@ -39,6 +40,35 @@ class LanguageRoutingHooks:
         ["SubtitleCandidate", "Config", "SubtitleCandidate | None"],
         "SubtitleCandidate",
     ]
+
+
+def list_available_packs() -> List[str]:
+    """Return the pack IDs of all installed language packs.
+
+    Scans the ``packs/language/`` directory for sub-packages that expose
+    ``SOURCE_LANG``, ``TARGET_LANG``, and ``PACK_ID`` and returns their
+    canonical ``"<src>_<tgt>"`` identifiers in sorted order.
+
+    Returns:
+        List of pack IDs such as ``["ja_en"]``.
+    """
+    packs_dir = Path(__file__).parent
+    result: List[str] = []
+    for child in sorted(packs_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        if not (child / "__init__.py").exists():
+            continue
+        pack_name = child.name
+        if pack_name.startswith("_"):
+            continue
+        try:
+            mod = import_module(f"packs.language.{pack_name}")
+            if hasattr(mod, "PACK_ID") and hasattr(mod, "SOURCE_LANG") and hasattr(mod, "TARGET_LANG"):
+                result.append(mod.PACK_ID)
+        except Exception:
+            pass
+    return result
 
 
 def load_language_routing_hooks(
@@ -74,4 +104,4 @@ def load_language_routing_hooks(
     )
 
 
-__all__ = ["LanguageRoutingHooks", "load_language_routing_hooks"]
+__all__ = ["LanguageRoutingHooks", "list_available_packs", "load_language_routing_hooks"]

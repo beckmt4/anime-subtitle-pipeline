@@ -377,6 +377,53 @@ class TestSubtitleCandidate:
         with pytest.raises(ValueError, match="Invalid candidate status"):
             registry.store_candidate(_make_candidate(status="invalid"))
 
+    def test_source_language_defaults_to_none(self, registry):
+        cand = registry.store_candidate(_make_candidate())
+        assert cand.source_language is None
+
+    def test_source_language_roundtrip_for_mt_candidate(self, registry):
+        """MT candidates record the language they were translated from."""
+        mt_cand = registry.store_candidate(
+            _make_candidate(
+                source_id="mt_en",
+                language="en",
+                source="mt",
+                source_language="ja",
+            )
+        )
+        assert mt_cand.source_language == "ja"
+        retrieved = registry.get_candidate(mt_cand.id)
+        assert retrieved.source_language == "ja"
+
+    def test_source_language_roundtrip_for_asr_candidate(self, registry):
+        """ASR candidates have source_language=None (source and output are the same)."""
+        asr_cand = registry.store_candidate(
+            _make_candidate(
+                source_id="asr_ja",
+                language="ja",
+                source="asr",
+                source_language=None,
+            )
+        )
+        assert asr_cand.source_language is None
+        retrieved = registry.get_candidate(asr_cand.id)
+        assert retrieved.source_language is None
+
+    def test_list_candidates_preserves_source_language(self, registry):
+        """list_candidates returns source_language on every record."""
+        registry.store_candidate(
+            _make_candidate("h1", source_id="asr_ja", language="ja", source="asr")
+        )
+        registry.store_candidate(
+            _make_candidate("h1", source_id="mt_en", language="en",
+                            source="mt", source_language="ja")
+        )
+        cands = registry.list_candidates("h1")
+        asr_rec = next(c for c in cands if c.source == "asr")
+        mt_rec = next(c for c in cands if c.source == "mt")
+        assert asr_rec.source_language is None
+        assert mt_rec.source_language == "ja"
+
 
 # ===========================================================================
 # BenchmarkRun

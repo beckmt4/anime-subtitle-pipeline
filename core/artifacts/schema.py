@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS subtitle_candidates (
     media_hash      TEXT    NOT NULL,
     source_id       TEXT    NOT NULL,   -- SubtitleCandidate.id  e.g. 'asr_ja'
     model_version   TEXT    NOT NULL DEFAULT '',
-    language        TEXT    NOT NULL,
+    language        TEXT    NOT NULL,   -- output/target language ISO 639-1 code
+    source_language TEXT,               -- source/input language ISO 639-1 code (set for MT candidates)
     source          TEXT    NOT NULL,   -- 'asr' | 'embedded' | 'mt' | 'mt_llm'
     origin_stream   TEXT    NOT NULL,
     segments_json   TEXT    NOT NULL DEFAULT '[]',
@@ -209,7 +210,15 @@ def _apply_sql_migrations(
 
         with conn:
             for statement in _iter_sql_statements(sql):
-                conn.execute(statement)
+                try:
+                    conn.execute(statement)
+                except sqlite3.OperationalError as exc:
+                    # ALTER TABLE … ADD COLUMN is idempotent on new databases
+                    # (the column already exists from the CREATE TABLE DDL).
+                    # Swallow duplicate-column errors so migrations are safe to
+                    # re-apply on fresh databases.
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             conn.execute(
                 """
                 INSERT INTO schema_migrations (filename, checksum_sha256)

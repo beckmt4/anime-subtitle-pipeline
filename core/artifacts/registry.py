@@ -167,16 +167,17 @@ class ArtifactRegistry:
             cur = self._conn.execute(
                 """
                 INSERT INTO subtitle_candidates
-                    (media_hash, source_id, model_version, language, source,
-                     origin_stream, segments_json, meta_json, status,
+                    (media_hash, source_id, model_version, language, source_language,
+                     source, origin_stream, segments_json, meta_json, status,
                      parent_candidate_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.media_hash,
                     record.source_id,
                     record.model_version,
                     record.language,
+                    record.source_language,
                     record.source,
                     record.origin_stream,
                     json.dumps(record.segments, ensure_ascii=False),
@@ -655,12 +656,14 @@ def _row_to_stream_asset(row: sqlite3.Row) -> StreamAssetRecord:
 
 
 def _row_to_candidate(row: sqlite3.Row) -> SubtitleCandidateRecord:
+    keys = row.keys()
     return SubtitleCandidateRecord(
         id=row["id"],
         media_hash=row["media_hash"],
         source_id=row["source_id"],
         model_version=row["model_version"],
         language=row["language"],
+        source_language=row["source_language"] if "source_language" in keys else None,
         source=row["source"],
         origin_stream=row["origin_stream"],
         segments=json.loads(row["segments_json"]),
