@@ -1,397 +1,149 @@
-# Anime Subtitle Pipeline - Complete File Overview
+# Anime Subtitle Pipeline — File Overview
 
-## Created Files (17 total)
+> **Note:** This document reflects the current `core/`-based architecture.
+> The original flat-file layout (`config.py`, `audio_utils.py`, `asr.py`, `mt.py`,
+> `llm_polish.py`, `srt_writer.py` as root modules) has been fully migrated into
+> `core/` and retired to `attic/`. Do not import from those root names in new code.
 
-### Core Pipeline Files (7)
-1. **main.py** (359 lines)
-   - CLI entry point and pipeline orchestration
-   - Handles all 6 pipeline steps
-   - Command-line argument parsing
-   - Comprehensive error handling and logging
-
-2. **config.py** (184 lines)
-   - YAML configuration loader
-   - Profile management (dev/prod)
-   - Typed property accessors
-   - Global config singleton
-
-3. **audio_utils.py** (277 lines)
-   - ffmpeg wrapper for audio extraction
-   - Audio track detection and selection
-   - Video muxing for subtitle embedding
-   - Error handling for ffmpeg operations
-
-4. **asr.py** (213 lines)
-   - Faster-Whisper integration
-   - Japanese ASR with VAD
-   - GPU/CPU automatic fallback
-   - Batch processing support
-
-5. **mt.py** (229 lines)
-   - Helsinki-NLP MarianMT integration
-   - Batch translation processing
-   - Japanese to English translation
-   - CPU-optimized inference
-
-6. **llm_polish.py** (280 lines)
-   - Ollama API client
-   - Natural/literal translation styles
-   - Retry logic and error handling
-   - Optional concurrent processing
-
-7. **srt_writer.py** (338 lines)
-   - SRT file formatting and writing
-   - Timestamp formatting
-   - Segment splitting and validation
-   - Line breaking for readability
-
-### Utility Files (3)
-8. **example_usage.py** (185 lines)
-   - API usage examples
-   - Batch processing patterns
-   - Custom processing workflows
-   - Segment inspection utilities
-
-9. **test_pipeline.py** (283 lines)
-   - Comprehensive testing suite
-   - Dependency validation
-   - Component testing (ASR, MT, LLM, SRT)
-   - Video file validation
-
-10. **batch_process.py** (374 lines)
-    - Batch processing for multiple files
-    - Directory watching mode
-    - Progress tracking and statistics
-    - Error collection and reporting
-
-### Configuration Files (2)
-11. **config.yaml** (123 lines)
-    - Main configuration file
-    - Dev and prod profiles
-    - All pipeline parameters
-    - LLM prompt templates
-
-12. **requirements.txt** (59 lines)
-    - Python dependencies
-    - Installation instructions
-    - GPU/CPU setup notes
-    - External dependency references
-
-### Documentation Files (4)
-13. **README.md** (494 lines)
-    - Complete user documentation
-    - Installation instructions
-    - Usage examples
-    - Troubleshooting guide
-    - Model information
-    - Performance characteristics
-
-14. **QUICKSTART.md** (227 lines)
-    - Step-by-step setup guide
-    - First run instructions
-    - Common commands
-    - Troubleshooting quick reference
-
-15. **PROJECT_SUMMARY.md** (463 lines)
-    - Architecture overview
-    - Component descriptions
-    - Design decisions
-    - API reference
-    - Performance benchmarks
-
-16. **FILE_OVERVIEW.md** (This file)
-    - Complete file listing
-    - Line counts and purposes
-    - Quick reference guide
-
-### Setup Files (2)
-17. **install.ps1** (165 lines)
-    - Windows installation script
-    - Automatic dependency checking
-    - Virtual environment setup
-    - CUDA detection and PyTorch installation
-
-18. **.gitignore** (41 lines)
-    - Python cache exclusions
-    - Output file patterns
-    - IDE configurations
-    - Temporary file patterns
-
-## Total Lines of Code
-
-| Category | Files | Lines | Percentage |
-|----------|-------|-------|------------|
-| Core Pipeline | 7 | 1,880 | 50.9% |
-| Utilities | 3 | 842 | 22.8% |
-| Documentation | 4 | 1,184 | 32.0% |
-| Configuration | 2 | 182 | 4.9% |
-| Setup | 2 | 206 | 5.6% |
-| **Total** | **18** | **3,694** | **100%** |
-
-## File Sizes (Approximate)
-
-| File | Size | Purpose |
-|------|------|---------|
-| main.py | 12 KB | Main entry point |
-| config.py | 6 KB | Configuration |
-| audio_utils.py | 9 KB | Audio processing |
-| asr.py | 7 KB | Speech recognition |
-| mt.py | 8 KB | Translation |
-| llm_polish.py | 9 KB | LLM polishing |
-| srt_writer.py | 11 KB | SRT generation |
-| example_usage.py | 6 KB | Examples |
-| test_pipeline.py | 10 KB | Testing |
-| batch_process.py | 13 KB | Batch processing |
-| config.yaml | 4 KB | Configuration |
-| requirements.txt | 2 KB | Dependencies |
-| README.md | 22 KB | Main docs |
-| QUICKSTART.md | 8 KB | Quick start |
-| PROJECT_SUMMARY.md | 20 KB | Project overview |
-| install.ps1 | 6 KB | Installation |
-| .gitignore | 1 KB | Git config |
-| **Total** | **~154 KB** | **All files** |
-
-## Directory Structure After Installation
+## Repository Layout
 
 ```
 anime-subtitle-pipeline/
-├── 📄 Core Pipeline (7 files, 1,880 lines)
-│   ├── main.py              # Entry point and orchestration
-│   ├── config.py            # Configuration loader
-│   ├── audio_utils.py       # Audio extraction & muxing
-│   ├── asr.py               # Faster-Whisper ASR
-│   ├── mt.py                # MarianMT translation
-│   ├── llm_polish.py        # LLM polishing
-│   └── srt_writer.py        # SRT formatting
 │
-├── 🛠️ Utilities (3 files, 842 lines)
-│   ├── example_usage.py     # API examples
-│   ├── test_pipeline.py     # Testing suite
-│   └── batch_process.py     # Batch processing
+├── main.py                     # CLI entry point (generate/benchmark/subtitle/review)
+├── batch_process.py            # Directory batch runner + watch mode
+├── subtitle_qc.py              # Subtitle QC runner (timing, blank, overlap checks)
+├── translation_qc.py           # Translation faithfulness QC runner
+├── config.yaml                 # Main YAML configuration (dev/prod profiles)
+├── requirements.txt            # Full Python dependencies (GPU install)
+├── requirements-ci.txt         # CI-only Python dependencies (no torch/whisper)
 │
-├── ⚙️ Configuration (2 files, 182 lines)
-│   ├── config.yaml          # Main configuration
-│   └── requirements.txt     # Python dependencies
+├── core/                       # Platform capability modules
+│   ├── artifacts/              # SQLite artifact registry + processing ledger
+│   ├── asr/                    # ASR backend interface + Faster-Whisper implementation
+│   ├── benchmark/              # Benchmark engine (WER/BLEU/chrF, candidate comparison)
+│   ├── extract/                # Audio extraction, subtitle extraction utilities
+│   ├── media/                  # Media inspection (streams, track metadata)
+│   ├── mt/                     # Translation backends: MarianMT, LLMDirect, Hybrid
+│   ├── ocr/                    # OCR backend interface + factory
+│   ├── policy/                 # PolicyEngine: routing decisions (pass/review/reject)
+│   ├── polish/                 # LLM polishing backend (Ollama-compatible API)
+│   ├── quality/                # Failure taxonomy, QC code registry
+│   ├── review/                 # Review task routing, review workflow, approval
+│   ├── runtime/                # Orchestrator, config loader, tracing, batch runner
+│   ├── subtitles/              # SRT writer, subtitle models (SubtitleCandidate)
+│   └── translation/            # Translation memory, glossary enforcement, dataset export
 │
-├── 📚 Documentation (4 files, 1,184 lines)
-│   ├── README.md            # Complete documentation
-│   ├── QUICKSTART.md        # Quick start guide
-│   ├── PROJECT_SUMMARY.md   # Technical overview
-│   └── FILE_OVERVIEW.md     # This file
+├── packs/                      # Language and domain plug-in packs
+│   ├── language/
+│   │   ├── ja_en/              # Japanese → English (reference pack)
+│   │   ├── en_en/              # English → English (transcription-only)
+│   │   ├── ko_en/              # Korean → English (pack structure, needs MT content)
+│   │   ├── zh_en/              # Chinese → English (pack structure, needs MT content)
+│   │   └── es_en/              # Spanish → English (pack structure, needs MT content)
+│   └── domain/
+│       ├── anime/              # Anime glossary, honorific style, sign policy
+│       └── jav/                # JAV privacy rules, adult register policy
 │
-├── 🔧 Setup (2 files, 206 lines)
-│   ├── install.ps1          # Windows installer
-│   └── .gitignore           # Git exclusions
-│
-├── 📁 Runtime Directories (auto-created)
-│   ├── inbox/               # Input videos
-│   ├── outbox/              # Output SRT & videos
-│   ├── logs/                # JSON segment logs
-│   ├── temp/                # Temporary audio files
-│   └── venv/                # Python virtual environment
-│
-└── 📦 Model Cache (auto-downloaded)
-    └── ~/.cache/huggingface/hub/  # Whisper & MarianMT models
+├── tests/                      # Pytest unit tests (780+ passing, no hardware required)
+├── acceptance/                 # Acceptance checklists mapped to GitHub issues
+├── specs/                      # Pre-implementation design specs
+├── docs/                       # Architecture docs, backlog, usage guides
+├── fixtures/                   # Test fixtures (SRT files, config stubs, etc.)
+├── attic/                      # Retired code with explanation; do not import
+└── scripts/                    # One-off helper scripts
 ```
 
-## Quick Command Reference
+## Runtime Entrypoints
 
-### Installation
-```powershell
-# Automated installation
-.\install.ps1
+| File | Purpose |
+|------|---------|
+| `main.py` | CLI: `--mode generate\|benchmark\|subtitle\|review` |
+| `batch_process.py` | Batch-process a directory of media files; watch mode |
+| `subtitle_qc.py` | Run subtitle QC checks against an SRT file |
+| `translation_qc.py` | Run translation faithfulness QC against candidate pairs |
+| `compare_srt.py` | Compare two SRT files (WER/BLEU/chrF) |
+| `example_usage.py` | API usage examples |
 
-# Manual installation
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install -r requirements.txt
+## `core/` Module Summary
+
+| Module | Owner capability | Key public API |
+|--------|-----------------|----------------|
+| `core.runtime.config` | Config loading, profile merging | `Config`, `set_config()` |
+| `core.runtime.orchestrator` | Generate/benchmark flow control | `run_generate()`, `run_benchmark()` |
+| `core.runtime.batch_process` | Batch/watch runner | `batch_process_directory()` |
+| `core.runtime.tracing` | OpenTelemetry tracing | `get_tracer()` |
+| `core.asr` | Speech-to-text backend | `FasterWhisperASR`, `ASRBackend` |
+| `core.mt` | Translation engines | `MarianTranslator`, `LLMDirectTranslator`, `translate_candidate()` |
+| `core.polish` | LLM polish / adaptation | `LLMPolisher`, `adapt_candidate_from_literal()` |
+| `core.subtitles` | SRT writing, candidate models | `write_srt_file()`, `SubtitleCandidate` |
+| `core.extract.audio_utils` | ffmpeg audio extraction + muxing | `extract_audio_with_ffmpeg()` |
+| `core.extract.subtitle_utils` | Embedded/sidecar subtitle extraction | `extract_subtitle_track()` |
+| `core.media` | Media file inspection | `MediaInfo`, `inspect_media()` |
+| `core.ocr` | OCR backend interface + factory | `OCRBackend`, `create_backend()` |
+| `core.benchmark` | Benchmark engine | `run_benchmark()` |
+| `core.artifacts` | SQLite artifact registry | `ArtifactRegistry`, `ProcessingLedger` |
+| `core.policy` | Routing policy enforcement | `PolicyEngine` |
+| `core.review.routing` | Review-task creation rules | `route_generate_output()`, `route_benchmark_output()` |
+| `core.review.workflow` | Review queue, HTML UI, approval | `list_review_queue()`, `render_review_ui()`, `approve_review_task()` |
+| `core.translation.memory` | Translation memory (JSONL) | `TranslationMemory` |
+| `core.translation.glossary` | Pack glossary enforcement | `load_glossary_for_candidate()` |
+| `core.translation.dataset_export` | Export approved corrections | `export_translation_dataset()` |
+| `core.quality.failure_taxonomy` | Canonical QC failure codes | `CANONICAL_CODES`, `normalize_code()` |
+
+## `packs/` Module Summary
+
+| Pack | Status | Description |
+|------|--------|-------------|
+| `packs.language.ja_en` | **Reference pack** | JA→EN: aliases, CJK filter, prompts, glossary, names, routing |
+| `packs.language.en_en` | Pack structure only | EN→EN transcription; routing hook present |
+| `packs.language.ko_en` | Pack structure only | KO→EN; no production MT content yet |
+| `packs.language.zh_en` | Pack structure only | ZH→EN; no production MT content yet |
+| `packs.language.es_en` | Pack structure only | ES→EN; no production MT content yet |
+| `packs.domain.anime` | Alpha | Anime glossary + style policy |
+| `packs.domain.jav` | Alpha | JAV privacy rules + adult register policy |
+
+## Configuration
+
+`config.yaml` drives all runtime behavior. Key sections:
+
+| Section | Purpose |
+|---------|---------|
+| `runtime.profile` | Select `dev` or `prod` hardware preset |
+| `asr` | Whisper model, compute type, quality thresholds |
+| `mt` | MarianMT model settings |
+| `translation` | Engine (`marian`/`llm_direct`/`hybrid`), workflow, dialogue profile |
+| `translation_qc` | Faithfulness QC thresholds |
+| `generate` | Source-preference policy for generate mode |
+| `ocr` | OCR backend toggle + backend class path |
+| `benchmark` | Candidate sources, engine list, pairwise flag |
+| `policy.routing` | Score/ASR/OCR/QC routing thresholds |
+| `llm` | Ollama endpoint, model, prompt styles |
+| `paths` | inbox/outbox/logs/temp directories |
+
+## Testing
+
+All tests run without GPU or model downloads. Hardware-dependent tests are marked
+`@pytest.mark.integration` and excluded in CI.
+
+```bash
+# Run all non-integration tests
+pytest -v --tb=short -m "not integration"
+
+# Run a specific file
+pytest tests/test_config.py -v
 ```
 
-### Basic Usage
-```powershell
-# Single file
-python main.py video.mkv
+See `acceptance/` for per-issue acceptance checklists and test evidence.
 
-# Batch processing
-python batch_process.py
+## Troubleshooting
 
-# Testing
-python test_pipeline.py
-```
-
-### Configuration
-```yaml
-# Edit config.yaml
-runtime:
-  profile: "dev"  # or "prod"
-
-llm:
-  enabled: true   # or false to skip LLM
-```
-
-## Feature Matrix
-
-| Feature | Status | File | Lines |
-|---------|--------|------|-------|
-| Audio Extraction | ✅ | audio_utils.py | 277 |
-| Japanese ASR | ✅ | asr.py | 213 |
-| JA→EN Translation | ✅ | mt.py | 229 |
-| LLM Polishing | ✅ | llm_polish.py | 280 |
-| SRT Generation | ✅ | srt_writer.py | 338 |
-| Video Muxing | ✅ | audio_utils.py | (included) |
-| CLI Interface | ✅ | main.py | 359 |
-| Batch Processing | ✅ | batch_process.py | 374 |
-| Configuration | ✅ | config.py | 184 |
-| Testing Suite | ✅ | test_pipeline.py | 283 |
-| Documentation | ✅ | README.md + others | 1,184 |
-| Examples | ✅ | example_usage.py | 185 |
-
-## Dependencies by Component
-
-### ASR Module
-- faster-whisper (CTranslate2)
-- torch (CUDA support)
-
-### MT Module
-- transformers (Hugging Face)
-- sentencepiece (tokenization)
-- torch (inference)
-
-### LLM Module
-- requests (HTTP client)
-
-### Audio Module
-- ffmpeg (external binary)
-
-### Core
-- pyyaml (configuration)
-- logging (built-in)
-- pathlib (built-in)
-- dataclasses (built-in)
-
-## Testing Coverage
-
-| Component | Test Function | File |
-|-----------|---------------|------|
-| Dependencies | test_dependencies() | test_pipeline.py |
-| Configuration | test_config() | test_pipeline.py |
-| Video Files | test_video_info() | test_pipeline.py |
-| ASR | test_asr() | test_pipeline.py |
-| MT | test_mt() | test_pipeline.py |
-| LLM | test_llm() | test_pipeline.py |
-| SRT Writer | test_srt_writer() | test_pipeline.py |
-
-## Performance Benchmarks
-
-Based on 24-minute anime episode:
-
-| Profile | GPU | Processing Time | Speed |
-|---------|-----|-----------------|-------|
-| Dev | RTX A3000 6GB | ~10 min | 2.4x realtime |
-| Prod | RTX 4090 24GB | ~3 min | 8x realtime |
-| CPU | None | ~60+ min | 0.4x realtime |
-
-## Model Sizes
-
-| Model | Size | Download | Location |
-|-------|------|----------|----------|
-| Whisper Large V3 Turbo | 1.5 GB | Auto (first run) | ~/.cache/huggingface/ |
-| opus-mt-ja-en | 300 MB | Auto (first run) | ~/.cache/huggingface/ |
-| Qwen 2.5 7B | 4.7 GB | Manual (ollama pull) | ~/.ollama/models/ |
-| Qwen 2.5 14B | 9 GB | Manual (ollama pull) | ~/.ollama/models/ |
-
-## Configuration Options
-
-| Section | Options | Purpose |
-|---------|---------|---------|
-| runtime | profile (dev/prod) | Hardware optimization |
-| paths | inbox, outbox, logs, temp | Directory structure |
-| asr | model, device, compute_type, batch_size | ASR settings |
-| mt | model, device, batch_size | Translation settings |
-| llm | enabled, model, style, prompts | LLM polishing |
-| subtitles | format, durations, splitting | SRT formatting |
-| mux | enabled, suffix, language | Video muxing |
-| logging | level, json output | Logging control |
-
-## Extension Points
-
-Want to customize? Edit these:
-
-| Customization | File | Section |
-|---------------|------|---------|
-| Different ASR model | config.yaml | asr.model_name |
-| Different MT model | config.yaml | mt.model_name |
-| Different LLM | config.yaml | llm.model_name |
-| Translation style | config.yaml | llm.style + prompts |
-| Subtitle formatting | config.yaml | subtitles section |
-| Custom processing | example_usage.py | example_custom_processing() |
-| New pipeline steps | main.py | process_video() |
-
-## Support Files
-
-| File | Purpose | When to Use |
-|------|---------|-------------|
-| README.md | Complete documentation | First-time setup, reference |
-| QUICKSTART.md | Step-by-step guide | Getting started quickly |
-| PROJECT_SUMMARY.md | Technical overview | Understanding architecture |
-| example_usage.py | Code examples | API integration |
-| test_pipeline.py | Validation | Verifying installation |
-| batch_process.py | Multi-file processing | Production use |
-| install.ps1 | Automated setup | Windows installation |
-
-## Maintenance Notes
-
-### Adding New Features
-1. Implement in appropriate module (asr.py, mt.py, etc.)
-2. Add configuration options to config.yaml
-3. Update config.py property accessors
-4. Add to main.py pipeline if needed
-5. Add tests to test_pipeline.py
-6. Document in README.md
-
-### Updating Dependencies
-1. Update requirements.txt
-2. Test with test_pipeline.py
-3. Update version notes in README.md
-
-### Configuration Changes
-1. Edit config.yaml
-2. Update config.py if new sections added
-3. Document in README.md
-
-## Quick Troubleshooting
-
-| Issue | Check File | Look For |
-|-------|-----------|----------|
-| Config errors | config.yaml | Syntax, paths |
-| Import errors | requirements.txt | Missing packages |
-| ffmpeg issues | audio_utils.py | PATH, installation |
-| CUDA OOM | config.yaml | batch_size, compute_type |
-| LLM connection | llm_polish.py | base_url, Ollama running |
-| SRT formatting | srt_writer.py | Duration limits, splitting |
-
-## Production Checklist
-
-- [ ] Install.ps1 completed successfully
-- [ ] test_pipeline.py passes all tests
-- [ ] config.yaml reviewed and customized
-- [ ] Ollama installed and running (if using LLM)
-- [ ] Test video processed successfully
-- [ ] Output SRT quality verified
-- [ ] Batch processing tested
-- [ ] Performance meets expectations
-
-## Version Info
-
-- Version: 1.0
-- Created: 2025
-- Total Files: 18
-- Total Lines: 3,694
-- Total Size: ~154 KB
-- Language: Python 3.9+
-- Platform: Windows (primary), Linux/macOS (compatible)
-
----
-
-**All files are production-ready and fully documented!** 🎬
+| Issue | Check |
+|-------|-------|
+| Config errors | `config.yaml` syntax + `core.runtime.config` |
+| Import errors | `requirements.txt`, `requirements-ci.txt` |
+| ffmpeg issues | `core.extract.audio_utils`, PATH |
+| CUDA OOM | `config.yaml` → `asr.dev.batch_size`, `compute_type` |
+| LLM connection | `config.yaml` → `llm.base_url`, Ollama running |
+| SRT formatting | `core.subtitles` → duration/gap settings |
+| OCR not working | `config.yaml` → `ocr.enabled: true`, `ocr.backend` path |

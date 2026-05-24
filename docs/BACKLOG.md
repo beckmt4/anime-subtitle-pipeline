@@ -70,13 +70,14 @@ Parent epic for this phase:
 
 Goal: remove MarianMT as the quality ceiling while keeping it as a baseline/fallback.
 
-18. [ ] beckmt4/anime-subtitle-pipeline#74 — Add direct context-aware LLM translation engine
+18. [x] beckmt4/anime-subtitle-pipeline#74 — Add direct context-aware LLM translation engine
 19. [x] beckmt4/anime-subtitle-pipeline#75 — Add translation engine selector and hybrid routing
-20. [ ] beckmt4/anime-subtitle-pipeline#76 — Add literal-first and natural-subtitle second-pass workflow
-21. [ ] beckmt4/anime-subtitle-pipeline#79 — Add translation QC judge for omissions, drift, and register changes
+20. [x] beckmt4/anime-subtitle-pipeline#76 — Add literal-first and natural-subtitle second-pass workflow
+21. [x] beckmt4/anime-subtitle-pipeline#79 — Add translation QC judge for omissions, drift, and register changes
 22. [ ] beckmt4/anime-subtitle-pipeline#78 — Add translation benchmark corpus and model comparison reports
-23. [ ] beckmt4/anime-subtitle-pipeline#77 — Add live-action and adult-dialogue translation profile
-24. [ ] beckmt4/anime-subtitle-pipeline#81 — Add local model and hardware evaluation matrix for translation quality
+23. [x] beckmt4/anime-subtitle-pipeline#77 — Add live-action and adult-dialogue translation profile
+24. [x] beckmt4/anime-subtitle-pipeline#81 — Add local model and hardware evaluation matrix for translation quality
+25. [ ] (new) Generalize LLMDirectTranslator prompts — remove hardcoded "Japanese dialogue into English subtitles" from `core/mt/__init__.py`; spec: `specs/epics/epic-02-translation-quality.md`
 
 Parent epic for this phase:
 - beckmt4/anime-subtitle-pipeline#73 — Improve translation quality for anime, live-action, and difficult Japanese dialogue
@@ -85,51 +86,64 @@ Parent epic for this phase:
 
 Goal: turn weak-output detection into actionable review tasks and repeatable quality reporting.
 
-25. [x] beckmt4/anime-subtitle-pipeline#20 — Harden benchmark mode into a core product capability
-26. [ ] beckmt4/anime-subtitle-pipeline#56 — Create review-task generation rules for low-confidence generate and benchmark results
-27. [ ] beckmt4/anime-subtitle-pipeline#22 — Build human review queue and local review UI
+26. [x] beckmt4/anime-subtitle-pipeline#20 — Harden benchmark mode into a core product capability
+27. [x] beckmt4/anime-subtitle-pipeline#56 — Create review-task generation rules for low-confidence generate and benchmark results
+28. [ ] beckmt4/anime-subtitle-pipeline#22 — Build human review queue and local review UI (MVP backbone exists; UX hardening tracked in `specs/epics/epic-04-review-workflow.md`)
 
 ### Phase 4 — Subtitle source completeness
 
 Goal: expand source support beyond ideal embedded text and ASR paths.
 
-28. [ ] beckmt4/anime-subtitle-pipeline#21 — Add OCR and complete subtitle source support
+29. [x] beckmt4/anime-subtitle-pipeline#21 — Wire OCR backend into CLI generate/benchmark (done)
+30. [ ] (new) OCR as real product capability — default backend, bitmap extraction pipeline, fixtures; spec: `specs/epics/epic-03-ocr-capability.md`
 
 ### Phase 5 — Domain packs
 
 Goal: move anime/live-action/JAV behavior out of generic core and into explicit opt-in profiles/packs.
 
-29. [ ] beckmt4/anime-subtitle-pipeline#23 — Create Anime domain pack v1
-30. [ ] beckmt4/anime-subtitle-pipeline#24 — Create JAV domain pack v1 with privacy-aware operation
+31. [ ] beckmt4/anime-subtitle-pipeline#23 — Create Anime domain pack v1; spec: `specs/epics/epic-06-anime-domain-pack.md`
+32. [ ] beckmt4/anime-subtitle-pipeline#24 — Create JAV domain pack v1 with privacy-aware operation; spec: `specs/epics/epic-06-anime-domain-pack.md`
 
 ### Phase 6 — Library-scale automation
 
 Goal: make the platform useful for batches and large media libraries after quality/review controls exist.
 
-31. [ ] beckmt4/anime-subtitle-pipeline#25 — Add queue, batch processing, and library-scale automation
+33. [ ] beckmt4/anime-subtitle-pipeline#25 — Add queue, batch processing, and library-scale automation; spec: `specs/epics/epic-05-library-automation.md`
 
 ### Phase 7 — Multi-language architecture and expansion
 
 Goal: generalize the platform after the Japanese workflow is reliable.
 
-32. [ ] beckmt4/anime-subtitle-pipeline#55 — Refactor Japanese-only generate orchestration into language-pack routing hooks
-33. [ ] beckmt4/anime-subtitle-pipeline#26 — Introduce language-pack architecture for multi-language expansion
-34. [ ] beckmt4/anime-subtitle-pipeline#27 — Add first non-Japanese language expansions
+34. [x] beckmt4/anime-subtitle-pipeline#55 — Refactor Japanese-only generate orchestration into language-pack routing hooks
+35. [x] beckmt4/anime-subtitle-pipeline#26 — Introduce language-pack architecture for multi-language expansion
+36. [ ] beckmt4/anime-subtitle-pipeline#27 — Add first non-Japanese language expansions; spec: `specs/epics/epic-07-multi-language-proof.md`
+
+### Phase 8 — Product truth, docs, CI hardening
+
+Goal: make docs and tracker tell the truth; make CI catch regressions.
+
+37. [x] Fix docs/FILE_OVERVIEW.md — remove stale root-shim references
+38. [x] Fix docs/PROJECT_SUMMARY.md — update file structure + API section
+39. [x] Add docs/product-readiness.md — capability status map and release gates
+40. [x] Add architecture guard tests (`tests/test_architecture_guard.py`)
+41. [x] Add acceptance-test index (`acceptance/acceptance-test-index.md`)
+42. [ ] Fix stale imports in `docs/QUICK_REFERENCE.md` and `docs/API_DOCUMENTATION.md`; spec: `specs/epics/epic-01-product-truth.md`
+43. [ ] Consolidated smoke-test suite; spec: `specs/epics/epic-08-ci-hardening.md`
 
 ## Near-term next 10 issues
 
 Start here unless there is a blocking bug:
 
-1. beckmt4/anime-subtitle-pipeline#74 — Direct context-aware LLM translation engine
-2. beckmt4/anime-subtitle-pipeline#76 — Literal-first and natural-subtitle second-pass workflow
-3. beckmt4/anime-subtitle-pipeline#79 — Translation QC judge
-4. beckmt4/anime-subtitle-pipeline#78 — Translation benchmark corpus and model comparison reports
-5. beckmt4/anime-subtitle-pipeline#77 — Live-action and adult-dialogue translation profile
-6. beckmt4/anime-subtitle-pipeline#81 — Local model and hardware evaluation matrix
-7. beckmt4/anime-subtitle-pipeline#20 — Harden benchmark mode into a core product capability
-8. beckmt4/anime-subtitle-pipeline#56 — Review-task generation rules
-9. beckmt4/anime-subtitle-pipeline#22 — Build human review queue and local review UI
-10. beckmt4/anime-subtitle-pipeline#21 — Add OCR and complete subtitle source support
+1. beckmt4/anime-subtitle-pipeline#78 — Translation benchmark corpus and model comparison reports
+2. beckmt4/anime-subtitle-pipeline#22 — Build human review queue and local review UI (harden MVP backbone)
+3. (new) Generalize LLMDirectTranslator prompts — `specs/epics/epic-02-translation-quality.md`
+4. (new) OCR product capability — `specs/epics/epic-03-ocr-capability.md`
+5. beckmt4/anime-subtitle-pipeline#23 — Anime domain pack v1 — `specs/epics/epic-06-anime-domain-pack.md`
+6. beckmt4/anime-subtitle-pipeline#25 — Library-scale automation — `specs/epics/epic-05-library-automation.md`
+7. beckmt4/anime-subtitle-pipeline#27 — First non-Japanese language expansions — `specs/epics/epic-07-multi-language-proof.md`
+8. (new) Fix stale import examples in QUICK_REFERENCE + API docs — `specs/epics/epic-01-product-truth.md`
+9. (new) Consolidated smoke-test suite — `specs/epics/epic-08-ci-hardening.md`
+10. beckmt4/anime-subtitle-pipeline#24 — JAV domain pack v1
 
 ## Recently completed
 - beckmt4/anime-subtitle-pipeline#85 — DB migration runner, completed in 04ad3c8
@@ -143,7 +157,16 @@ Start here unless there is a blocking bug:
 - beckmt4/anime-subtitle-pipeline#75 — translation engine selector and hybrid routing, completed in e052084
 - Runtime cleanup and core module wrappers — completed in b05155e and f0da0d2
 - beckmt4/anime-subtitle-pipeline#54 — candidate confidence scoring, ASR warning-density review routing, and SRT overlap prevention, completed in dc8f59d
-- beckmt4/anime-subtitle-pipeline#19 — generate-mode hardening epic, closed after beckmt4/anime-subtitle-pipeline#52, beckmt4/anime-subtitle-pipeline#53, beckmt4/anime-subtitle-pipeline#54, and beckmt4/anime-subtitle-pipeline#80 completion
+- beckmt4/anime-subtitle-pipeline#19 — generate-mode hardening epic, closed after #52, #53, #54, and #80 completion
+- beckmt4/anime-subtitle-pipeline#74 — direct context-aware LLM translation engine (LLMDirectTranslator)
+- beckmt4/anime-subtitle-pipeline#76 — literal-first / natural-subtitle second-pass workflow with drift guard
+- beckmt4/anime-subtitle-pipeline#77 — live-action and adult-dialogue translation profile
+- beckmt4/anime-subtitle-pipeline#79 — translation QC judge (deterministic checks; LLM judge optional)
+- beckmt4/anime-subtitle-pipeline#81 — local model and hardware evaluation matrix (framework + docs)
+- beckmt4/anime-subtitle-pipeline#56 — review-task generation rules (generate + benchmark routing)
+- beckmt4/anime-subtitle-pipeline#55 — language-pack routing hooks in orchestrator
+- beckmt4/anime-subtitle-pipeline#26 — language-pack architecture for multi-language expansion
+- Epic product truth reset — FILE_OVERVIEW.md, PROJECT_SUMMARY.md, product-readiness.md, architecture guard tests, acceptance-test index
 
 ## Definition of done
 A milestone is done only when:
