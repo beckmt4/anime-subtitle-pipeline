@@ -52,6 +52,8 @@ that exposes the following:
 | `PACK_ID` | `str` | Canonical `"<src>_<tgt>"` identifier |
 | `aliases.LANG_ALIASES` | `dict[str, frozenset[str]]` | Container tag → canonical code map |
 | `aliases.normalise(tag)` | `str → str` | Normalise a raw container tag |
+| `routing.translate_candidate(...)` | callable | Pack-owned translation routing hook for generate path |
+| `routing.UNTAGGED_AUDIO_FALLBACK_SOURCE_LANGUAGE` | `str` | Explicit fallback policy when audio tags are missing |
 | `prompts.get_system_prompt(style)` | `str` | LLM system prompt for polish step |
 | `prompts.get_user_prompt(text)` | `str` | Per-segment user prompt |
 | `cjk_filter` *(optional)* | module | Post-processor hook for output artefacts |
@@ -64,6 +66,7 @@ boundaries:
 | Core module | Parameter | Pack contribution |
 |---|---|---|
 | `core.media` / `choose_audio_track` | `lang_aliases` dict | `aliases.LANG_ALIASES` |
+| `orchestrator.run_generate` | routing hooks | `routing.translate_candidate()`, `routing.UNTAGGED_AUDIO_FALLBACK_SOURCE_LANGUAGE` |
 | `core.mt` / `MTBackend.translate` | `source_lang`, `target_lang` | `SOURCE_LANG`, `TARGET_LANG` |
 | `core.polish` / `PolishBackend.polish` | `style_config` | `prompts.get_system_prompt()` |
 | `core.polish` (post-processor) | callable hook | `cjk_filter.filter_candidate_cjk` |

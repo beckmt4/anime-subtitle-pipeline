@@ -163,3 +163,34 @@ class TestJaEnPackMetadata:
         assert (pack_dir / "glossary.yml").exists()
         assert (pack_dir / "names.yml").exists()
         assert (pack_dir / "style.yml").exists()
+
+
+class TestJaEnRoutingHooks:
+    def test_load_language_routing_hooks(self):
+        from packs.language import load_language_routing_hooks
+
+        hooks = load_language_routing_hooks("ja", "en")
+
+        assert hooks.pack_id == "ja_en"
+        assert hooks.source_language == "ja"
+        assert hooks.target_language == "en"
+        assert hooks.untagged_audio_fallback_source_language == "ja"
+        assert "ja" in hooks.lang_aliases
+        assert "en" in hooks.lang_aliases
+        assert callable(hooks.translate_candidate)
+
+    def test_routing_translate_candidate_delegates_to_pack_workflow(self, monkeypatch):
+        from packs.language.ja_en import routing
+
+        calls = []
+
+        def fake_translate(candidate, cfg, ja_candidate=None):
+            calls.append((candidate, cfg, ja_candidate))
+            return "translated"
+
+        monkeypatch.setattr(routing, "translate_candidate_jp_to_en_workflow", fake_translate)
+
+        result = routing.translate_candidate("candidate", "cfg", "source")
+
+        assert result == "translated"
+        assert calls == [("candidate", "cfg", "source")]

@@ -69,6 +69,7 @@ from core.review import (
     create_review_task_from_generate_output,
     route_generate_review_task,
 )
+from packs.language import load_language_routing_hooks
 
 
 logger = logging.getLogger(__name__)
@@ -137,16 +138,11 @@ _REVIEW_RECOMMENDED_STRATEGIES = {
 }
 
 
-# ISO-639-1 → common ISO-639-2 / localized variants that should all be treated
-# as the same language for source-selection purposes. Keep this map small; it
-# only needs to cover the languages the pipeline actually branches on.
-_LANG_ALIASES = {
-    "ja": {"ja", "jpn", "jp", "ja-jp"},
-    "en": {"en", "eng", "en-us", "en-gb"},
-}
-
-
-def _lang_matches(stream_lang: str | None, target: str) -> bool:
+def _lang_matches(
+    stream_lang: str | None,
+    target: str,
+    lang_aliases: Dict[str, frozenset[str]],
+) -> bool:
     """True if stream_lang (raw from container) belongs to target's alias set.
 
     Handles:
@@ -156,7 +152,7 @@ def _lang_matches(stream_lang: str | None, target: str) -> bool:
     if not stream_lang:
         return False
     code = stream_lang.strip().lower()
-    aliases = _LANG_ALIASES.get(target, {target})
+    aliases = lang_aliases.get(target, frozenset({target}))
     if code in aliases:
         return True
     # BCP-47 prefix: 'en-AU' → prefix 'en', check if prefix is a known alias.
@@ -164,7 +160,7 @@ def _lang_matches(stream_lang: str | None, target: str) -> bool:
     return prefix in aliases
 
 
-def _first_text_sub(media: MediaInfo, lang: str) -> int | None:
+def _first_text_sub(media: MediaInfo, lang: str, lang_aliases: Dict[str, frozenset[str]]) -> int | None:
     for s in media.subtitle_streams:
         if s.is_bitmap:
             logger.debug(
@@ -173,7 +169,7 @@ def _first_text_sub(media: MediaInfo, lang: str) -> int | None:
             )
             continue
         raw = s.language or s.raw_language
-        if _lang_matches(raw, lang):
+        if _lang_matches(raw, lang, lang_aliases):
             logger.info(
                 "  subtitle stream %d (codec=%s lang=%s): ACCEPTED as %s text subtitle",
                 s.index, s.codec, raw or "?", lang,
@@ -186,20 +182,24 @@ def _first_text_sub(media: MediaInfo, lang: str) -> int | None:
     return None
 
 
-def _first_bitmap_sub(media: MediaInfo, lang: str) -> int | None:
+def _first_bitmap_sub(media: MediaInfo, lang: str, lang_aliases: Dict[str, frozenset[str]]) -> int | None:
     for s in media.subtitle_streams:
         if not s.is_bitmap:
             continue
         raw = s.language or s.raw_language
-        if _lang_matches(raw, lang):
+        if _lang_matches(raw, lang, lang_aliases):
             return s.index
     return None
 
 
-def _first_audio_order(media: MediaInfo, lang: str) -> int | None:
+def _first_audio_order(
+    media: MediaInfo,
+    lang: str,
+    lang_aliases: Dict[str, frozenset[str]],
+) -> int | None:
     for order, stream in enumerate(media.audio_streams):
         raw = stream.language or stream.raw_language
-        if _lang_matches(raw, lang):
+        if _lang_matches(raw, lang, lang_aliases):
             logger.debug(
                 "  audio stream order=%d idx=%d (codec=%s lang=%s): ACCEPTED as %s audio",
                 order, stream.index, stream.codec, raw or "?", lang,
@@ -212,9 +212,13 @@ def _first_audio_order(media: MediaInfo, lang: str) -> int | None:
     return None
 
 
-def _first_sidecar(sidecars: list[SubtitleCandidate], lang: str) -> SubtitleCandidate | None:
+def _first_sidecar(
+    sidecars: list[SubtitleCandidate],
+    lang: str,
+    lang_aliases: Dict[str, frozenset[str]],
+) -> SubtitleCandidate | None:
     for cand in sidecars:
-        if _lang_matches(cand.language, lang):
+        if _lang_matches(cand.language, lang, lang_aliases):
             return cand
     return None
 
@@ -602,6 +606,10 @@ def _build_selection_report(
     untagged_audio_order: int | None = None,
     source_language: str = "auto",
     source_language_rerouted_order: int | None = None,
+    language_pack: str = "ja_en",
+    translation_source_language: str = "ja",
+    translation_target_language: str = "en",
+    untagged_audio_fallback_source_language: str = "ja",
 ) -> Dict[str, Any]:
     """Build a structured explanation of why *strategy* was selected.
 
@@ -619,6 +627,7 @@ def _build_selection_report(
       - review_recommended: True when the strategy involves a lossy processing
         step (MT / untagged-audio fallback) and human review is advisable
       - review_reason: human-readable justification (None when not recommended)
+      - language_routing: explicit pack / source / target routing context
     """
     overrides_active = []
     sources_evaluated = []
@@ -971,7 +980,9 @@ def _build_selection_report(
                 "reason": (
                     "Last-resort fallback: no language-tagged streams found; "
                     f"track {_untagged_order_val} "
-                    "treated as Japanese and routed via ASR → MT"
+                    f"routed via explicit language-pack fallback policy "
+                    f"({language_pack}: {untagged_audio_fallback_source_language} → "
+                    f"{translation_target_language})"
                 ),
             })
 
@@ -1023,6 +1034,14 @@ def _build_selection_report(
         "overrides_active": overrides_active,
         "review_recommended": review_recommended,
         "review_reason": review_reason,
+        "language_routing": {
+            "language_pack": language_pack,
+            "translation_source_language": translation_source_language,
+            "translation_target_language": translation_target_language,
+            "untagged_audio_fallback_source_language": (
+                untagged_audio_fallback_source_language
+            ),
+        },
     }
 
 
@@ -1456,20 +1475,37 @@ def run_generate(
     if inspect_only:
         logger.info("Inspect-only mode enabled: planning generate flow without execution")
 
+    language_routing = load_language_routing_hooks(source_language="ja", target_language="en")
+    language_pack = language_routing.pack_id
+    translation_source_language = language_routing.source_language
+    translation_target_language = language_routing.target_language
+    lang_aliases = dict(language_routing.lang_aliases)
+    untagged_audio_fallback_source_language = (
+        language_routing.untagged_audio_fallback_source_language
+    )
+    logger.info(
+        "Language-pack routing active: pack=%s source=%s target=%s "
+        "untagged_fallback_source=%s",
+        language_pack,
+        translation_source_language,
+        translation_target_language,
+        untagged_audio_fallback_source_language,
+    )
+
     logger.info("=" * 70)
     logger.info(f"GENERATE MODE: {_display_name(video_path)}")
     logger.info("=" * 70)
 
     # Detect available sources
     sidecar_candidates = discover_sidecar_subtitles(video_path)
-    en_sidecar = _first_sidecar(sidecar_candidates, "en")
-    ja_sidecar = _first_sidecar(sidecar_candidates, "ja")
-    en_sub_idx = _first_text_sub(media, "en")
-    ja_sub_idx = _first_text_sub(media, "ja")
-    en_bitmap_sub_idx = _first_bitmap_sub(media, "en")
-    ja_bitmap_sub_idx = _first_bitmap_sub(media, "ja")
-    en_audio_order = _first_audio_order(media, "en")
-    ja_audio_order = _first_audio_order(media, "ja")
+    en_sidecar = _first_sidecar(sidecar_candidates, translation_target_language, lang_aliases)
+    ja_sidecar = _first_sidecar(sidecar_candidates, translation_source_language, lang_aliases)
+    en_sub_idx = _first_text_sub(media, translation_target_language, lang_aliases)
+    ja_sub_idx = _first_text_sub(media, translation_source_language, lang_aliases)
+    en_bitmap_sub_idx = _first_bitmap_sub(media, translation_target_language, lang_aliases)
+    ja_bitmap_sub_idx = _first_bitmap_sub(media, translation_source_language, lang_aliases)
+    en_audio_order = _first_audio_order(media, translation_target_language, lang_aliases)
+    ja_audio_order = _first_audio_order(media, translation_source_language, lang_aliases)
 
     # Capture original detection results before any overrides or probe mutations
     # so the selection report can explain what was originally seen in the container.
@@ -1520,6 +1556,7 @@ def run_generate(
                     if _lang_matches(
                         media.audio_streams[o].language or media.audio_streams[o].raw_language,
                         source_language,
+                        lang_aliases,
                     )
                 ),
                 _all_audio_orders[0],
@@ -1637,14 +1674,18 @@ def run_generate(
             if _probed_untagged_lang == _PROBE_FAILED:
                 logger.warning(
                     "Language probe failed for untagged audio track %d — "
-                    "will fall back to untagged_audio_asr_mt (treating as Japanese).",
+                    "will fall back to untagged_audio_asr_mt via language-pack "
+                    "policy (source=%s).",
                     _fallback_order,
+                    untagged_audio_fallback_source_language,
                 )
             else:
                 logger.warning(
                     "Language probe inconclusive for untagged audio track %d — "
-                    "will fall back to untagged_audio_asr_mt (treating as Japanese).",
+                    "will fall back to untagged_audio_asr_mt via language-pack "
+                    "policy (source=%s).",
                     _fallback_order,
+                    untagged_audio_fallback_source_language,
                 )
 
     # --extract-en-subs: embedded EN subs were already written to outbox by the
@@ -1674,7 +1715,8 @@ def run_generate(
             )
         logger.info(
             f"CLI --audio-track override: forcing track {audio_track_override} "
-            f"through Japanese ASR → MT path"
+            f"through {translation_source_language.upper()} ASR → "
+            f"{translation_target_language.upper()} path"
         )
         ja_audio_order = audio_track_override
         # Zero out the upstream branches so the decision tree can't pick them.
@@ -1711,7 +1753,7 @@ def run_generate(
                 selected_untagged_audio_order, _ = _select_untagged_audio_fallback(media)
         else:
             raise RuntimeError(
-                "No usable source found for English subtitle generation "
+                f"No usable source found for {translation_target_language.upper()} subtitle generation "
                 "(file has no audio or subtitle streams)"
             )
 
@@ -1734,15 +1776,27 @@ def run_generate(
             untagged_audio_order=selected_untagged_audio_order,
             source_language=source_language,
             source_language_rerouted_order=source_language_rerouted_order,
+            language_pack=language_pack,
+            translation_source_language=translation_source_language,
+            translation_target_language=translation_target_language,
+            untagged_audio_fallback_source_language=(
+                untagged_audio_fallback_source_language
+            ),
         )
         _log_selection_report(_maybe_redact_report(selection_report))
 
-        out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
-        qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
+        out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.{translation_target_language}.srt"
+        qc_path = (
+            Path(cfg.get_path("outbox"))
+            / f"{video_path.stem}.{translation_target_language}.qc.json"
+        )
         metadata = {
             "video": str(video_path.name),
             "strategy": strategy,
             "domain_pack": active_domain_pack,
+            "language_pack": language_pack,
+            "translation_source_language": translation_source_language,
+            "translation_target_language": translation_target_language,
             "inspect_only": True,
             "executed": False,
             "planned_output_srt": str(out_srt),
@@ -1772,28 +1826,32 @@ def run_generate(
         # Decision tree
         if prefer_subtitles and en_sidecar is not None:
             strategy = "sidecar_en"
-            logger.info("Strategy: Use sidecar English subtitles")
+            logger.info("Strategy: Use sidecar %s subtitles", translation_target_language.upper())
             candidate = en_sidecar
             _final_db_id = _reg_store_candidate(
                 registry, media_hash, candidate, source="embedded",
             )
         elif prefer_subtitles and en_sub_idx is not None:
             strategy = "embedded_en"
-            logger.info("Strategy: Use embedded English subtitles")
+            logger.info("Strategy: Use embedded %s subtitles", translation_target_language.upper())
             with start_span("extract_embedded_en"):
-                candidate = extract_subtitle_track(video_path, en_sub_idx, language="en",
-                                                   output_dir=Path(cfg.get_path("temp")))
+                candidate = extract_subtitle_track(
+                    video_path,
+                    en_sub_idx,
+                    language=translation_target_language,
+                    output_dir=Path(cfg.get_path("temp")),
+                )
             _final_db_id = _reg_store_candidate(
                 registry, media_hash, candidate, source="embedded",
             )
         elif prefer_subtitles and en_bitmap_sub_idx is not None and ocr_backend is not None:
             strategy = "bitmap_en_ocr"
-            logger.info("Strategy: English bitmap subtitles → OCR")
+            logger.info("Strategy: %s bitmap subtitles → OCR", translation_target_language.upper())
             with start_span("extract_embedded_en_bitmap_ocr"):
                 candidate = extract_subtitle_track(
                     video_path,
                     en_bitmap_sub_idx,
-                    language="en",
+                    language=translation_target_language,
                     output_dir=Path(cfg.get_path("temp")),
                     ocr_backend=ocr_backend,
                 )
@@ -1803,19 +1861,19 @@ def run_generate(
             )
         elif prefer_audio_language == "en" and en_audio_order is not None:
             strategy = "en_audio_asr"
-            logger.info("Strategy: English audio ASR")
+            logger.info("Strategy: %s audio ASR", translation_target_language.upper())
             with start_span("extract_en_audio"):
                 audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_en_a{en_audio_order}.wav"
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
             with start_span("asr_en_audio"):
                 asr = FasterWhisperASR(cfg)
-                _asr_lang = source_language if source_language != "auto" else "en"
+                _asr_lang = source_language if source_language != "auto" else translation_target_language
                 segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language=_asr_lang)
                 candidate = build_candidate_from_segments(
                     segments,
                     cfg,
                     candidate_id=f"en_audio_asr_a{en_audio_order}",
-                    language="en",
+                    language=translation_target_language,
                     origin_stream=f"audio:{en_audio_order}",
                 )
             try:
@@ -1828,21 +1886,30 @@ def run_generate(
             )
         elif ja_sidecar is not None:
             strategy = "sidecar_jp_mt"
-            logger.info("Strategy: Japanese sidecar subtitles → MT → EN")
+            logger.info(
+                "Strategy: %s sidecar subtitles → MT → %s",
+                translation_source_language.upper(),
+                translation_target_language.upper(),
+            )
             ja_candidate = ja_sidecar
             translation_source_candidate = ja_candidate
             _ja_db_id = _reg_store_candidate(
                 registry, media_hash, ja_candidate, source="embedded",
             )
             with start_span("mt_sidecar_jp"):
-                mt_candidate = translate_candidate_jp_to_en_workflow(
-                    ja_candidate, cfg, ja_candidate=ja_candidate
+                mt_candidate = language_routing.translate_candidate(
+                    ja_candidate,
+                    cfg,
+                    ja_candidate,
                 )
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
             )
-            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            raw_srt = (
+                Path(cfg.get_path("outbox"))
+                / f"{video_path.stem}.raw.{translation_target_language}.srt"
+            )
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
@@ -1860,24 +1927,37 @@ def run_generate(
                 _final_db_id = _mt_db_id
         elif ja_sub_idx is not None:
             strategy = "embedded_jp_mt"
-            logger.info("Strategy: Japanese subtitles → MT → EN")
+            logger.info(
+                "Strategy: %s subtitles → MT → %s",
+                translation_source_language.upper(),
+                translation_target_language.upper(),
+            )
             with start_span("extract_embedded_jp"):
-                ja_candidate = extract_subtitle_track(video_path, ja_sub_idx, language="ja",
-                                                      output_dir=Path(cfg.get_path("temp")))
+                ja_candidate = extract_subtitle_track(
+                    video_path,
+                    ja_sub_idx,
+                    language=translation_source_language,
+                    output_dir=Path(cfg.get_path("temp")),
+                )
             translation_source_candidate = ja_candidate
             _ja_db_id = _reg_store_candidate(
                 registry, media_hash, ja_candidate, source="embedded",
             )
             with start_span("mt_embedded_jp"):
-                mt_candidate = translate_candidate_jp_to_en_workflow(
-                    ja_candidate, cfg, ja_candidate=ja_candidate
+                mt_candidate = language_routing.translate_candidate(
+                    ja_candidate,
+                    cfg,
+                    ja_candidate,
                 )
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
-            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            raw_srt = (
+                Path(cfg.get_path("outbox"))
+                / f"{video_path.stem}.raw.{translation_target_language}.srt"
+            )
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
@@ -1896,12 +1976,16 @@ def run_generate(
                 _final_db_id = _mt_db_id
         elif ja_bitmap_sub_idx is not None and ocr_backend is not None:
             strategy = "bitmap_jp_ocr_mt"
-            logger.info("Strategy: Japanese bitmap subtitles → OCR → MT → EN")
+            logger.info(
+                "Strategy: %s bitmap subtitles → OCR → MT → %s",
+                translation_source_language.upper(),
+                translation_target_language.upper(),
+            )
             with start_span("extract_embedded_jp_bitmap_ocr"):
                 ja_candidate = extract_subtitle_track(
                     video_path,
                     ja_bitmap_sub_idx,
-                    language="ja",
+                    language=translation_source_language,
                     output_dir=Path(cfg.get_path("temp")),
                     ocr_backend=ocr_backend,
                 )
@@ -1910,14 +1994,19 @@ def run_generate(
                 registry, media_hash, ja_candidate, source="embedded", model_version="ocr",
             )
             with start_span("mt_bitmap_jp_ocr"):
-                mt_candidate = translate_candidate_jp_to_en_workflow(
-                    ja_candidate, cfg, ja_candidate=ja_candidate
+                mt_candidate = language_routing.translate_candidate(
+                    ja_candidate,
+                    cfg,
+                    ja_candidate,
                 )
             _mt_db_id = _reg_store_candidate(
                 registry, media_hash, mt_candidate, source="mt",
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_ja_db_id,
             )
-            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            raw_srt = (
+                Path(cfg.get_path("outbox"))
+                / f"{video_path.stem}.raw.{translation_target_language}.srt"
+            )
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
@@ -1935,13 +2024,19 @@ def run_generate(
                 _final_db_id = _mt_db_id
         elif (prefer_audio_language in ["ja", "auto"] and ja_audio_order is not None):
             strategy = "ja_audio_asr_mt"
-            logger.info("Strategy: Japanese audio → ASR → MT → EN")
+            logger.info(
+                "Strategy: %s audio → ASR → MT → %s",
+                translation_source_language.upper(),
+                translation_target_language.upper(),
+            )
             with start_span("extract_ja_audio"):
                 audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_ja_a{ja_audio_order}.wav"
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), ja_audio_order)
             with start_span("asr_ja_audio"):
                 asr = FasterWhisperASR(cfg)
-                _asr_lang = source_language if source_language != "auto" else "ja"
+                _asr_lang = (
+                    source_language if source_language != "auto" else translation_source_language
+                )
                 segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language=_asr_lang)
                 ja_asr_candidate = build_candidate_from_segments(
                     segments,
@@ -1987,8 +2082,10 @@ def run_generate(
                 model_version=cfg.asr_model_name,
             )
             with start_span("mt_ja_audio"):
-                mt_candidate = translate_candidate_jp_to_en_workflow(
-                    ja_asr_candidate, cfg, ja_candidate=ja_asr_candidate
+                mt_candidate = language_routing.translate_candidate(
+                    ja_asr_candidate,
+                    cfg,
+                    ja_asr_candidate,
                 )
                 _propagate_asr_meta(ja_asr_candidate, mt_candidate)
             _mt_db_id = _reg_store_candidate(
@@ -1996,7 +2093,10 @@ def run_generate(
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_asr_db_id,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
-            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            raw_srt = (
+                Path(cfg.get_path("outbox"))
+                / f"{video_path.stem}.raw.{translation_target_language}.srt"
+            )
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {_display_name(raw_srt)}")
             if _should_apply_post_mt_llm(mt_candidate):
@@ -2015,19 +2115,19 @@ def run_generate(
                 _final_db_id = _mt_db_id
         elif en_audio_order is not None:  # fallback
             strategy = "en_audio_asr"
-            logger.info("Fallback: English audio ASR")
+            logger.info("Fallback: %s audio ASR", translation_target_language.upper())
             with start_span("extract_en_audio"):
                 audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_en_a{en_audio_order}.wav"
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), en_audio_order)
             with start_span("asr_en_audio"):
                 asr = FasterWhisperASR(cfg)
-                _asr_lang = source_language if source_language != "auto" else "en"
+                _asr_lang = source_language if source_language != "auto" else translation_target_language
                 segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language=_asr_lang)
                 candidate = build_candidate_from_segments(
                     segments,
                     cfg,
                     candidate_id=f"en_audio_asr_a{en_audio_order}",
-                    language="en",
+                    language=translation_target_language,
                     origin_stream=f"audio:{en_audio_order}",
                 )
                 if _probe_of_en_track_failed:
@@ -2050,8 +2150,8 @@ def run_generate(
         elif media.audio_streams:
             # Untagged audio fallback. Many WEB-DL / MP4 containers have no
             # ISO-639 language tag on the audio stream, so none of the above
-            # branches match. Since this pipeline is built for JP→EN, treat
-            # the selected track as Japanese. User can override with
+            # branches match. Route through the active language pack's explicit
+            # fallback source-language policy. User can override with
             # --audio-track if there are multiple tracks and the chosen track
             # is wrong.
             if selected_untagged_audio_order is not None:
@@ -2067,22 +2167,33 @@ def run_generate(
             if _track_count > 1:
                 logger.warning(
                     "Ambiguous audio tagging: %d tracks found with no recognized "
-                    "language tag. Selected track %d as primary Japanese (%s). "
+                    "language tag. Selected track %d via language-pack fallback "
+                    "policy (%s source, %s). "
                     "Use --audio-track N to override.",
-                    _track_count, fallback_order, _fallback_reason,
+                    _track_count,
+                    fallback_order,
+                    untagged_audio_fallback_source_language,
+                    _fallback_reason,
                 )
             else:
                 logger.warning(
-                    "No language-tagged audio found; treating track %d as "
-                    "Japanese (%s). Pass --audio-track N to override.",
-                    fallback_order, _fallback_reason,
+                    "No language-tagged audio found; routing track %d via "
+                    "language-pack fallback policy (%s source, %s). Pass "
+                    "--audio-track N to override.",
+                    fallback_order,
+                    untagged_audio_fallback_source_language,
+                    _fallback_reason,
                 )
             with start_span("extract_untagged_audio"):
                 audio_path = Path(cfg.get_path("temp")) / f"{video_path.stem}_ja_a{fallback_order}.wav"
                 extract_audio_with_ffmpeg(str(video_path), str(audio_path), fallback_order)
             with start_span("asr_untagged_audio"):
                 asr = FasterWhisperASR(cfg)
-                _asr_lang = source_language if source_language != "auto" else "ja"
+                _asr_lang = (
+                    source_language
+                    if source_language != "auto"
+                    else untagged_audio_fallback_source_language
+                )
                 segments, _ = asr.transcribe_audio_to_segments(str(audio_path), language=_asr_lang)
                 ja_asr_candidate = build_candidate_from_segments(
                     segments,
@@ -2096,7 +2207,8 @@ def run_generate(
                     type_="untagged_audio_fallback",
                     detail=(
                         f"ASR used untagged audio track {fallback_order}; "
-                        f"selection reason: {_fallback_reason}"
+                        f"selection reason: {_fallback_reason}; language-pack "
+                        f"fallback source={untagged_audio_fallback_source_language}"
                     ),
                 )
             translation_source_candidate = ja_asr_candidate
@@ -2109,8 +2221,10 @@ def run_generate(
                 model_version=cfg.asr_model_name,
             )
             with start_span("mt_untagged_audio"):
-                mt_candidate = translate_candidate_jp_to_en_workflow(
-                    ja_asr_candidate, cfg, ja_candidate=ja_asr_candidate
+                mt_candidate = language_routing.translate_candidate(
+                    ja_asr_candidate,
+                    cfg,
+                    ja_asr_candidate,
                 )
                 _propagate_asr_meta(ja_asr_candidate, mt_candidate)
             _mt_db_id = _reg_store_candidate(
@@ -2118,7 +2232,10 @@ def run_generate(
                 model_version=_translation_model_version(mt_candidate, cfg), parent_id=_asr_db_id,
             )
             # Always write raw MT output regardless of whether LLM polish runs.
-            raw_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.raw.en.srt"
+            raw_srt = (
+                Path(cfg.get_path("outbox"))
+                / f"{video_path.stem}.raw.{translation_target_language}.srt"
+            )
             write_candidate_srt(mt_candidate, str(raw_srt), cfg)
             logger.info(f"Saved pre-polish translation output: {raw_srt.name}")
             if _should_apply_post_mt_llm(mt_candidate):
@@ -2137,12 +2254,15 @@ def run_generate(
                 _final_db_id = _mt_db_id
         else:
             raise RuntimeError(
-                "No usable source found for English subtitle generation "
+                f"No usable source found for {translation_target_language.upper()} subtitle generation "
                 "(file has no audio or subtitle streams)"
             )
 
         assert candidate is not None, "Generation strategy produced no candidate"
         candidate.meta["domain_pack"] = active_domain_pack
+        candidate.meta["language_pack"] = language_pack
+        candidate.meta["translation_source_language"] = translation_source_language
+        candidate.meta["translation_target_language"] = translation_target_language
         if jav_media_id:
             candidate.meta["jav_media_id"] = jav_media_id
             candidate.meta["review_mode"] = "adult"
@@ -2168,11 +2288,17 @@ def run_generate(
             untagged_audio_order=selected_untagged_audio_order,
             source_language=source_language,
             source_language_rerouted_order=source_language_rerouted_order,
+            language_pack=language_pack,
+            translation_source_language=translation_source_language,
+            translation_target_language=translation_target_language,
+            untagged_audio_fallback_source_language=(
+                untagged_audio_fallback_source_language
+            ),
         )
         _log_selection_report(_maybe_redact_report(selection_report))
 
         # Write SRT
-        out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.srt"
+        out_srt = Path(cfg.get_path("outbox")) / f"{video_path.stem}.{translation_target_language}.srt"
         with start_span("write_final_srt"):
             write_candidate_srt(candidate, str(out_srt), cfg)
         _reg_store_artifact(registry, media_hash, ARTIFACT_TYPE_SRT, out_srt,
@@ -2219,7 +2345,10 @@ def run_generate(
 
         # Write machine-readable QC summary alongside the SRT
         import json
-        qc_path = Path(cfg.get_path("outbox")) / f"{video_path.stem}.en.qc.json"
+        qc_path = (
+            Path(cfg.get_path("outbox"))
+            / f"{video_path.stem}.{translation_target_language}.qc.json"
+        )
         qc_payload = _build_qc_payload(qc_summary, translation_qc_summary)
         qc_path.write_text(json.dumps(qc_payload, indent=2), encoding="utf-8")
         logger.info("QC summary written: %s", _display_name(qc_path))
@@ -2291,6 +2420,9 @@ def run_generate(
             "video": str(video_path.name),
             "strategy": strategy,
             "domain_pack": active_domain_pack,
+            "language_pack": language_pack,
+            "translation_source_language": translation_source_language,
+            "translation_target_language": translation_target_language,
             "candidate_id": candidate.id,
             "segment_count": candidate.segment_count,
             "output_srt": str(out_srt),

@@ -12,6 +12,7 @@ import pytest
 from models import SubtitleCandidate, Segment
 from media_inspect import MediaInfo, AudioStream, SubtitleStream
 from config import Config
+from packs.language import LanguageRoutingHooks
 import orchestrator as orch
 
 # ---------------------------------------------------------------------------
@@ -106,6 +107,26 @@ def stub_translate_candidate_jp_to_en_workflow(
     return translated
 
 
+def stub_load_language_routing_hooks(source_language: str = "ja", target_language: str = "en"):
+    return LanguageRoutingHooks(
+        pack_id=f"{source_language}_{target_language}",
+        source_language=source_language,
+        target_language=target_language,
+        lang_aliases={
+            "ja": frozenset({"ja", "jpn", "jp", "ja-jp", "japanese"}),
+            "en": frozenset({"en", "eng", "en-us", "en-gb", "english"}),
+        },
+        untagged_audio_fallback_source_language=source_language,
+        translate_candidate=lambda cand, cfg, source_candidate=None: (
+            orch.translate_candidate_jp_to_en_workflow(
+                cand,
+                cfg,
+                ja_candidate=source_candidate or cand,
+            )
+        ),
+    )
+
+
 def stub_polish_candidate_with_llm(cand: SubtitleCandidate, cfg: Config, **kwargs):
     return SubtitleCandidate(
         id=cand.id + "_llm",
@@ -169,6 +190,7 @@ orch.FasterWhisperASR = DummyASR
 orch.build_candidate_from_segments = stub_build_candidate_from_segments
 orch.translate_candidate_jp_to_en = stub_translate_candidate_jp_to_en
 orch.translate_candidate_jp_to_en_workflow = stub_translate_candidate_jp_to_en_workflow
+orch.load_language_routing_hooks = stub_load_language_routing_hooks
 orch.polish_candidate_with_llm = stub_polish_candidate_with_llm
 orch.enforce_constraints_on_candidate = stub_enforce_constraints_on_candidate
 orch.write_candidate_srt = stub_write_candidate_srt
@@ -1247,7 +1269,24 @@ def test_selection_report_untagged_audio_fallback():
     )
     assert untagged_entry is not None, "untagged_audio_asr_mt missing from sources_evaluated"
     assert untagged_entry["status"] == "selected", untagged_entry
+    routing = rpt["language_routing"]
+    assert routing["language_pack"] == "ja_en", routing
+    assert routing["untagged_audio_fallback_source_language"] == "ja", routing
+    assert "language-pack fallback policy" in untagged_entry["reason"], untagged_entry
     print("✓ untagged_audio_asr_mt fallback: very_low confidence, review recommended")
+
+
+def test_generate_metadata_includes_language_pack_routing_context():
+    cfg = Config()
+    media = _media(en_sub=True, en_audio=True, jp_sub=True, jp_audio=True)
+    meta = orch.run_generate(media, cfg)
+    assert meta["language_pack"] == "ja_en", meta
+    assert meta["translation_source_language"] == "ja", meta
+    assert meta["translation_target_language"] == "en", meta
+    routing = meta["selection_report"]["language_routing"]
+    assert routing["language_pack"] == "ja_en", routing
+    assert routing["translation_source_language"] == "ja", routing
+    assert routing["translation_target_language"] == "en", routing
 
 
 def test_selection_report_probe_reroute_reflected():
