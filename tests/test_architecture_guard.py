@@ -56,6 +56,24 @@ def _collect_python_files(directory: Path) -> list:
     return [p for p in directory.rglob("*.py") if "__pycache__" not in str(p)]
 
 
+def _extract_python_import_lines(markdown_text: str) -> list[str]:
+    import_lines = []
+    in_python_block = False
+
+    for raw_line in markdown_text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("```python"):
+            in_python_block = True
+            continue
+        if in_python_block and line.startswith("```"):
+            in_python_block = False
+            continue
+        if in_python_block and (line.startswith("from ") or line.startswith("import ")):
+            import_lines.append(line)
+
+    return import_lines
+
+
 # ---------------------------------------------------------------------------
 # Doc freshness guards
 # ---------------------------------------------------------------------------
@@ -141,6 +159,42 @@ class TestProjectSummaryFreshness:
         assert "product-readiness" in content, (
             "docs/PROJECT_SUMMARY.md should reference docs/product-readiness.md "
             "so readers know where to find feature status."
+        )
+
+
+class TestQuickReferenceFreshness:
+    """docs/QUICK_REFERENCE.md import examples must stay aligned with core APIs."""
+
+    def _read(self):
+        path = REPO_ROOT / "docs" / "QUICK_REFERENCE.md"
+        assert path.exists(), "docs/QUICK_REFERENCE.md is missing"
+        return path.read_text(encoding="utf-8")
+
+    def test_no_stale_root_shim_import_examples(self):
+        content = self._read()
+        import_lines = _extract_python_import_lines(content)
+        for line in import_lines:
+            for shim in DELETED_ROOT_SHIMS:
+                assert not line.startswith(f"from {shim} import"), (
+                    "docs/QUICK_REFERENCE.md contains a stale root-shim import "
+                    f"example: {line!r}. Use core.* imports instead."
+                )
+
+    def test_python_import_examples_resolve(self):
+        content = self._read()
+        import_lines = _extract_python_import_lines(content)
+        assert import_lines, "docs/QUICK_REFERENCE.md has no Python import examples"
+
+        failures = []
+        for line in import_lines:
+            try:
+                exec(line, {}, {})  # noqa: S102
+            except Exception as exc:
+                failures.append(f"{line!r} -> {type(exc).__name__}: {exc}")
+
+        assert not failures, (
+            "Some docs/QUICK_REFERENCE.md Python import examples do not resolve:\n"
+            + "\n".join(f"  {f}" for f in failures)
         )
 
 

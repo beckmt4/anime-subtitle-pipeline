@@ -263,7 +263,7 @@ audio_path = extract_audio_with_ffmpeg(
 ### Transcribe Audio
 
 ```python
-from core.runtime.config import Config
+from core.runtime import Config
 from core.asr import FasterWhisperASR
 
 config = Config()
@@ -279,7 +279,7 @@ asr.unload_model()
 ### Translate Segments
 
 ```python
-from core.runtime.config import Config
+from core.runtime import Config
 from core.mt import translate_candidate_jp_to_en
 
 config = Config()
@@ -291,7 +291,7 @@ for seg in mt_candidate.segments:
 ### Polish with LLM
 
 ```python
-from core.runtime.config import Config
+from core.runtime import Config
 from core.polish import polish_candidate_with_llm
 
 config = Config()
@@ -303,8 +303,8 @@ for seg in final_candidate.segments:
 ### Write SRT
 
 ```python
-from core.runtime.config import Config
-from core.subtitles.srt_writer import write_candidate_srt
+from core.runtime import Config
+from core.subtitles import write_candidate_srt
 
 config = Config()
 srt_path = write_candidate_srt(final_candidate, "output.srt", config)
