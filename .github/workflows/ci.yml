@@ -27,13 +27,29 @@ jobs:
       - name: Lint with flake8
         # select=E9,F: syntax errors + pyflakes (undefined names, unused imports).
         # Style rules (W293, E501) are deferred — see setup.cfg for full config.
+        # The legacy root shims were deleted; lint current runtime modules instead.
         run: |
-          flake8 \
-            media_inspect.py compare_core.py config.py models.py \
-            orchestrator.py llm_polish.py srt_writer.py \
-            audio_utils.py subtitle_utils.py asr.py mt.py \
-            tracing.py batch_process.py benchmark.py \
-            --select=E9,F --extend-ignore=F401,F841 --exclude venv
+          python - <<'PY' > /tmp/flake8-targets.txt
+          from pathlib import Path
+
+          targets = [
+              "main.py",
+              "batch_process.py",
+              "compare_srt.py",
+              "example_usage.py",
+              "llm_translate.py",
+              "subtitle_corrector.py",
+              "subtitle_qc.py",
+              "translation_qc.py",
+              "core",
+              "packs",
+          ]
+
+          for target in targets:
+              if Path(target).exists():
+                  print(target)
+          PY
+          xargs flake8 --select=E9,F --extend-ignore=F401,F841 --exclude venv < /tmp/flake8-targets.txt
 
       - name: Run unit tests
         run: pytest -v --tb=short -m "not integration"
