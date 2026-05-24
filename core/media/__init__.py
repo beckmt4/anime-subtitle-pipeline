@@ -4,7 +4,6 @@ Wraps ffprobe to parse media containers into structured metadata.
 All language-code normalization here is protocol-level (ISO-639 mapping)
 and must not contain language-pack-specific aliases.
 Implementation lives in ``core.media.media_inspect``.
-The root-level ``media_inspect.py`` is a re-export shim pointing here.
 
 Public API
 ----------

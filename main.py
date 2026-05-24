@@ -7,12 +7,12 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from audio_utils import check_ffmpeg_available
+from core.extract.audio_utils import check_ffmpeg_available
 from core.artifacts.pipeline_wiring import compute_media_hash, open_registry
 from core.ocr import create_backend as create_ocr_backend
 from core.runtime import Config, run_generate, set_config, setup_tracing
-from media_inspect import inspect_media
-from srt_writer import write_candidate_srt
+from core.media import inspect_media
+from core.subtitles.srt_writer import write_candidate_srt
 
 
 # Configure logging
@@ -287,7 +287,7 @@ Examples:
     # reference/embedded subs and the freshly-generated output for comparison.
     if args.extract_en_subs and not args.inspect_only:
         try:
-            from subtitle_utils import extract_subtitle_track as _extract_sub
+            from core.extract.subtitle_utils import extract_subtitle_track as _extract_sub
             _media_for_extract = inspect_media(args.video)
         except Exception as e:
             logger.error(f"Failed to inspect media for EN sub extraction: {e}")
@@ -382,7 +382,7 @@ Examples:
                 registry.close()
             sys.exit(0)
         elif args.mode == "benchmark":
-            from benchmark import run_benchmark
+            from core.benchmark import run_benchmark
             logger.info("Running in BENCHMARK mode (compare all candidate sources)")
             ocr_backend = create_ocr_backend(config)
             if ocr_backend is None:

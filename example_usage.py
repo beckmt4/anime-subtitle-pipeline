@@ -6,11 +6,11 @@ instead of using the CLI.  All examples use the current candidate-based API.
 
 from pathlib import Path
 from config import Config, set_config
-from audio_utils import extract_audio_with_ffmpeg
-from asr import FasterWhisperASR, transcribe_audio_to_candidate
-from mt import translate_candidate_jp_to_en
-from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candidate
-from srt_writer import write_candidate_srt
+from core.extract.audio_utils import extract_audio_with_ffmpeg
+from core.asr import FasterWhisperASR, transcribe_audio_to_candidate
+from core.mt import translate_candidate_jp_to_en
+from core.polish import polish_candidate_with_llm, enforce_constraints_on_candidate
+from core.subtitles.srt_writer import write_candidate_srt
 import logging
 
 logging.basicConfig(
@@ -88,7 +88,7 @@ def example_custom_processing():
     ja_candidate = transcribe_audio_to_candidate(audio_path, config, language="ja")
 
     # Filter out very short segments before translation
-    from models import SubtitleCandidate, Segment as GenericSegment
+    from core.subtitles import SubtitleCandidate, Segment as GenericSegment
     short_filtered = SubtitleCandidate(
         id=ja_candidate.id,
         language=ja_candidate.language,

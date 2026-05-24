@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from media_inspect import (
+from core.media import (
     _norm_lang,
     AudioStream,
     SubtitleStream,

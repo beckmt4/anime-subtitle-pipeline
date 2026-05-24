@@ -10,8 +10,7 @@ belong in language packs, not here.
 Public API
 ----------
 ASRBackend                            Abstract base class.
-FasterWhisperASR                      Concrete Faster-Whisper implementation
-                                      (lives in root ``asr.py`` during migration).
+FasterWhisperASR                      Concrete Faster-Whisper implementation.
 build_candidate_from_segments(…)      Helper — wraps raw ASR output.
 transcribe_audio_to_candidate(…)      One-shot convenience function.
 """
@@ -26,9 +25,8 @@ from core.subtitles import SubtitleCandidate
 class ASRBackend(ABC):
     """Abstract interface for all ASR engine adapters.
 
-    Concrete implementations live in root ``asr.py`` (during migration) or in
-    language pack–specific modules.  Core orchestration code must only depend
-    on this interface.
+    Concrete implementations live in core or language pack–specific modules.
+    Core orchestration code must only depend on this interface.
     """
 
     @abstractmethod

@@ -5,11 +5,11 @@ from pathlib import Path
 from config import Config
 from core.ocr import OCRBackend, create_backend
 from core.policy import PolicyEngine
-from media_inspect import MediaInfo, SubtitleStream
-from models import Segment, SubtitleCandidate
+from core.media import MediaInfo, SubtitleStream
+from core.subtitles import Segment, SubtitleCandidate
 import orchestrator as orch
 from subtitle_qc import run_qc
-from subtitle_utils import extract_subtitle_track
+from core.extract.subtitle_utils import extract_subtitle_track
 
 
 class DummyOCRBackend(OCRBackend):

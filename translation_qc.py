@@ -13,7 +13,7 @@ from core.quality import (
     normalize_failure_code,
     normalize_failure_severity,
 )
-from models import SubtitleCandidate
+from core.subtitles import SubtitleCandidate
 
 _CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
 _EN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'\-]{2,}")

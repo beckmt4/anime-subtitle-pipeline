@@ -1,7 +1,6 @@
 """Subtitle data structures.
 
 Authoritative home for ``Segment`` and ``SubtitleCandidate``.
-The root-level ``models.py`` is a re-export shim pointing here.
 ``core.subtitles.__init__`` re-exports from this module.
 
 Public API

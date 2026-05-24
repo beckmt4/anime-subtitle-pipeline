@@ -1,6 +1,6 @@
 """Test audio track selection via `choose_audio_track` with synthetic MediaInfo."""
 
-from media_inspect import MediaInfo, AudioStream, choose_audio_track
+from core.media import MediaInfo, AudioStream, choose_audio_track
 from pathlib import Path
 
 

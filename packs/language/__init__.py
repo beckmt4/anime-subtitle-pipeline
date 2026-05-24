@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Callable, Mapping
 
 if TYPE_CHECKING:
     from config import Config
-    from models import SubtitleCandidate
+    from core.subtitles import SubtitleCandidate
 
 
 @dataclass(frozen=True)

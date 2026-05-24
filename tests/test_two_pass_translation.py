@@ -18,13 +18,13 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from config import Config
-from models import Segment, SubtitleCandidate
-from llm_polish import (
+from core.subtitles import Segment, SubtitleCandidate
+from core.polish import (
     LLMPolisher,
     PolishStats,
     adapt_candidate_from_literal,
 )
-import mt
+import core.mt as mt
 
 
 # ---------------------------------------------------------------------------

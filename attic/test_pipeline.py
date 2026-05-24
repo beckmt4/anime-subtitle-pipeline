@@ -11,11 +11,11 @@ from pathlib import Path
 import pytest
 
 from config import Config, set_config
-from audio_utils import check_ffmpeg_available, get_audio_tracks
-from asr import FasterWhisperASR, Segment
-from mt import MarianTranslator
-from llm_polish import LLMPolisher
-from srt_writer import SRTWriter
+from core.extract.audio_utils import check_ffmpeg_available, get_audio_tracks
+from core.asr import FasterWhisperASR, Segment
+from core.mt import MarianTranslator
+from core.polish import LLMPolisher
+from core.subtitles.srt_writer import SRTWriter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -211,7 +211,7 @@ def test_srt_writer(config: Config = None):
             logger.info("✓ Segment validation passed")
         
         # Test SRT formatting
-        from srt_writer import format_timestamp_srt
+        from core.subtitles.srt_writer import format_timestamp_srt
         test_time = 90.5
         formatted = format_timestamp_srt(test_time)
         expected = "00:01:30,500"

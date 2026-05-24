@@ -20,8 +20,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from models import Segment as GenericSegment, SubtitleCandidate
-from llm_polish import (
+from core.subtitles import Segment as GenericSegment, SubtitleCandidate
+from core.polish import (
     LLMPolisher,
     PolishStats,
     _is_stock_phrase_collapse,

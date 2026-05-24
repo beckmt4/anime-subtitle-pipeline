@@ -4,7 +4,7 @@ from pathlib import Path
 
 from core.runtime import Config
 from core.runtime import batch_process
-from media_inspect import AudioStream, MediaInfo
+from core.media import AudioStream, MediaInfo
 
 
 def _make_config(tmp_path: Path) -> Config:

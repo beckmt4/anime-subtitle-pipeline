@@ -110,9 +110,9 @@ Run locally (same commands as CI):
 pip install -r requirements-ci.txt
 
 # Lint
-flake8 media_inspect.py compare_core.py config.py models.py orchestrator.py \
-  llm_polish.py srt_writer.py audio_utils.py subtitle_utils.py asr.py mt.py \
-  tracing.py batch_process.py benchmark.py \
+flake8 core/media/__init__.py core/benchmark/compare_core.py core/runtime/config.py core/subtitles/models.py core/runtime/orchestrator.py \
+  core/polish/__init__.py core/subtitles/srt_writer.py core/extract/audio_utils.py core/extract/subtitle_utils.py core/asr/__init__.py core/mt/__init__.py \
+  core/runtime/tracing.py core/runtime/batch_process.py core/benchmark/__init__.py \
   --select=E9,F --extend-ignore=F401,F841 --exclude venv
 
 # Unit tests (no live services required) — covers both root and tests/

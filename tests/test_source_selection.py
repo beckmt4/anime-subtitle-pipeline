@@ -13,7 +13,7 @@ import pytest
 
 from orchestrator import _lang_matches, _first_text_sub, _first_audio_order, _select_untagged_audio_fallback
 import orchestrator as orch
-from media_inspect import MediaInfo, AudioStream, SubtitleStream
+from core.media import MediaInfo, AudioStream, SubtitleStream
 from packs.language.ja_en.aliases import LANG_ALIASES
 
 
