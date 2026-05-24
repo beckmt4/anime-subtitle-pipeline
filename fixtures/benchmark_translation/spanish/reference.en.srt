@@ -1,0 +1,11 @@
+1
+00:00:01,100 --> 00:00:03,300
+Wait, I'm still not ready.
+
+2
+00:00:04,000 --> 00:00:06,100
+It's fine, we'll go together.
+
+3
+00:00:06,900 --> 00:00:09,200
+This time it will go well.
