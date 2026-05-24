@@ -1,126 +1,147 @@
 # PROJECT SUMMARY: Anime Subtitle Pipeline
 
 ## Overview
-A complete, production-ready pipeline for generating English subtitles from Japanese media files using local-only AI models.
 
-## Architecture
+A **local-first subtitle intelligence platform** for generating English subtitles
+from Japanese anime, movies, and TV shows. All processing runs on-device; no cloud
+APIs are required. The pipeline is structured for gradual expansion to additional
+source languages and domain types.
+
+> **Architecture note:** The original flat-file layout (`config.py`, `audio_utils.py`,
+> `asr.py`, `mt.py`, `llm_polish.py`, `srt_writer.py`) has been fully migrated into
+> the `core/` package hierarchy and retired to `attic/`. All new code imports from
+> `core.*`.
+
+## Data Flow
 
 ```
-┌─────────────┐
-│ Video File  │
-│  (MKV/MP4)  │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    AUDIO EXTRACTION                         │
-│  ffmpeg: Extract Japanese audio → 16kHz mono WAV           │
-└──────┬──────────────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    ASR (Speech-to-Text)                     │
-│  Faster-Whisper (Large V3 Turbo)                           │
-│  Japanese audio → Japanese text + timestamps               │
-└──────┬──────────────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  MACHINE TRANSLATION                        │
-│  Helsinki-NLP opus-mt-ja-en (MarianMT)                     │
-│  Japanese text → Raw English text                          │
-└──────┬──────────────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│               LLM POLISHING (Optional)                      │
-│  Qwen 2.5 (7B/14B) via Ollama                              │
-│  Raw English → Natural subtitle English                    │
-└──────┬──────────────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    SRT GENERATION                           │
-│  Format timestamps, split long segments, line breaks       │
-└──────┬──────────────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│              OPTIONAL: VIDEO MUXING                         │
-│  ffmpeg: Embed SRT as subtitle track in video              │
-└─────────────────────────────────────────────────────────────┘
+MKV/MP4
+  │
+  ├─→ Sidecar / embedded English subtitles ──────────────────────────────────┐
+  ├─→ English audio → Faster-Whisper ASR ────────────────────────────────────┤
+  ├─→ Sidecar / embedded Japanese subtitles → MT (→ LLM polish) ────────────┤
+  ├─→ Bitmap Japanese subtitles → OCR → MT (→ LLM polish) ──────────────────┤
+  └─→ Japanese audio → Faster-Whisper ASR → MT (→ LLM polish) ─────────────┤
+                                                                              ▼
+                                                               SubtitleCandidate(s)
+                                                                              │
+                                                              Subtitle QC + Translation QC
+                                                                              │
+                                                              PolicyEngine (pass/review/reject)
+                                                                              │
+                                                              SRT file  +  QC sidecar JSON
+                                                                              │
+                                                              Optional: ffmpeg mux into video
 ```
 
-## File Structure
+Source candidates carry full lineage metadata (engine, model, ASR quality,
+OCR confidence, translation workflow, QC findings) through to the output artifact.
+
+## Repository Structure
 
 ```
 anime-subtitle-pipeline/
-├── main.py                  # CLI entry point and pipeline orchestration
-├── config.py                # Configuration loader with profile support
-├── audio_utils.py           # ffmpeg wrapper for audio/video operations
-├── asr.py                   # Faster-Whisper ASR implementation
-├── mt.py                    # MarianMT translation implementation
-├── llm_polish.py            # Ollama LLM client for subtitle polishing
-├── srt_writer.py            # SRT formatting and file writing
-├── config.yaml              # Main configuration (dev/prod profiles)
-├── requirements.txt         # Python dependencies
-├── README.md                # Complete documentation
-├── QUICKSTART.md            # Quick start guide
-├── example_usage.py         # API usage examples
-├── test_pipeline.py         # Testing and validation utilities
-├── .gitignore               # Git ignore patterns
-├── inbox/                   # Input video files (auto-created)
-├── outbox/                  # Output SRT and videos (auto-created)
-├── logs/                    # JSON segment logs (auto-created)
-└── temp/                    # Temporary audio files (auto-created)
+│
+├── main.py                     # CLI entry point (generate/benchmark/subtitle/review modes)
+├── batch_process.py            # Directory batch runner + watch mode
+├── subtitle_qc.py              # Subtitle QC runner
+├── translation_qc.py           # Translation faithfulness QC runner
+├── config.yaml                 # Main YAML configuration (dev/prod profiles)
+│
+├── core/                       # Platform capability modules
+│   ├── artifacts/              # SQLite artifact registry + processing ledger
+│   ├── asr/                    # ASR backend: Faster-Whisper, language-agnostic interface
+│   ├── benchmark/              # Benchmark engine: WER/BLEU/chrF candidate comparison
+│   ├── extract/                # Audio extraction (ffmpeg), subtitle extraction utilities
+│   ├── media/                  # Media inspection: streams, track metadata
+│   ├── mt/                     # Translation: MarianMT, LLMDirect, Hybrid, engine selector
+│   ├── ocr/                    # OCR backend interface + factory (bring-your-own backend)
+│   ├── policy/                 # PolicyEngine: routing decisions (pass/review/reject)
+│   ├── polish/                 # LLM polishing: Ollama-compatible, two-pass adaptation
+│   ├── quality/                # Canonical QC failure taxonomy + code registry
+│   ├── review/                 # Review task routing + review workflow (queue/approve/export)
+│   ├── runtime/                # Orchestrator, config, tracing, batch runner
+│   ├── subtitles/              # SRT writer, SubtitleCandidate model
+│   └── translation/            # Translation memory, glossary enforcement, dataset export
+│
+├── packs/                      # Pluggable language and domain packs
+│   ├── language/ja_en/         # Japanese→English (reference pack)
+│   ├── language/en_en/         # English→English transcription
+│   ├── language/ko_en/         # Korean→English (structure only)
+│   ├── language/zh_en/         # Chinese→English (structure only)
+│   ├── language/es_en/         # Spanish→English (structure only)
+│   ├── domain/anime/           # Anime glossary, honorific policy, style
+│   └── domain/jav/             # JAV privacy rules, adult register policy
+│
+├── tests/                      # 780+ pytest unit tests (no hardware required)
+├── acceptance/                 # Per-issue acceptance checklists and test evidence
+├── specs/                      # Pre-implementation design specs
+├── docs/                       # Architecture docs, backlog, usage guides
+├── fixtures/                   # Test fixtures (SRT, config stubs, etc.)
+└── attic/                      # Retired code (do not import from here)
 ```
 
 ## Key Components
 
-### 1. Configuration System (`config.py`)
-- YAML-based configuration with dev/prod profiles
-- Automatic profile-specific settings (quantization, batch sizes)
-- Centralized access to all pipeline settings
+### 1. Configuration System (`core.runtime.config`)
+- YAML-based configuration with `dev`/`prod` hardware profiles
+- Profile-specific settings (quantization, batch sizes, model variants)
+- Typed property accessors for all pipeline sections
 
-### 2. Audio Extraction (`audio_utils.py`)
-- ffmpeg wrapper for audio extraction and video muxing
-- Auto-detection of Japanese audio tracks
-- Audio track listing and validation
-- Optimized format for Whisper (16kHz mono WAV)
+### 2. Orchestrator (`core.runtime.orchestrator`)
+- `run_generate()`: source-selection engine — discovers sidecar, embedded text,
+  bitmap, and audio tracks; routes to best English output
+- `run_benchmark()`: generate all candidate sources, compare with WER/BLEU/chrF
+- Source-selection report included in metadata for every run
+- Language-pack routing hooks for source→target direction
 
-### 3. ASR Module (`asr.py`)
-- Faster-Whisper implementation with CTranslate2 backend
-- Whisper Large V3 Turbo for high-quality Japanese transcription
-- Voice Activity Detection (VAD) to filter silence
-- GPU acceleration with automatic CPU fallback
-- Configurable quantization (int8 for 6GB GPU, fp16 for 24GB)
+### 3. ASR Module (`core.asr`)
+- Faster-Whisper with CTranslate2 backend
+- Language-agnostic interface; language hint supplied by caller
+- ASR quality diagnostics (no-speech probability, log prob, compression ratio)
+- Warning density propagated through MT/polish to QC and routing
 
-### 4. Machine Translation (`mt.py`)
-- Helsinki-NLP opus-mt-ja-en (MarianMT)
-- Batch processing for efficiency
-- CPU-based to conserve GPU memory
-- Segment-by-segment translation to avoid truncation
+### 4. Translation Engine (`core.mt`)
+- **MarianMT** (`engine: marian`): Helsinki-NLP offline baseline
+- **LLM Direct** (`engine: llm_direct`): context-aware Ollama-compatible LLM
+- **Hybrid** (`engine: hybrid`): Marian baseline fed to LLM for refinement
+- Two-pass workflow (`workflow: literal_then_natural`): literal pass → drift-guarded
+  natural adaptation
+- Live-action/adult profile: explicit register preservation
+- Engine, model, mode, dialogue profile, and fallback metadata recorded per candidate
 
-### 5. LLM Polishing (`llm_polish.py`)
-- HTTP client for Ollama-compatible API
-- Natural vs literal translation styles
-- Enforces subtitle formatting constraints
-- Retry logic for transient failures
-- Optional concurrent processing
+### 5. LLM Polishing (`core.polish`)
+- Ollama-compatible HTTP client with retry and fallback
+- `adapt_candidate_from_literal()`: two-pass natural adaptation with drift guard
+- Stock-phrase collapse guard: reverts to literal on hallucination collapse
 
-### 6. SRT Writer (`srt_writer.py`)
+### 6. SRT Writer (`core.subtitles`)
 - Proper SRT timestamp formatting (HH:MM:SS,mmm)
-- Automatic segment splitting at punctuation
-- Line breaking for readability
+- Adjacent cue gap clamping to prevent overlap
 - Duration constraints (min/max)
-- Validation warnings
 
-### 7. Main Pipeline (`main.py`)
-- CLI interface with argument parsing
-- Complete pipeline orchestration
-- JSON logging for all segments
-- Optional video muxing
-- Comprehensive error handling
+### 7. QC and Policy (`subtitle_qc`, `translation_qc`, `core.policy`)
+- Subtitle QC: blank cues, timing overlap, duration anomalies
+- Translation QC: length ratio, CJK leakage, keyword drift, register changes
+- PolicyEngine: score + ASR/OCR density + translation QC status → pass/review/reject
+- QC sidecar JSON written alongside every SRT output
+
+### 8. Review Workflow (`core.review`)
+- Create review tasks from weak generate/benchmark outputs
+- List review queue, render local HTML side-by-side UI
+- Approve edits → write approved SRT → optionally store to translation memory
+- Review task routing with stable reason codes
+
+### 9. Artifact Registry (`core.artifacts`)
+- SQLite-backed registry for media assets, pipeline runs, candidates, artifacts
+- Processing ledger for run history
+- Query API for artifact lookups
+
+### 10. OCR (`core.ocr`)
+- Abstract `OCRBackend` interface + factory
+- Loads any `<module>:<Class>` backend from config
+- Per-segment confidence; low-confidence density routes to review
+- Default: `ocr.enabled: false` (bring-your-own backend for bitmap support)
 
 ## Configuration Profiles
 
@@ -179,22 +200,33 @@ python main.py video.mkv --no-llm
 # Don't mux into video
 python main.py video.mkv --no-mux
 
-# Specific audio track
+# Use specific audio track
 python main.py video.mkv --audio-track 1
 
-# Debug logging
+# Enable debug logging
 python main.py video.mkv --log-level DEBUG
+
+# Inspect planned strategy without running models
+python main.py video.mkv --mode generate --inspect-only
+
+# Benchmark all sources
+python main.py video.mkv --mode benchmark
+
+# Review queue and approval
+python main.py video.mkv --mode review --review-action queue
+python main.py video.mkv --mode review --review-action render --task-id 12
+python main.py video.mkv --mode review --review-action approve --task-id 12 --review-edits-json edits.json
 ```
 
 ## API Usage
 
 ```python
-from config import Config, set_config
-from audio_utils import extract_audio_with_ffmpeg
-from asr import FasterWhisperASR
-from mt import MarianTranslator
-from llm_polish import polish_english_subtitles_with_llm
-from srt_writer import write_srt_file
+from core.runtime.config import Config, set_config
+from core.extract.audio_utils import extract_audio_with_ffmpeg
+from core.asr import FasterWhisperASR
+from core.mt import translate_candidate
+from core.polish import LLMPolisher
+from core.subtitles import write_srt_file
 
 # Load config
 config = Config("config.yaml")
@@ -205,133 +237,103 @@ extract_audio_with_ffmpeg("video.mkv", "audio.wav")
 
 # Transcribe
 asr = FasterWhisperASR(config)
-segments = asr.transcribe_audio_to_segments("audio.wav")
+candidate = asr.transcribe_to_candidate("audio.wav", source="ja_audio_asr")
 
 # Translate
-translator = MarianTranslator(config)
-segments = translator.translate_segments_ja_to_en(segments)
+candidate = translate_candidate(candidate, config)
 
-# Polish
-segments = polish_english_subtitles_with_llm(segments, config)
+# Polish (optional)
+polisher = LLMPolisher(config)
+candidate = polisher.polish_candidate(candidate)
 
 # Write SRT
-write_srt_file(segments, "output.srt", config)
+write_srt_file(candidate, "output.srt", config)
 ```
 
 ## Data Structures
 
-### Segment
+### SubtitleCandidate
 Core data structure passed through pipeline:
 ```python
 @dataclass
+class SubtitleCandidate:
+    candidate_id: str        # Unique ID (e.g. "ja_audio_asr_mt_llm_a0")
+    source: str              # Source type (e.g. "ja_audio_asr")
+    segments: list           # List of Segment objects
+    meta: dict               # Lineage metadata (engine, QC, scores, etc.)
+```
+
+### Segment
+```python
+@dataclass
 class Segment:
-    start: float           # Start time (seconds)
-    end: float             # End time (seconds)
-    text_ja: str           # Japanese text (from ASR)
-    text_en_raw: str       # Raw English (from MT)
-    text_en_final: str     # Polished English (from LLM or = raw)
+    start: float             # Start time (seconds)
+    end: float               # End time (seconds)
+    text: str                # Subtitle text (language-agnostic)
+    meta: dict               # Per-segment metadata (ASR quality, OCR confidence, etc.)
 ```
 
 ## Output Files
 
 ### SRT File (`outbox/video.en.srt`)
-Standard SubRip format with English subtitles
+Standard SubRip format with English subtitles.
 
-### JSON Log (`logs/video.json`)
-Complete segment data including all translation stages:
+### QC Sidecar (`outbox/video.en.qc.json`)
+Machine-readable QC report:
 ```json
-[
-  {
-    "start": 0.0,
-    "end": 2.5,
-    "duration": 2.5,
-    "text_ja": "こんにちは",
-    "text_en_raw": "Hello",
-    "text_en_final": "Hello there!"
-  }
-]
+{
+  "schema_version": 2,
+  "subtitle_qc": { "status": "pass", "findings": [] },
+  "translation_qc": { "status": "warn", "score": 0.87, "findings": [] },
+  "overall_qc_status": "warn"
+}
 ```
 
 ### Muxed Video (optional, `outbox/video.en.mkv`)
-Original video with embedded English subtitle track
+Original video with embedded English subtitle track.
 
 ## Dependencies
 
 ### Python Packages
-- `pyyaml` - Configuration
-- `faster-whisper` - ASR
-- `transformers` - MT models
-- `torch` - Deep learning backend
-- `requests` - HTTP client for LLM
-- `sentencepiece`, `protobuf` - Tokenization
+- `pyyaml` — Configuration
+- `faster-whisper` — ASR
+- `transformers` — MT models
+- `torch` — Deep learning backend
+- `requests` — HTTP client for LLM
+- `sentencepiece`, `protobuf` — Tokenization
 
 ### External Tools
-- `ffmpeg` - Audio/video processing
-- `ollama` - Local LLM runtime (optional)
+- `ffmpeg` — Audio/video processing
+- `ollama` — Local LLM runtime (optional)
 
 ## Testing
 
 ```bash
-# Run all tests
-python test_pipeline.py
+# Run all non-integration tests (no GPU required)
+pytest -v --tb=short -m "not integration"
 
-# Test with a video file
-python test_pipeline.py path/to/video.mkv
+# Run integration tests (requires GPU + models)
+pytest -v --tb=short -m "integration"
 ```
+
+See `tests/` for 780+ unit tests. See `acceptance/` for per-issue acceptance
+evidence. See `docs/product-readiness.md` for current feature status.
 
 ## Design Decisions
 
-1. **Faster-Whisper over OpenAI Whisper**: 4-5x faster with CTranslate2 backend
-2. **MarianMT on CPU**: Conserves GPU memory for ASR, CPU is fast enough
-3. **Segment-by-segment translation**: Avoids truncation issues with long text
-4. **Optional LLM polishing**: Balances quality vs speed, can be disabled
-5. **SRT format**: Universal subtitle format, easy to edit/validate
-6. **YAML configuration**: Human-readable, supports comments, easy to diff
-7. **Profile system**: Single config file for multiple hardware configurations
-8. **Lazy model loading**: Models load on first use, can be unloaded to free memory
-9. **JSON logging**: Complete audit trail of all transformations
-10. **Local-only**: No data leaves machine, no API costs, no internet required
+1. **Local-only**: No data leaves the machine; no cloud API costs or privacy risk
+2. **core/ package hierarchy**: Capability modules with clear ownership; no hardcoded language/domain rules in core
+3. **Language packs**: Source/target language logic lives in `packs/language/`; core modules accept pack parameters
+4. **Translation engine selector**: `marian` (offline baseline), `llm_direct` (context-aware LLM), `hybrid` (Marian + LLM refinement)
+5. **Two-pass workflow**: Literal pass preserves meaning; natural adaptation with drift guard
+6. **PolicyEngine**: Deterministic routing (pass/review/reject) based on score, ASR/OCR quality, translation QC
+7. **Artifact registry**: SQLite-backed lineage tracking for every run
+8. **YAML configuration**: Human-readable, supports comments, profile merging
 
-## Extensibility
+## Roadmap
 
-### Adding New Translation Styles
-Edit `config.yaml` → `llm.prompts` section
-
-### Changing Models
-Edit `config.yaml` → model_name fields
-
-### Custom Processing
-Use API (see `example_usage.py`) for programmatic control
-
-### Batch Processing
-Use `BatchASR`, `BatchTranslator`, `BatchPolisher` classes
-
-### Alternative LLM Endpoints
-Change `llm.base_url` in config (any Ollama-compatible API)
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| CUDA OOM | Reduce batch_size or use int8 quantization |
-| No Japanese audio | Specify --audio-track or check with ffprobe |
-| LLM timeout | Increase llm.timeout or use --no-llm |
-| Slow on CPU | Use smaller Whisper model or add GPU |
-| ffmpeg not found | Install and add to PATH |
-
-## Future Enhancements
-
-Potential additions (not implemented):
-- Web UI for easier operation
-- GPU monitoring and dynamic batch sizing
-- Multiple subtitle language outputs
-- Subtitle timing fine-tuning
-- Speaker diarization
-- Named entity preservation
-- Custom terminology dictionaries
-- Batch video processing with queue
-- Docker containerization
-- API server mode
+See `docs/BACKLOG.md` for the current ordered backlog and epic tracker.
+See `docs/product-readiness.md` for capability status and release gates.
 
 ## License & Credits
 
@@ -339,12 +341,3 @@ Potential additions (not implemented):
 - **MarianMT**: Apache 2.0 (Helsinki-NLP)
 - **Qwen**: Apache 2.0 (Alibaba)
 - **Pipeline Code**: Provided as-is for personal use
-
-## Version
-
-v1.0 - Initial production release
-- Complete pipeline implementation
-- Dev/prod profile support
-- Comprehensive documentation
-- Testing utilities
-- Example scripts
