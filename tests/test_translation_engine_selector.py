@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import requests
 
-from config import Config
+from core.runtime.config import Config
 from core.translation import TranslationMemoryStore
 from core.subtitles import Segment, SubtitleCandidate
 import core.mt as mt

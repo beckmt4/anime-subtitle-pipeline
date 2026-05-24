@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import List
 
 from core.subtitles import Segment, SubtitleCandidate
-from core.benchmark.compare_core import compare_candidates
+from core.benchmark import compare_candidates
 
 
 _TS_RE = re.compile(

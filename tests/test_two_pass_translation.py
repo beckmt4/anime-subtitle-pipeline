@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from config import Config
+from core.runtime.config import Config
 from core.subtitles import Segment, SubtitleCandidate
 from core.polish import (
     LLMPolisher,

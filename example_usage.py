@@ -5,7 +5,7 @@ instead of using the CLI.  All examples use the current candidate-based API.
 """
 
 from pathlib import Path
-from config import Config, set_config
+from core.runtime.config import Config, set_config
 from core.extract.audio_utils import extract_audio_with_ffmpeg
 from core.asr import FasterWhisperASR, transcribe_audio_to_candidate
 from core.mt import translate_candidate_jp_to_en

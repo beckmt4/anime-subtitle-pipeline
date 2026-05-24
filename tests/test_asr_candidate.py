@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import List
 from unittest.mock import MagicMock, patch
 
-from config import Config
+from core.runtime.config import Config
 from core.asr import build_candidate_from_segments, FasterWhisperASR
 from core.subtitles import Segment
 

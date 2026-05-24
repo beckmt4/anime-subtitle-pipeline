@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from config import Config
+from core.runtime.config import Config
 from core.subtitles import SubtitleCandidate
 from core.mt import translate_candidate_jp_to_en_workflow
 

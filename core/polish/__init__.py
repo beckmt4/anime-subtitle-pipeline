@@ -68,7 +68,7 @@ from typing import List, NamedTuple, Optional
 import requests
 
 from core.subtitles import Segment as GenericSegment  # SubtitleCandidate already imported above
-from config import Config
+from core.runtime.config import Config
 from subtitle_corrector import check_drift
 
 logger = logging.getLogger(__name__)

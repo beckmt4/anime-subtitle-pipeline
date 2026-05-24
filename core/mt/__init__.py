@@ -72,7 +72,7 @@ import torch
 from transformers import MarianMTModel, MarianTokenizer
 
 from core.subtitles import Segment as GenericSegment  # SubtitleCandidate already imported above
-from config import Config
+from core.runtime.config import Config
 from core.translation import (
     TranslationMemoryStore,
     build_prompt_glossary_block,

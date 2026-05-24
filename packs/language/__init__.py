@@ -22,7 +22,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Callable, Mapping
 
 if TYPE_CHECKING:
-    from config import Config
+    from core.runtime.config import Config
     from core.subtitles import SubtitleCandidate
 
 

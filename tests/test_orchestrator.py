@@ -11,9 +11,9 @@ import pytest
 
 from core.subtitles import SubtitleCandidate, Segment
 from core.media import MediaInfo, AudioStream, SubtitleStream
-from config import Config
+from core.runtime.config import Config
 from packs.language import LanguageRoutingHooks
-import orchestrator as orch
+import core.runtime.orchestrator as orch
 
 # ---------------------------------------------------------------------------
 # Helper candidate factories (lightweight)

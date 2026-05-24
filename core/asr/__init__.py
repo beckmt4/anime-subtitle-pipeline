@@ -68,7 +68,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from faster_whisper import WhisperModel
 from faster_whisper.audio import decode_audio
 
-from config import Config
+from core.runtime.config import Config
 from core.subtitles import Segment as GenericSegment  # SubtitleCandidate already imported above
 
 logger = logging.getLogger(__name__)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from config import Config
+from core.runtime.config import Config
 from core.subtitles import Segment, SubtitleCandidate
 from core.mt import translate_candidate_jp_to_en
 from core.polish import polish_candidate_with_llm, enforce_constraints_on_candidate

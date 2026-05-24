@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.benchmark.compare_core import compute_overlap, align_segments, compute_metrics
+from core.benchmark import compute_overlap, align_segments, compute_metrics
 from core.subtitles import Segment, SubtitleCandidate
 
 

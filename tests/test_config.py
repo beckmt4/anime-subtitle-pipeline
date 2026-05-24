@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from config import Config
+from core.runtime.config import Config
 
 
 def write_config(tmp_path: Path, extra: dict = None) -> Path:

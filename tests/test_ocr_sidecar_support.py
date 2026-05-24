@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from config import Config
+from core.runtime.config import Config
 from core.ocr import OCRBackend, create_backend
 from core.policy import PolicyEngine
 from core.media import MediaInfo, SubtitleStream
 from core.subtitles import Segment, SubtitleCandidate
-import orchestrator as orch
+import core.runtime.orchestrator as orch
 from subtitle_qc import run_qc
 from core.extract.subtitle_utils import extract_subtitle_track
 
