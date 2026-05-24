@@ -9,8 +9,8 @@ from typing import List
 
 import pytest
 
-from models import SubtitleCandidate, Segment
-from media_inspect import MediaInfo, AudioStream, SubtitleStream
+from core.subtitles import SubtitleCandidate, Segment
+from core.media import MediaInfo, AudioStream, SubtitleStream
 from config import Config
 from packs.language import LanguageRoutingHooks
 import orchestrator as orch
@@ -58,7 +58,7 @@ class DummyASR:
 
     def transcribe_audio_to_segments(self, path: str, language: str = "en"):
         segs = make_segments(f"asr-{language}")
-        from models import SubtitleCandidate
+        from core.subtitles import SubtitleCandidate
         cand = SubtitleCandidate(
             id=f"asr_{language}",
             language=language,
@@ -710,7 +710,7 @@ def test_source_language_inspect_only_uses_override():
 
 def test_source_language_untagged_audio_respects_override():
     """--source-language ja on a file with no language-tagged audio must also route JA."""
-    from media_inspect import AudioStream
+    from core.media import AudioStream
     cfg = Config()
     untagged_media = MediaInfo(
         path=Path("untagged.mkv"),
@@ -1302,7 +1302,7 @@ def test_selection_report_untagged_audio_fallback():
     """When only an untagged audio stream is present and the language probe is
     inconclusive, the report must record the untagged_audio_asr_mt fallback with
     very_low confidence."""
-    from media_inspect import AudioStream
+    from core.media import AudioStream
     untagged_audio_stream = AudioStream(index=0, codec="aac", language=None)
     media = MediaInfo(
         path=Path("untagged.mkv"),
@@ -1516,7 +1516,7 @@ def test_inspect_only_ja_audio_skips_asr_mt_llm_and_writes():
 
 def test_inspect_only_untagged_audio_uses_heuristic_without_probe():
     """Untagged inspect-only should expose the low-confidence fallback without ASR probing."""
-    from media_inspect import AudioStream
+    from core.media import AudioStream
 
     cfg = Config()
     media = MediaInfo(
@@ -1779,7 +1779,7 @@ def test_qc_json_contains_subtitle_and_translation_qc(monkeypatch):
 
 def test_routing_decision_review_for_untagged_audio_fallback():
     """Untagged audio fallback (very_low confidence) must not receive a PASS routing decision."""
-    from media_inspect import AudioStream
+    from core.media import AudioStream
     untagged_audio_stream = AudioStream(index=0, codec="aac", language=None)
     media = MediaInfo(
         path=Path("untagged.mkv"),

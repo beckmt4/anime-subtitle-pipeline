@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from models import Segment, SubtitleCandidate
-from mt import MarianTranslator
+from core.subtitles import Segment, SubtitleCandidate
+from core.mt import MarianTranslator
 from subtitle_qc import run_qc
 
 

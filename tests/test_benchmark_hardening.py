@@ -158,8 +158,8 @@ class TestBenchmarkPersistence:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth_media = MediaInfo(
             path=Path("dummy.mkv"),
@@ -234,8 +234,8 @@ class TestBenchmarkPersistence:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -286,8 +286,8 @@ class TestBenchmarkPersistence:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -427,8 +427,8 @@ class TestCandidateScorecards:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -579,8 +579,8 @@ class TestHtmlReport:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -782,8 +782,8 @@ class TestBenchmarkStalenessGuards:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, SubtitleStream
 
         # Only one EN subtitle stream -> single candidate -> no comparisons
         synth = MediaInfo(
@@ -829,8 +829,8 @@ class TestBenchmarkStalenessGuards:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, SubtitleStream
         from core.artifacts import ArtifactRegistry
 
         synth = MediaInfo(
@@ -885,8 +885,8 @@ class TestBenchmarkStalenessGuards:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
         from core.artifacts import ArtifactRegistry
         from core.artifacts.pipeline_wiring import compute_media_hash
 
@@ -955,8 +955,8 @@ class TestBenchmarkStalenessGuards:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"), format_name="matroska", duration=10.0,
@@ -1014,8 +1014,8 @@ class TestSingleCandidateDetection:
         """Run run_benchmark with only one EN candidate available."""
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"),
@@ -1132,8 +1132,8 @@ class TestSingleCandidateDetection:
 
         import core.benchmark as bm
         from config import Config
-        from models import Segment, SubtitleCandidate
-        from media_inspect import MediaInfo, AudioStream, SubtitleStream
+        from core.subtitles import Segment, SubtitleCandidate
+        from core.media import MediaInfo, AudioStream, SubtitleStream
 
         synth = MediaInfo(
             path=Path("x.mkv"),

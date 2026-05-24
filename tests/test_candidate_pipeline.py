@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 from config import Config
-from models import Segment, SubtitleCandidate
-from mt import translate_candidate_jp_to_en
-from llm_polish import polish_candidate_with_llm, enforce_constraints_on_candidate
-from srt_writer import write_candidate_srt
+from core.subtitles import Segment, SubtitleCandidate
+from core.mt import translate_candidate_jp_to_en
+from core.polish import polish_candidate_with_llm, enforce_constraints_on_candidate
+from core.subtitles.srt_writer import write_candidate_srt
 
 
 @pytest.mark.integration

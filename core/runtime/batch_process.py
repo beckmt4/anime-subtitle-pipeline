@@ -28,7 +28,7 @@ from typing import List
 from core.runtime.config import Config, set_config
 from core.runtime.orchestrator import run_generate
 from main import setup_logging
-from media_inspect import inspect_media
+from core.media import inspect_media
 
 logger = logging.getLogger(__name__)
 

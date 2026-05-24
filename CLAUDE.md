@@ -13,10 +13,10 @@ pytest tests/test_config.py -v
 pytest tests/test_config.py::test_profile_merge -v
 
 # Lint (subset matching CI)
-flake8 media_inspect.py compare_core.py config.py models.py \
-  orchestrator.py llm_polish.py srt_writer.py \
-  audio_utils.py subtitle_utils.py asr.py mt.py \
-  tracing.py batch_process.py benchmark.py \
+flake8 core/media/__init__.py core/benchmark/compare_core.py core/runtime/config.py core/subtitles/models.py \
+  core/runtime/orchestrator.py core/polish/__init__.py core/subtitles/srt_writer.py \
+  core/extract/audio_utils.py core/extract/subtitle_utils.py core/asr/__init__.py core/mt/__init__.py \
+  core/runtime/tracing.py core/runtime/batch_process.py core/benchmark/__init__.py \
   --select=E9,F --extend-ignore=F401,F841 --exclude venv
 
 # Run the pipeline
@@ -42,19 +42,14 @@ MKV/MP4 → ffmpeg (audio extraction) → WAV
 
 ### Module layout
 
-The repo is mid-migration from a flat-file layout to `core/` + `packs/`. Both co-exist.
+The repo is mid-migration to `core/` + `packs/`. Runtime entrypoints remain at the root.
 
-**Root-level modules (original flat layout):**
+**Root-level runtime entrypoints/shims:**
 - `main.py` — CLI entry point
 - `orchestrator.py` — top-level generate/benchmark flow control
 - `config.py` — YAML config loader with dev/prod profile merging
-- `models.py` — core data types (`Segment`, `SubtitleCandidate`)
-- `asr.py`, `mt.py`, `llm_polish.py` — model wrappers
-- `audio_utils.py` — ffmpeg audio extraction and muxing
-- `media_inspect.py` — ffprobe metadata extraction
-- `srt_writer.py` — SRT formatting
-- `subtitle_qc.py`, `subtitle_utils.py` — QC and subtitle extraction
-- `benchmark.py` — WER/BLEU/chrF comparison across sources
+- `batch_process.py` — batch run wrapper
+- `subtitle_qc.py`, `translation_qc.py` — QC and quality gates
 
 **`core/` (new modular layer):**
 - `core/artifacts/` — SQLite registry for media assets, streams, pipeline runs, subtitle candidates

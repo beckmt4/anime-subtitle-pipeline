@@ -6,13 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm_polish import (
+from core.polish import (
     LLMPolisher,
     _CJK_RE,
     _recover_leading_english,
     enforce_constraints_on_candidate,
 )
-from models import Segment, SubtitleCandidate
+from core.subtitles import Segment, SubtitleCandidate
 
 
 def make_polisher() -> LLMPolisher:

@@ -7,8 +7,8 @@ import requests
 
 from config import Config
 from core.translation import TranslationMemoryStore
-from models import Segment, SubtitleCandidate
-import mt
+from core.subtitles import Segment, SubtitleCandidate
+import core.mt as mt
 
 
 def _candidate() -> SubtitleCandidate:

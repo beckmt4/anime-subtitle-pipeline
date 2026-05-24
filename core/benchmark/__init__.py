@@ -32,8 +32,8 @@ from core.review import (
 )
 from core.subtitles import SubtitleCandidate
 from config import Config
-from media_inspect import MediaInfo, inspect_media
-from tracing import start_span
+from core.media import MediaInfo, inspect_media
+from core.runtime.tracing import start_span
 from translation_qc import run_translation_qc
 
 logger = logging.getLogger(__name__)

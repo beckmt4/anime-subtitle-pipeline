@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from models import Segment, SubtitleCandidate
+from core.subtitles import Segment, SubtitleCandidate
 from subtitle_qc import run_qc
 
 

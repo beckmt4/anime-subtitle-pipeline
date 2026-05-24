@@ -16,8 +16,8 @@ from core.artifacts import (
 )
 from core.runtime import Config, run_generate
 from main import _emit_registry_run_id
-from media_inspect import AudioStream, MediaInfo
-from models import Segment, SubtitleCandidate
+from core.media import AudioStream, MediaInfo
+from core.subtitles import Segment, SubtitleCandidate
 from packs.language import LanguageRoutingHooks
 
 
