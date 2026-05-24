@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from core.translation.memory import TranslationMemoryStore
 
-SFT_SYSTEM_PROMPT = "You translate Japanese subtitles into natural English subtitles."
+SFT_SYSTEM_PROMPT = "You translate source-language subtitles into natural target-language subtitles."
 
 
 def _normalize_text(value: Any) -> str:

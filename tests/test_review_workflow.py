@@ -4,6 +4,7 @@ from pathlib import Path
 
 from core.artifacts import (
     ARTIFACT_TYPE_SRT,
+    REVIEW_STATUS_REJECTED,
     ArtifactRegistry,
     ReviewTaskRecord,
     SubtitleCandidateRecord,
@@ -13,6 +14,7 @@ from core.review import (
     create_review_task_from_benchmark_output,
     create_review_task_from_generate_output,
     list_review_history,
+    reject_review_task,
     render_local_review_ui,
 )
 from core.translation import TranslationMemoryStore
@@ -168,3 +170,23 @@ def test_render_local_review_ui_contains_side_by_side(tmp_path: Path) -> None:
         assert "Editable candidate" in html_text
         assert "cand_base" in html_text
         assert "Export edits JSON" in html_text
+
+
+def test_reject_review_task_updates_status_and_history() -> None:
+    with ArtifactRegistry(":memory:") as registry:
+        candidate = _store_candidate(registry, source_id="cand_reject")
+        task = registry.create_review_task(
+            ReviewTaskRecord(media_hash="m1", candidate_id=candidate.id)
+        )
+        result = reject_review_task(
+            registry,
+            task_id=task.id,
+            reviewer_notes="insufficient quality",
+        )
+
+        refreshed = registry.get_review_task(task.id)
+        assert refreshed is not None
+        assert refreshed.status == REVIEW_STATUS_REJECTED
+        assert result["status"] == REVIEW_STATUS_REJECTED
+        history = list_review_history(registry, task_id=task.id)
+        assert history[-1]["action"] == "task_rejected"

@@ -154,7 +154,8 @@ TRACING_ENABLED=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 python main.
 - Exit code: `echo $?` returns `0` on success
 - Files:
   - `outbox/<video>.en.srt` — generated subtitles
-  - `logs/<video>.json` — per-segment details (timestamps, JA/EN text)
+  - `outbox/<video>.en.qc.json` — QC sidecar (timing/readability/translation checks)
+  - `outbox/pipeline.db` — artifact/state SQLite database (default path)
   - If muxing enabled: `outbox/<video>.en.mkv`
 
 Quick checks:
@@ -162,13 +163,13 @@ Quick checks:
 ```bash
 # List outputs
 ls outbox/*.en.srt
-ls logs/*.json
+ls outbox/*.en.qc.json
 
 # Preview first 30 lines of SRT
 head -30 "outbox/Your Video.en.srt"
 
-# Peek first 40 lines of log
-head -40 "logs/Your Video.json"
+# Peek first 40 lines of QC sidecar
+head -40 "outbox/Your Video.en.qc.json"
 ```
 
 ## Common Scenarios

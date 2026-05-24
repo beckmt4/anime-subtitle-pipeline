@@ -6,7 +6,7 @@
 |------|---------|----------------|
 | generate | Produce best English subtitles via strategy selection | orchestrator.run_generate |
 | benchmark | Produce and compare all English subtitle candidates | orchestrator.run_benchmark |
-| subtitle | Legacy JP audio → ASR → MT → (LLM) pipeline | process_video (main.py) |
+| subtitle | Deprecated alias of generate mode (kept for compatibility) | orchestrator.run_generate |
 
 ## Generate Mode
 
@@ -211,7 +211,7 @@ subtitles:
 | outbox/video.en.mkv | Optional muxed video with embedded English subtitles |
 | outbox/pipeline.db | SQLite artifact registry, unless `artifacts.db_path` is configured |
 | outbox/benchmark_results.json | Benchmark comparison metrics & diffs |
-| logs/video.json | Candidate chain (legacy pipeline) |
+| outbox/video.en.qc.json | Generate-mode QC sidecar JSON |
 
 ## Error Handling
 

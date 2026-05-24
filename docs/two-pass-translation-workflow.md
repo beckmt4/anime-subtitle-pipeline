@@ -154,8 +154,8 @@ llm:
 ## API
 
 ```python
-from mt import run_two_pass_translation
-from config import Config
+from core.mt import run_two_pass_translation
+from core.runtime.config import Config
 
 config = Config()
 # ja_candidate: SubtitleCandidate with Japanese source segments
@@ -173,7 +173,7 @@ for seg in final_candidate.segments:
 To use Pass 2 independently:
 
 ```python
-from llm_polish import adapt_candidate_from_literal
+from core.polish import adapt_candidate_from_literal
 
 # literal_candidate is the output of Pass 1 (or any MT candidate)
 natural_candidate = adapt_candidate_from_literal(

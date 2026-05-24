@@ -235,27 +235,23 @@ $env:PROFILE = "prod"
 ### Process Single Video
 
 ```python
-from config import Config, set_config
-from main import process_video
+from core.runtime import Config, set_config, run_generate
+from core.media import inspect_media
 
 config = Config("config.yaml")
 set_config(config)
 
-result = process_video(
-    video_path="video.mkv",
-    config=config,
-    no_llm=False,
-    no_mux=False
-)
+media = inspect_media("video.mkv")
+result = run_generate(media, config, no_llm=False)
 
-print(f"Success: {result['success']}")
-print(f"SRT: {result['srt_file']}")
+print(f"Strategy: {result['strategy']}")
+print(f"SRT: {result['output_srt']}")
 ```
 
 ### Extract Audio
 
 ```python
-from audio_utils import extract_audio_with_ffmpeg
+from core.extract.audio_utils import extract_audio_with_ffmpeg
 
 audio_path = extract_audio_with_ffmpeg(
     input_video_path="video.mkv",
@@ -267,8 +263,8 @@ audio_path = extract_audio_with_ffmpeg(
 ### Transcribe Audio
 
 ```python
-from config import Config
-from asr import FasterWhisperASR
+from core.runtime.config import Config
+from core.asr import FasterWhisperASR
 
 config = Config()
 asr = FasterWhisperASR(config)
@@ -283,8 +279,8 @@ asr.unload_model()
 ### Translate Segments
 
 ```python
-from config import Config
-from mt import translate_candidate_jp_to_en
+from core.runtime.config import Config
+from core.mt import translate_candidate_jp_to_en
 
 config = Config()
 mt_candidate = translate_candidate_jp_to_en(_candidate, config)
@@ -295,8 +291,8 @@ for seg in mt_candidate.segments:
 ### Polish with LLM
 
 ```python
-from config import Config
-from llm_polish import polish_candidate_with_llm
+from core.runtime.config import Config
+from core.polish import polish_candidate_with_llm
 
 config = Config()
 final_candidate = polish_candidate_with_llm(mt_candidate, config)
@@ -307,8 +303,8 @@ for seg in final_candidate.segments:
 ### Write SRT
 
 ```python
-from config import Config
-from srt_writer import write_candidate_srt
+from core.runtime.config import Config
+from core.subtitles.srt_writer import write_candidate_srt
 
 config = Config()
 srt_path = write_candidate_srt(final_candidate, "output.srt", config)

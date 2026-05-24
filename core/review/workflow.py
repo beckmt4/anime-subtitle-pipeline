@@ -13,6 +13,7 @@ from core.artifacts import (
     CANDIDATE_STATUS_ACCEPTED,
     REVIEW_STATUS_APPROVED,
     REVIEW_STATUS_PENDING,
+    REVIEW_STATUS_REJECTED,
     ArtifactRecord,
     ArtifactRegistry,
     ReviewTaskRecord,
@@ -332,7 +333,9 @@ def _write_simple_srt(segments: List[Dict[str, Any]], output_path: Path) -> None
 def _source_context_text(segment: Dict[str, Any]) -> str:
     meta = segment.get("meta", {}) if isinstance(segment, dict) else {}
     if isinstance(meta, dict):
-        source_text = str(meta.get("source_text_ja", "")).strip()
+        source_text = str(meta.get("source_text", "")).strip()
+        if not source_text:
+            source_text = str(meta.get("source_text_ja", "")).strip()
         if source_text:
             return source_text
     return str(segment.get("text", "")).strip() if isinstance(segment, dict) else ""
@@ -481,6 +484,37 @@ def approve_review_task(
     }
 
 
+def reject_review_task(
+    registry: ArtifactRegistry,
+    *,
+    task_id: int,
+    reviewer_notes: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Mark a review task as rejected and persist a history event."""
+    task = registry.get_review_task(task_id)
+    if task is None:
+        raise LookupError(f"No review task with id={task_id}")
+    note = reviewer_notes or task.reviewer_notes
+    registry.update_review_task(
+        task_id,
+        status=REVIEW_STATUS_REJECTED,
+        reviewer_notes=note,
+    )
+    _append_history(
+        registry,
+        task_id,
+        action="task_rejected",
+        details={"reviewer_notes": note or ""},
+    )
+    refreshed = registry.get_review_task(task_id)
+    return {
+        "task_id": task_id,
+        "status": REVIEW_STATUS_REJECTED,
+        "reviewer_notes": note,
+        "history": list(refreshed.history if refreshed else []),
+    }
+
+
 def list_review_history(registry: ArtifactRegistry, *, task_id: int) -> List[Dict[str, Any]]:
     """Return structured history events for a review task."""
     task = registry.get_review_task(task_id)
@@ -496,5 +530,6 @@ __all__ = [
     "build_review_comparison",
     "render_local_review_ui",
     "approve_review_task",
+    "reject_review_task",
     "list_review_history",
 ]

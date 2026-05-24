@@ -77,7 +77,7 @@ python main.py anime_episode.mkv
 
 # Output will be in:
 # - outbox/anime_episode.en.srt     (subtitles)
-# - logs/anime_episode.json         (segment data)
+# - outbox/anime_episode.en.qc.json (QC sidecar)
 
 
 ## STEP 6: ADVANCED OPTIONS

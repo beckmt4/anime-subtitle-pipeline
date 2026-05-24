@@ -158,5 +158,5 @@ trust the output" workflows.
 | `README.md` | ✅ Current — describes generate/benchmark/review modes and current config |
 | `docs/BACKLOG.md` | ✅ Updated — completed items checked, new epics referenced |
 | `docs/architecture/module-boundaries.md` | ✅ Current — describes target module map |
-| `docs/QUICK_REFERENCE.md` | ⚠️ Contains stale `from mt import translate_candidate_jp_to_en` example — tracked in `specs/epics/epic-01-product-truth.md` |
-| `docs/API_DOCUMENTATION.md` | ⚠️ Contains stale root-shim import examples — tracked in `specs/epics/epic-01-product-truth.md` |
+| `docs/QUICK_REFERENCE.md` | ✅ Updated — examples now import from `core.*` modules |
+| `docs/API_DOCUMENTATION.md` | ✅ Updated — now documents current `core/` API surface only |
