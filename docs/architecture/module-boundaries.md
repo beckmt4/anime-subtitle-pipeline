@@ -69,6 +69,11 @@ A module belongs in `core` if:
 
 Packs supply configuration, prompt profiles, quality thresholds, model preferences, and preprocessing hooks. Core modules expose interfaces that accept pack-supplied parameters. Core never reads a domain name or language code to branch on embedded domain/language rules.
 
+Generate orchestration must also consume **language-pack routing hooks** for
+translation direction and untagged-audio fallback policy. That keeps the main
+decision tree aligned with the active pack's explicit source→target contract
+instead of silently assuming Japanese input when container metadata is missing.
+
 ---
 
 ## 6. Target Module Map

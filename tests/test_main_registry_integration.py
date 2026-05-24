@@ -19,6 +19,7 @@ from main import _emit_registry_run_id
 from media_inspect import AudioStream, MediaInfo
 from models import Segment, SubtitleCandidate
 from orchestrator import run_generate
+from packs.language import LanguageRoutingHooks
 
 
 def _make_config(tmp_path: Path) -> Config:
@@ -91,6 +92,20 @@ def _review_routing(*args, **kwargs):
     return {"status": "pass", "reason_codes": []}
 
 
+def _routing_hooks_for_tests(translate_result):
+    return LanguageRoutingHooks(
+        pack_id="ja_en",
+        source_language="ja",
+        target_language="en",
+        lang_aliases={
+            "ja": frozenset({"ja", "jpn", "jp", "ja-jp", "japanese"}),
+            "en": frozenset({"en", "eng", "en-us", "en-gb", "english"}),
+        },
+        untagged_audio_fallback_source_language="ja",
+        translate_candidate=lambda candidate, cfg, source_candidate=None: translate_result,
+    )
+
+
 def test_run_generate_records_run_candidates_and_artifacts(tmp_path):
     video = tmp_path / "episode.mkv"
     video.write_bytes(b"fake video")
@@ -120,11 +135,12 @@ def test_run_generate_records_run_candidates_and_artifacts(tmp_path):
 
     asr_instance = MagicMock()
     asr_instance.transcribe_audio_to_segments.return_value = (asr_segments, None)
+    routing_hooks = _routing_hooks_for_tests(mt_candidate)
 
     with patch("orchestrator.extract_audio_with_ffmpeg", side_effect=_extract_audio(audio_path)), \
          patch("orchestrator.FasterWhisperASR", return_value=asr_instance), \
          patch("orchestrator.build_candidate_from_segments", return_value=ja_asr_candidate), \
-         patch("orchestrator.translate_candidate_jp_to_en_workflow", return_value=mt_candidate), \
+         patch("orchestrator.load_language_routing_hooks", return_value=routing_hooks), \
          patch("orchestrator.write_candidate_srt", side_effect=_write_candidate_srt), \
          patch("orchestrator.run_qc", side_effect=_clean_qc_summary), \
          patch("orchestrator.run_translation_qc", side_effect=_translation_qc_summary), \
@@ -186,11 +202,12 @@ def test_run_generate_without_registry_does_not_emit_registry_id(tmp_path):
     )
     asr_instance = MagicMock()
     asr_instance.transcribe_audio_to_segments.return_value = (asr_segments, None)
+    routing_hooks = _routing_hooks_for_tests(mt_candidate)
 
     with patch("orchestrator.extract_audio_with_ffmpeg", side_effect=_extract_audio(audio_path)), \
          patch("orchestrator.FasterWhisperASR", return_value=asr_instance), \
          patch("orchestrator.build_candidate_from_segments", return_value=ja_asr_candidate), \
-         patch("orchestrator.translate_candidate_jp_to_en_workflow", return_value=mt_candidate), \
+         patch("orchestrator.load_language_routing_hooks", return_value=routing_hooks), \
          patch("orchestrator.write_candidate_srt", side_effect=_write_candidate_srt), \
          patch("orchestrator.run_qc", side_effect=_clean_qc_summary), \
          patch("orchestrator.run_translation_qc", side_effect=_translation_qc_summary), \
